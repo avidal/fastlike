@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"bytes"
 	"encoding/binary"
 	"reflect"
 	"unsafe"
@@ -55,6 +56,12 @@ func (m *Memory) PutUint16(v uint16, offset int64) {
 
 func (m *Memory) PutUint32(v uint32, offset int64) {
 	binary.LittleEndian.PutUint32(m.Bytes()[offset:], v)
+}
+
+func (m *Memory) PutInt32(v int32, offset int64) {
+	var b = new(bytes.Buffer)
+	binary.Write(b, binary.LittleEndian, v)
+	m.WriteAt(b.Bytes(), offset)
 }
 
 func (m *Memory) PutUint64(v uint64, offset int64) {

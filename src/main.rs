@@ -17,9 +17,20 @@ const OTHER_BACKEND_NAME: &str = "other_backend_name";
 
 // A do-nothing entrypoint...maybe we can execute this.
 #[no_mangle]
-fn main2() -> Result<(), Error> {
+fn main2() -> () {
+    match inner() {
+        Ok(_) => (),
+        Err(e) => {
+            println!("Unexpected error: {}", e);
+            ()
+        }
+    }
+}
+
+fn inner() -> Result<(), Error> {
     println!("getting request");
     let r = downstream_request()?;
+
     println!("got request");
     println!("request method={}; uri={}", r.method().as_str(), r.uri());
     println!("building response");

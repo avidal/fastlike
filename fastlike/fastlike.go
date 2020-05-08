@@ -3,6 +3,7 @@ package fastlike
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -77,7 +78,6 @@ func (f *Fastlike) Instantiate() *Instance {
 	}
 
 	for _, n := range []string{
-		"xqd_req_header_names_get",
 		"xqd_resp_header_names_get",
 		"xqd_req_send",
 	} {
@@ -85,7 +85,6 @@ func (f *Fastlike) Instantiate() *Instance {
 	}
 
 	for _, n := range []string{
-		"xqd_req_header_values_get",
 		"xqd_resp_header_values_get",
 	} {
 		check(linker.DefineFunc("env", n, i.wasm8(n)))
@@ -99,6 +98,8 @@ func (f *Fastlike) Instantiate() *Instance {
 	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
 	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
 	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
+	linker.DefineFunc("env", "xqd_req_header_names_get", i.xqd_req_header_names_get)
+	linker.DefineFunc("env", "xqd_req_header_values_get", i.xqd_req_header_values_get)
 
 	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
 	linker.DefineFunc("env", "xqd_init", i.xqd_init)
@@ -117,7 +118,9 @@ func (f *Fastlike) Instantiate() *Instance {
 	wi, err := linker.Instantiate(f.module)
 	check(err)
 	i.i = wi
-	i.memory = &Memory{}
+	i.memory = &Memory{wi.GetExport("memory").Memory()}
+	i.requests = []*http.Request{}
+	i.responses = []http.ResponseWriter{}
 	return i
 }
 
@@ -125,26 +128,46 @@ func (f *Fastlike) Instantiate() *Instance {
 type Instance struct {
 	i      *wasmtime.Instance
 	memory *Memory
+
+	requests  []*http.Request
+	responses []http.ResponseWriter
 }
 
 // ServeHTTP implements net/http.ServeHTTP using a fastly compute program
 func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	i.Reset()
-}
+	// The incoming request is always handle 0
+	i.requests = append(i.requests, r)
+	// And the outgoing response is always handle 0
+	i.responses = append(i.responses, w)
 
-// Reset *must* be called on an Instance when it's handling a fresh request
-// This ensures the memory is erased
-func (i *Instance) Reset() {}
-
-func (i *Instance) Run() {
-	wmemory := i.i.GetExport("memory").Memory()
-	fmt.Printf("memory size=%d\n", wmemory.Size())
-	i.memory = &Memory{wmemory}
-
+	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
+	// error. The program itself is responsible for getting a handle on the downstream request
+	// and sending a response downstream.
+	// What this means is that while we store the rw in the response slice at position 0, we
+	// actually don't do anything with it until the program attempts to send a downstream response,
+	// at which point we can copy the response they are sending to the response the go http server
+	// created.
 	entry := i.i.GetExport("main2").Func()
 	val, err := entry.Call()
 	check(err)
 	fmt.Printf("entry() = %+v\n", val)
+}
+
+func (i *Instance) Run() {
+	var r, err = http.NewRequest("GET", "http://localhost:8080", nil)
+	r.Header.Add("authorization", "bearer foobar")
+	r.Header.Add("kaac", "whatever")
+
+	// create a bunch of fabricated headers to push outside of 4096 bytes when written over the abi
+	// boundary
+	for i := 0; i < 2; i++ {
+		r.Header.Add(fmt.Sprintf("synthetic-key-%03d", i), fmt.Sprintf("synthetic-value-%03d", i))
+	}
+
+	check(err)
+	var w = httptest.NewRecorder()
+
+	i.ServeHTTP(w, r)
 }
 
 func check(err error) {
