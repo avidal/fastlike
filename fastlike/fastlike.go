@@ -97,14 +97,22 @@ func (f *Fastlike) Instantiate() *Instance {
 	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
 	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
 	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
+	linker.DefineFunc("env", "xqd_req_method_set", i.xqd_req_method_set)
 	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
+	linker.DefineFunc("env", "xqd_req_uri_set", i.xqd_req_uri_set)
 	linker.DefineFunc("env", "xqd_req_header_names_get", i.xqd_req_header_names_get)
 	linker.DefineFunc("env", "xqd_req_header_values_get", i.xqd_req_header_values_get)
+	linker.DefineFunc("env", "xqd_req_send", i.xqd_req_send)
 
 	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
 	linker.DefineFunc("env", "xqd_init", i.xqd_init)
 	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
 	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)
+
+	linker.DefineFunc("env", "xqd_resp_status_set", i.xqd_resp_status_set)
+	linker.DefineFunc("env", "xqd_resp_status_get", i.xqd_resp_status_get)
+	linker.DefineFunc("env", "xqd_resp_version_set", i.xqd_resp_version_set)
+	linker.DefineFunc("env", "xqd_resp_send_downstream", i.xqd_resp_send_downstream)
 
 	// Consider having `Instantiate` make a new ABI(<Instance>) and hold it?
 	// How to avoid cyclical dependencies?
@@ -120,8 +128,13 @@ func (f *Fastlike) Instantiate() *Instance {
 	i.i = wi
 	i.memory = &Memory{wi.GetExport("memory").Memory()}
 	i.requests = []*http.Request{}
-	i.responses = []http.ResponseWriter{}
+	i.responses = []*http.Response{}
 	return i
+}
+
+func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var instance = f.Instantiate()
+	instance.serve(w, r)
 }
 
 // Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it
@@ -130,15 +143,22 @@ type Instance struct {
 	memory *Memory
 
 	requests  []*http.Request
-	responses []http.ResponseWriter
+	responses []*http.Response
+
+	// request and response bodies both go in here
+	bodies [][]byte
+
+	rw http.ResponseWriter
 }
 
-// ServeHTTP implements net/http.ServeHTTP using a fastly compute program
-func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
 	// The incoming request is always handle 0
 	i.requests = append(i.requests, r)
-	// And the outgoing response is always handle 0
-	i.responses = append(i.responses, w)
+	i.rw = w
+
+	// Preinitialize two bodies i guess?
+	i.bodies = append(i.bodies, []byte{})
+	i.bodies = append(i.bodies, []byte{})
 
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
@@ -147,7 +167,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// actually don't do anything with it until the program attempts to send a downstream response,
 	// at which point we can copy the response they are sending to the response the go http server
 	// created.
-	entry := i.i.GetExport("main2").Func()
+	entry := i.i.GetExport("_start").Func()
 	val, err := entry.Call()
 	check(err)
 	fmt.Printf("entry() = %+v\n", val)
@@ -167,7 +187,10 @@ func (i *Instance) Run() {
 	check(err)
 	var w = httptest.NewRecorder()
 
-	i.ServeHTTP(w, r)
+	i.serve(w, r)
+
+	fmt.Printf("Response:\n")
+	fmt.Printf("%+v\n", w)
 }
 
 func check(err error) {

@@ -1,12 +1,14 @@
 package main
 
-import "github.com/khan/fastlike/fastlike"
+import (
+	"net/http"
+
+	"github.com/khan/fastlike/fastlike"
+)
 
 func main() {
 	fastlike := fastlike.New("./bin/main.wasm")
-	instance := fastlike.Instantiate()
-
-	instance.Run()
+	http.ListenAndServe("localhost:5001", fastlike)
 	/*
 		linker, module := prepare()
 		instance, err := linker.Instantiate(module)

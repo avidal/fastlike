@@ -78,6 +78,10 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             req.send(BACKEND_NAME)
         }
 
+        (&Method::GET, "/Cargo.toml") => {
+            req.send(BACKEND_NAME)
+        }
+
         // If request is a `GET` to a path starting with `/other/`.
         (&Method::GET, path) if path.starts_with("/other/") => {
             // Send request to a different backend and don't cache response.
