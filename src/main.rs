@@ -22,11 +22,12 @@ fn main2() -> Result<(), Error> {
     let r = downstream_request()?;
     println!("got request");
     println!("request method={}; uri={}", r.method().as_str(), r.uri());
-    let w = r.send("example_backend")?;
-    println!("'sending' request to backend");
-    w.send_downstream()?;
-    println!("sent downstream");
-    Ok(())
+    println!("building response");
+    let w = Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .body(Body::try_from("This method is not allowed")?)?;
+    println!("returning..");
+    w.send_downstream()
 }
 
 /// The entrypoint for your application.

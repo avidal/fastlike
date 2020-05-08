@@ -40,30 +40,29 @@ func New(wasmfile string) *Fastlike {
 func (f *Fastlike) Instantiate() *Instance {
 	linker := wasmtime.NewLinker(f.store)
 	check(linker.DefineWasi(f.wasi))
+	linker.AllowShadowing(false)
 
 	var i = &Instance{}
 
+	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
 	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
 	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
 	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
 	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
 	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
-	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
 
-	for _, n := range []string{"xqd_init", "xqd_resp_new", "xqd_body_new"} {
-		linker.DefineFunc("env", n, i.wasm1)
-	}
+	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
+	linker.DefineFunc("env", "xqd_init", i.xqd_init)
+	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
 
 	for _, n := range []string{
 		"xqd_resp_status_set",
 		"xqd_resp_status_get",
 		"xqd_resp_version_get",
 		"xqd_resp_version_set",
-		"xqd_req_version_set",
-		"xqd_req_body_downstream_get",
 		"xqd_body_append",
 	} {
-		linker.DefineFunc("env", n, i.wasm2)
+		check(linker.DefineFunc("env", n, i.wasm2(n)))
 	}
 
 	for _, n := range []string{
@@ -71,16 +70,14 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_req_method_set",
 		"xqd_req_uri_set",
 	} {
-		linker.DefineFunc("env", n, i.wasm3)
+		check(linker.DefineFunc("env", n, i.wasm3(n)))
 	}
 
 	for _, n := range []string{
 		"xqd_req_cache_override_set",
-		"xqd_req_uri_get",
-		"xqd_req_method_get",
 		"xqd_body_read",
 	} {
-		linker.DefineFunc("env", n, i.wasm4)
+		check(linker.DefineFunc("env", n, i.wasm4(n)))
 	}
 
 	for _, n := range []string{
@@ -88,7 +85,7 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_resp_header_values_set",
 		"xqd_body_write",
 	} {
-		linker.DefineFunc("env", n, i.wasm5)
+		check(linker.DefineFunc("env", n, i.wasm5(n)))
 	}
 
 	for _, n := range []string{
@@ -96,14 +93,14 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_resp_header_names_get",
 		"xqd_req_send",
 	} {
-		linker.DefineFunc("env", n, i.wasm6)
+		check(linker.DefineFunc("env", n, i.wasm6(n)))
 	}
 
 	for _, n := range []string{
 		"xqd_req_header_values_get",
 		"xqd_resp_header_values_get",
 	} {
-		linker.DefineFunc("env", n, i.wasm8)
+		check(linker.DefineFunc("env", n, i.wasm8(n)))
 	}
 
 	// Consider having `Instantiate` make a new ABI(<Instance>) and hold it?
@@ -118,14 +115,14 @@ func (f *Fastlike) Instantiate() *Instance {
 	wi, err := linker.Instantiate(f.module)
 	check(err)
 	i.i = wi
-	i.memory = WasmMemory{}
+	i.memory = &Memory{}
 	return i
 }
 
 // Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it
 type Instance struct {
 	i      *wasmtime.Instance
-	memory WasmMemory
+	memory *Memory
 }
 
 // ServeHTTP implements net/http.ServeHTTP using a fastly compute program
@@ -140,7 +137,7 @@ func (i *Instance) Reset() {}
 func (i *Instance) Run() {
 	wmemory := i.i.GetExport("memory").Memory()
 	fmt.Printf("memory size=%d\n", wmemory.Size())
-	i.memory = WasmMemory{wmemory}
+	i.memory = &Memory{wmemory}
 
 	entry := i.i.GetExport("main2").Func()
 	val, err := entry.Call()
