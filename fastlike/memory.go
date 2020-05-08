@@ -64,6 +64,12 @@ func (m *Memory) PutInt32(v int32, offset int64) {
 	m.WriteAt(b.Bytes(), offset)
 }
 
+func (m *Memory) PutInt64(v int64, offset int64) {
+	var b = new(bytes.Buffer)
+	binary.Write(b, binary.LittleEndian, v)
+	m.WriteAt(b.Bytes(), offset)
+}
+
 func (m *Memory) PutUint64(v uint64, offset int64) {
 	binary.LittleEndian.PutUint64(m.Bytes()[offset:], v)
 }
