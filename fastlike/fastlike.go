@@ -41,15 +41,17 @@ func (f *Fastlike) Instantiate() *Instance {
 	linker := wasmtime.NewLinker(f.store)
 	check(linker.DefineWasi(f.wasi))
 
-	linker.DefineFunc("env", "xqd_req_body_downstream_get", xqd_req_body_downstream_get)
-	linker.DefineFunc("env", "xqd_req_version_get", xqd_req_version_get)
-	linker.DefineFunc("env", "xqd_req_version_set", xqd_req_version_set)
-	linker.DefineFunc("env", "xqd_req_method_get", xqd_req_method_get)
-	linker.DefineFunc("env", "xqd_req_uri_get", xqd_req_uri_get)
-	linker.DefineFunc("env", "xqd_req_new", xqd_req_new)
+	var i = &Instance{}
+
+	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
+	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
+	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
+	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
+	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
+	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
 
 	for _, n := range []string{"xqd_init", "xqd_resp_new", "xqd_body_new"} {
-		linker.DefineFunc("env", n, wasm1)
+		linker.DefineFunc("env", n, i.wasm1)
 	}
 
 	for _, n := range []string{
@@ -61,7 +63,7 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_req_body_downstream_get",
 		"xqd_body_append",
 	} {
-		linker.DefineFunc("env", n, wasm2)
+		linker.DefineFunc("env", n, i.wasm2)
 	}
 
 	for _, n := range []string{
@@ -69,7 +71,7 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_req_method_set",
 		"xqd_req_uri_set",
 	} {
-		linker.DefineFunc("env", n, wasm3)
+		linker.DefineFunc("env", n, i.wasm3)
 	}
 
 	for _, n := range []string{
@@ -78,7 +80,7 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_req_method_get",
 		"xqd_body_read",
 	} {
-		linker.DefineFunc("env", n, wasm4)
+		linker.DefineFunc("env", n, i.wasm4)
 	}
 
 	for _, n := range []string{
@@ -86,7 +88,7 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_resp_header_values_set",
 		"xqd_body_write",
 	} {
-		linker.DefineFunc("env", n, wasm5)
+		linker.DefineFunc("env", n, i.wasm5)
 	}
 
 	for _, n := range []string{
@@ -94,14 +96,14 @@ func (f *Fastlike) Instantiate() *Instance {
 		"xqd_resp_header_names_get",
 		"xqd_req_send",
 	} {
-		linker.DefineFunc("env", n, wasm6)
+		linker.DefineFunc("env", n, i.wasm6)
 	}
 
 	for _, n := range []string{
 		"xqd_req_header_values_get",
 		"xqd_resp_header_values_get",
 	} {
-		linker.DefineFunc("env", n, wasm8)
+		linker.DefineFunc("env", n, i.wasm8)
 	}
 
 	// Consider having `Instantiate` make a new ABI(<Instance>) and hold it?
@@ -113,15 +115,17 @@ func (f *Fastlike) Instantiate() *Instance {
 	// and can access whatever else on `i`, such as the memory view and the request.
 	// This effectively makes our Instance a module instance + the abi implementation
 	// which sounds like a good thing?
-	i, err := linker.Instantiate(f.module)
+	wi, err := linker.Instantiate(f.module)
 	check(err)
-	return &Instance{i: i, mem: WasmMemory{}}
+	i.i = wi
+	i.memory = WasmMemory{}
+	return i
 }
 
-// Instance carries an instantiated module
+// Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it
 type Instance struct {
-	i   *wasmtime.Instance
-	mem WasmMemory
+	i      *wasmtime.Instance
+	memory WasmMemory
 }
 
 // ServeHTTP implements net/http.ServeHTTP using a fastly compute program
@@ -133,13 +137,10 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // This ensures the memory is erased
 func (i *Instance) Reset() {}
 
-var memory WasmMemory
-
 func (i *Instance) Run() {
 	wmemory := i.i.GetExport("memory").Memory()
 	fmt.Printf("memory size=%d\n", wmemory.Size())
-	i.mem = WasmMemory{wmemory}
-	memory = i.mem
+	i.memory = WasmMemory{wmemory}
 
 	entry := i.i.GetExport("main2").Func()
 	val, err := entry.Call()

@@ -20,8 +20,6 @@ import (
 // the method.
 // However, ABI methods are wrapped per wasm store, and those stores are not sharable. Which gives
 // us a 1:1 mapping of ABI to wasm instance.
-type ABI struct{}
-
 type (
 	requestHandle  int32
 	responseHandle int32
@@ -34,120 +32,106 @@ type (
 	bodyHandlePtr     int32
 )
 
-func p(name string, args ...int32) {
-	xs := []string{}
-	for _, x := range args {
-		xs = append(xs, fmt.Sprintf("%d", x))
-	}
-
-	fmt.Printf("called %s with %s\n", name, strings.Join(xs, ", "))
-}
-
-func wasm0() int32 {
+func (i *Instance) wasm0() int32 {
 	fmt.Println("wasm0")
 	return 0
 }
 
-func wasm1(a int32) int32 {
+func (i *Instance) wasm1(a int32) int32 {
 	p("wasm2", a)
 	return 0
 }
 
-func wasm2(a, b int32) int32 {
+func (i *Instance) wasm2(a, b int32) int32 {
 	p("wasm2", a, b)
 	return 0
 }
 
-func wasm3(a, b, c int32) int32 {
+func (i *Instance) wasm3(a, b, c int32) int32 {
 	p("wasm3", a, b, c)
 	return 0
 }
 
-func wasm4(a, b, c, d int32) int32 {
+func (i *Instance) wasm4(a, b, c, d int32) int32 {
 	p("wasm3", a, b, c, d)
 	return 0
 }
 
-func wasm5(a, b, c, d, e int32) int32 {
+func (i *Instance) wasm5(a, b, c, d, e int32) int32 {
 	p("wasm3", a, b, c, d, e)
 	return 0
 }
 
-func wasm6(a, b, c, d, e, f int32) int32 {
+func (i *Instance) wasm6(a, b, c, d, e, f int32) int32 {
 	p("wasm3", a, b, c, d, e, f)
 	return 0
 }
 
-func wasm7(a, b, c, d, e, f, g int32) int32 {
+func (i *Instance) wasm7(a, b, c, d, e, f, g int32) int32 {
 	p("wasm3", a, b, c, d, e, f, g)
 	return 0
 }
 
-func wasm8(a, b, c, d, e, f, g, h int32) int32 {
+func (i *Instance) wasm8(a, b, c, d, e, f, g, h int32) int32 {
 	p("wasm3", a, b, c, d, e, f, g, h)
 	return 0
 }
 
-func readmem(offset uintptr) uint8 {
-	return memory.Data()[offset]
+func (i *Instance) readmem(offset uintptr) uint8 {
+	return i.memory.Data()[offset]
 }
 
-func writemem(offset uintptr, val uint8) {
-	memory.Data()[offset] = val
+func (i *Instance) writemem(offset uintptr, val uint8) {
+	i.memory.Data()[offset] = val
 }
 
-func writeu32(offset uintptr, val uint32) {
-	d := memory.Data()
+func (i *Instance) writeu32(offset uintptr, val uint32) {
+	d := i.memory.Data()
 	binary.LittleEndian.PutUint32(d[offset:], val)
 }
 
-func writestr(offset uintptr, s []byte) {
-	memory.WriteAt(s, int64(offset))
+func (i *Instance) writestr(offset uintptr, s []byte) {
+	i.memory.WriteAt(s, int64(offset))
 }
 
-func xqd_req_body_downstream_get(c *wasmtime.Caller, reqH int32, bodyH int32) int32 {
+func (i *Instance) xqd_req_body_downstream_get(reqH int32, bodyH int32) int32 {
 	fmt.Printf("xqd_req_body_downstream_get, rh=%d, bh=%d\n", reqH, bodyH)
-	writeu32(uintptr(reqH), uint32(16))
-	writeu32(uintptr(bodyH), uint32(17))
-	fmt.Printf("readmem(reqH)=%+v\n", readmem(uintptr(reqH)))
-
-	var mem = c.GetExport("memory").Memory()
-	var wmem = WasmMemory{mem}
-	var callermem = wmem.Data()[reqH]
-	fmt.Printf("callermem=%+v\n", callermem)
+	i.writeu32(uintptr(reqH), uint32(16))
+	i.writeu32(uintptr(bodyH), uint32(17))
+	fmt.Printf("readmem(reqH)=%+v\n", i.readmem(uintptr(reqH)))
 	return 0
 }
 
-func xqd_req_version_get(reqH int32, vers int32) int32 {
+func (i *Instance) xqd_req_version_get(reqH int32, vers int32) int32 {
 	fmt.Printf("xqd_req_version_get, rh=%d, vers=%d\n", reqH, vers)
-	writeu32(uintptr(vers), uint32(2)) // http 1.1
-	fmt.Printf("readmem(vers)=%+v\n", readmem(uintptr(vers)))
+	i.writeu32(uintptr(vers), uint32(2)) // http 1.1
+	fmt.Printf("readmem(vers)=%+v\n", i.readmem(uintptr(vers)))
 	return 0
 }
 
-func xqd_req_version_set(reqH int32, vers int32) int32 {
+func (i *Instance) xqd_req_version_set(reqH int32, vers int32) int32 {
 	fmt.Printf("xqd_req_version_set, rh=%d, vers=%d\n", reqH, vers)
 	return 0
 }
 
-func xqd_req_method_get(reqH int32, methodptr int32, maxsz, writtensz int32) int32 {
+func (i *Instance) xqd_req_method_get(reqH int32, methodptr int32, maxsz, writtensz int32) int32 {
 	fmt.Printf("xqd_req_method_get, rh=%d, maxsz=%d, wsz=%d\n", reqH, maxsz, writtensz)
-	writestr(uintptr(methodptr), []byte("GET"))
-	writeu32(uintptr(writtensz), 3)
+	i.writestr(uintptr(methodptr), []byte("GET"))
+	i.writeu32(uintptr(writtensz), 3)
 	return 0
 }
 
-func xqd_req_uri_get(reqH int32, uriptr int32, maxsz, writtensz int32) int32 {
+func (i *Instance) xqd_req_uri_get(reqH int32, uriptr int32, maxsz, writtensz int32) int32 {
 	fmt.Printf("xqd_req_uri_get, rh=%d, maxsz=%d, wsz=%d\n", reqH, maxsz, writtensz)
 	uri := "https://google.com/lol"
-	writestr(uintptr(uriptr), []byte(uri))
-	writeu32(uintptr(writtensz), uint32(len(uri)))
+	i.writestr(uintptr(uriptr), []byte(uri))
+	i.writeu32(uintptr(writtensz), uint32(len(uri)))
 	return 0
 }
 
-func xqd_req_new(reqH int32) int32 {
+func (i *Instance) xqd_req_new(reqH int32) int32 {
 	fmt.Printf("xqd_req_new, rh=%d\n", reqH)
-	writeu32(uintptr(reqH), 8)
+	i.writeu32(uintptr(reqH), 8)
 	return 0
 }
 
@@ -182,4 +166,13 @@ func (m *WasmMemory) Data() []byte {
 
 	var buf = *(*[]byte)(unsafe.Pointer(&header))
 	return buf
+}
+
+func p(name string, args ...int32) {
+	xs := []string{}
+	for _, x := range args {
+		xs = append(xs, fmt.Sprintf("%d", x))
+	}
+
+	fmt.Printf("called %s with %s\n", name, strings.Join(xs, ", "))
 }
