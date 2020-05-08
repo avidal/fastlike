@@ -40,20 +40,8 @@ func New(wasmfile string) *Fastlike {
 func (f *Fastlike) Instantiate() *Instance {
 	linker := wasmtime.NewLinker(f.store)
 	check(linker.DefineWasi(f.wasi))
-	linker.AllowShadowing(false)
 
 	var i = &Instance{}
-
-	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
-	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
-	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
-	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
-	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
-	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
-
-	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
-	linker.DefineFunc("env", "xqd_init", i.xqd_init)
-	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
 
 	for _, n := range []string{
 		"xqd_resp_status_set",
@@ -102,6 +90,20 @@ func (f *Fastlike) Instantiate() *Instance {
 	} {
 		check(linker.DefineFunc("env", n, i.wasm8(n)))
 	}
+
+	linker.AllowShadowing(true)
+
+	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
+	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
+	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
+	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
+	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
+	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
+
+	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
+	linker.DefineFunc("env", "xqd_init", i.xqd_init)
+	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
+	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)
 
 	// Consider having `Instantiate` make a new ABI(<Instance>) and hold it?
 	// How to avoid cyclical dependencies?

@@ -35,6 +35,18 @@ func (i *Instance) xqd_req_body_downstream_get(reqH int32, bodyH int32) int32 {
 	return 0
 }
 
+func (i *Instance) xqd_body_write(bh int32, offset int32, bufsz int32, end int32, nwrittenptr int32) int32 {
+	fmt.Printf("xqd_body_write, bh=%d, off=%d, bsz=%d\n", bh, offset, bufsz)
+
+	// read the body from `off` until `bsz`, store the amount of data we read at `nwrittenptr`
+	var buf = make([]byte, bufsz)
+	nw, err := i.memory.ReadAt(buf, int64(offset))
+	check(err)
+	i.memory.PutUint32(uint32(nw), int64(nwrittenptr))
+	fmt.Printf("read body:%s\n", string(buf))
+	return 0
+}
+
 func (i *Instance) xqd_req_version_get(reqH int32, vers int32) int32 {
 	fmt.Printf("xqd_req_version_get, rh=%d, vers=%d\n", reqH, vers)
 	i.memory.PutUint32(2, int64(vers))
