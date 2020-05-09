@@ -114,15 +114,6 @@ func (f *Fastlike) Instantiate() *Instance {
 	linker.DefineFunc("env", "xqd_resp_version_set", i.xqd_resp_version_set)
 	linker.DefineFunc("env", "xqd_resp_send_downstream", i.xqd_resp_send_downstream)
 
-	// Consider having `Instantiate` make a new ABI(<Instance>) and hold it?
-	// How to avoid cyclical dependencies?
-	// Maybe better to implement the ABI methods *on* Instance, then each ABI method can easily
-	// access memory and request data, etc. Make it flat.
-	// imports will look like `instance.xqd_req_send`
-	// and the function will have a signature `func (i *Instance) xqd_req_send()`
-	// and can access whatever else on `i`, such as the memory view and the request.
-	// This effectively makes our Instance a module instance + the abi implementation
-	// which sounds like a good thing?
 	wi, err := linker.Instantiate(f.module)
 	check(err)
 	i.i = wi
@@ -169,16 +160,10 @@ func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
 
 func (i *Instance) Run() {
 	var r, err = http.NewRequest("GET", "http://localhost:8080", nil)
+	check(err)
+
 	r.Header.Add("authorization", "bearer foobar")
 	r.Header.Add("kaac", "whatever")
-
-	// create a bunch of fabricated headers to push outside of 4096 bytes when written over the abi
-	// boundary
-	for i := 0; i < 2; i++ {
-		r.Header.Add(fmt.Sprintf("synthetic-key-%03d", i), fmt.Sprintf("synthetic-value-%03d", i))
-	}
-
-	check(err)
 	var w = httptest.NewRecorder()
 
 	i.serve(w, r)

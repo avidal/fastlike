@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 )
@@ -20,7 +21,6 @@ type fastlyMeta struct{}
 
 type requestHandle struct {
 	version httpVersion
-	status  int
 	method  string
 	url     *url.URL
 	headers http.Header
@@ -28,14 +28,10 @@ type requestHandle struct {
 	fastlyMeta *fastlyMeta
 }
 
-type bodyHandle []byte
+type bodyHandle = bytes.Buffer
 
 type responseHandle struct {
 	version httpVersion
 	status  int
-	method  string
-	url     *url.URL
 	headers http.Header
-
-	fastlyMeta *fastlyMeta
 }

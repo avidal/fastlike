@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"sort"
 	"strings"
@@ -15,24 +13,45 @@ import (
 func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 	fmt.Printf("xqd_req_body_downstream_get, rh=%d, bh=%d\n", rh, bh)
 
-	// The downstream request is always in handle 0
-	i.memory.PutUint32(0, int64(rh))
-	i.memory.PutUint32(0, int64(bh))
+	// Convert the downstream request into a (request, body) handle pair
+	var rhandle = &requestHandle{}
+	var bhandle = &bodyHandle{}
+
+	rhandle.headers = i.ds_request.Header.Clone()
+	rhandle.headers.Set("host", i.ds_request.Host)
+	rhandle.method = i.ds_request.Method
+
+	// TODO: Support http other than 1.1
+	rhandle.version = http11
+
+	var scheme = "http"
+	if i.ds_request.TLS != nil {
+		scheme = "https"
+	}
+
+	var urlstr = fmt.Sprintf("%s://%s%s", scheme, i.ds_request.Host, i.ds_request.URL.String())
+	var uri, err = url.Parse(urlstr)
+	check(err)
+	rhandle.url = uri
+
+	io.Copy(bhandle, i.ds_request.Body)
+	defer i.ds_request.Body.Close()
+
+	i.requests = append(i.requests, rhandle)
+	i.bodies = append(i.bodies, bhandle)
+
+	i.memory.PutUint32(uint32(len(i.requests)-1), int64(rh))
+	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bh))
 	return 0
 }
 
 func (i *Instance) xqd_body_write(bh int32, addr int32, maxlen int32, end int32, nreadaddr int32) int32 {
 	fmt.Printf("xqd_body_write, bh=%d, addr=%d, maxlen=%d\n", bh, addr, maxlen)
 
-	i.bodies[bh] = make([]byte, maxlen)
-	var body = i.bodies[bh]
-
-	// copy the body from wasm memory addr to maxlen into our body
-	nread, err := i.memory.ReadAt(body, int64(addr))
+	// write maxlen bytes starting at addr to the body with handle bh
+	nread, err := io.CopyN(i.bodies[bh], bytes.NewReader(i.memory.Bytes()[addr:addr+maxlen]), int64(maxlen))
 	check(err)
 	i.memory.PutUint32(uint32(nread), int64(nreadaddr))
-
-	fmt.Printf("\twrote body: %q\n", body)
 	return 0
 }
 
@@ -40,18 +59,7 @@ func (i *Instance) xqd_req_version_get(rh int32, addr int32) int32 {
 	fmt.Printf("xqd_req_version_get, rh=%d, addr=%d\n", rh, addr)
 
 	var r = i.requests[rh]
-	var httpversion uint32
-	switch r.Proto {
-	case "HTTP/1.0":
-		httpversion = 1
-	case "HTTP/1.1":
-		httpversion = 2
-	case "HTTP/2":
-		httpversion = 3
-	case "HTTP/3":
-		httpversion = 4
-	}
-	i.memory.PutUint32(httpversion, int64(addr))
+	i.memory.PutUint32(uint32(r.version), int64(addr))
 	return 0
 }
 
@@ -69,7 +77,7 @@ func (i *Instance) xqd_req_method_get(rh int32, addr int32, maxlen, nwrittenaddr
 	fmt.Printf("xqd_req_method_get, rh=%d, addr=%d\n", rh, addr)
 
 	var r = i.requests[rh]
-	nwritten, err := i.memory.WriteAt([]byte(r.Method), int64(addr))
+	nwritten, err := i.memory.WriteAt([]byte(r.method), int64(addr))
 	check(err)
 	i.memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
 	return 0
@@ -82,7 +90,7 @@ func (i *Instance) xqd_req_method_set(rh int32, addr int32, size int32) int32 {
 	i.memory.ReadAt(meth, int64(addr))
 
 	var r = i.requests[rh]
-	r.Method = string(meth)
+	r.method = string(meth)
 	return 0
 }
 
@@ -96,7 +104,7 @@ func (i *Instance) xqd_req_uri_set(rh int32, addr int32, size int32) int32 {
 	check(err)
 
 	var r = i.requests[rh]
-	r.URL = u
+	r.url = u
 	return 0
 }
 
@@ -104,7 +112,7 @@ func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, 
 	fmt.Printf("xqd_req_header_names_get, rh=%d, addr=%d, cursor=%d\n", rh, addr, cursor)
 	var r = i.requests[rh]
 	var names = []string{"Host"}
-	for n, _ := range r.Header {
+	for n, _ := range r.headers {
 		names = append(names, n)
 	}
 
@@ -151,10 +159,7 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 
 	fmt.Printf("\tlooking for header %s\n", hdr)
 
-	var names = r.Header[hdr]
-	if hdr == "Host" {
-		names = []string{r.Host}
-	}
+	var names = r.headers[hdr]
 
 	// these names are explicitly unsorted, so let's sort them ourselves
 	sort.Strings(names[:])
@@ -190,7 +195,8 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 func (i *Instance) xqd_req_uri_get(rh int32, addr int32, maxlen, nwrittenaddr int32) int32 {
 	fmt.Printf("xqd_req_uri_get, rh=%d, addr=%d\n", rh, addr)
 	var r = i.requests[rh]
-	uri := fmt.Sprintf("%s://%s%s", "http", r.Host, r.URL.String())
+	//uri := fmt.Sprintf("%s://%s%s", "http", r.Host, r.URL.String())
+	uri := r.url.String()
 	fmt.Printf("\twrote url as %s\n", uri)
 	nwritten, err := i.memory.WriteAt([]byte(uri), int64(addr))
 	check(err)
@@ -200,14 +206,14 @@ func (i *Instance) xqd_req_uri_get(rh int32, addr int32, maxlen, nwrittenaddr in
 
 func (i *Instance) xqd_req_new(reqH int32) int32 {
 	fmt.Printf("xqd_req_new, rh=%d\n", reqH)
-	i.requests = append(i.requests, &http.Request{})
+	i.requests = append(i.requests, &requestHandle{})
 	i.memory.PutUint32(uint32(len(i.requests)-1), int64(reqH))
 	return 0
 }
 
 func (i *Instance) xqd_resp_new(wh int32) int32 {
 	fmt.Printf("xqd_resp_new, wh=%d\n", wh)
-	i.responses = append(i.responses, &http.Response{})
+	i.responses = append(i.responses, &responseHandle{})
 	i.memory.PutUint32(uint32(len(i.responses)-1), int64(wh))
 	return 0
 }
@@ -218,33 +224,54 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	fmt.Printf("xqd_req_send, rh=%d, bh=%d\n", rh, bh)
 
 	var r = i.requests[rh]
-
-	// pretty sure we can ignore this anyway
-	var _ = i.bodies[bh]
+	var rb = i.bodies[bh]
 
 	var backend = make([]byte, backendSize)
 	i.memory.ReadAt(backend, int64(backendOffset))
 
-	// TODO: Do we need to care about the backend?
 	fmt.Printf("\tsending request to backend %s\n", string(backend))
 
-	// The request they are sending may have been the original downstream request, we can't really
-	// just *send* it again.
+	// rewrite the url hostname to hit my python server
+	r.url.Host = "localhost:8000"
+
 	var client = http.Client{}
 	fmt.Printf("\tsending request %v\n", r)
-	r.Body = ioutil.NopCloser(bytes.NewReader(nil))
-	r.URL.Host = "localhost:8000"
-	var w, err = client.Do(r)
+
+	// create a new http.Request using the values specified in the request handle
+	req, err := http.NewRequest(r.method, r.url.String(), rb)
+	check(err)
+
+	w, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("\tgot error? %s\n", err.Error())
 	}
 	check(err)
 
-	i.responses = append(i.responses, w)
-	var body, _ = ioutil.ReadAll(w.Body)
-	i.bodies = append(i.bodies, body)
+	// Convert the response into an (rh, bh) pair, put them in the list, and write out the handle
+	// numbers
+	var whandle = &responseHandle{}
+	switch w.Proto {
+	case "HTTP/0.9":
+		whandle.version = http09
+	case "HTTP/1.0":
+		whandle.version = http10
+	case "HTTP/1.1":
+		whandle.version = http11
+	case "HTTP/2":
+		whandle.version = http2
+	case "HTTP/3":
+		whandle.version = http3
+	}
+	whandle.status = w.StatusCode
+	whandle.headers = w.Header.Clone()
 
-	fmt.Printf("\tgot body: %q\n", body)
+	i.responses = append(i.responses, whandle)
+
+	// and stick the body into a new body handle
+	// TODO: Figure out how to stream this? w.Body is a ReadCloser
+	var bhandle = &bodyHandle{}
+	io.Copy(bhandle, w.Body)
+	i.bodies = append(i.bodies, bhandle)
 
 	i.memory.PutUint32(uint32(len(i.responses)-1), int64(whaddr))
 	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bhaddr))
@@ -255,14 +282,14 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 func (i *Instance) xqd_resp_status_set(wh int32, httpstatus int32) int32 {
 	fmt.Printf("xqd_resp_status_set, wh=%d, status=%d\n", wh, httpstatus)
 	w := i.responses[wh]
-	w.StatusCode = int(httpstatus)
+	w.status = int(httpstatus)
 	return 0
 }
 
 func (i *Instance) xqd_resp_status_get(wh int32, addr int32) int32 {
 	fmt.Printf("xqd_resp_status_get, wh=%d, addr=%d\n", wh, addr)
 	w := i.responses[wh]
-	i.memory.PutUint32(uint32(w.StatusCode), int64(addr))
+	i.memory.PutUint32(uint32(w.status), int64(addr))
 	return 0
 }
 
@@ -284,20 +311,15 @@ func (i *Instance) xqd_resp_send_downstream(wh int32, bh int32, stream int32) in
 	}
 
 	var w, b = i.responses[wh], i.bodies[bh]
-	fmt.Printf("\trw=%v, w=%v, b=%v\n", i.rw, w, b)
+	fmt.Printf("\trw=%v, w=%v, b=%v\n", i.ds_response, w, b)
 
-	// copy everything from `w` to `dw`, and then write the body
-	for k, v := range w.Header {
-		i.rw.Header()[k] = v
+	for k, v := range w.headers {
+		i.ds_response.Header()[k] = v
 	}
 
-	var bb, _ = httputil.DumpResponse(w, true)
-	fmt.Printf("got: %q\n", bb)
-	fmt.Printf("body: %q\n", string(b))
+	i.ds_response.WriteHeader(w.status)
 
-	var statusCode = w.StatusCode
-	i.rw.WriteHeader(statusCode)
-	io.Copy(i.rw, bytes.NewBuffer(b))
+	io.Copy(i.ds_response, b)
 
 	return 0
 }
@@ -309,7 +331,7 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 
 func (i *Instance) xqd_body_new(bh int32) int32 {
 	fmt.Printf("xqd_body_new, bh=%d\n", bh)
-	i.bodies = append(i.bodies, []byte{})
+	i.bodies = append(i.bodies, &bodyHandle{})
 	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bh))
 	return 0
 }
