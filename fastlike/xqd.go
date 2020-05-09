@@ -111,13 +111,13 @@ func (i *Instance) xqd_req_uri_set(rh int32, addr int32, size int32) int32 {
 func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) int32 {
 	fmt.Printf("xqd_req_header_names_get, rh=%d, addr=%d, cursor=%d\n", rh, addr, cursor)
 	var r = i.requests[rh]
-	var names = []string{"Host"}
+	var names = []string{}
 	for n, _ := range r.headers {
 		names = append(names, n)
 	}
 
 	// these names are explicitly unsorted, so let's sort them ourselves
-	sort.Strings(names[1:])
+	sort.Strings(names[:])
 
 	// and then join them together with a nul byte
 	namelist := strings.Join(names, "\x00")
@@ -269,6 +269,9 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 
 	// and stick the body into a new body handle
 	// TODO: Figure out how to stream this? w.Body is a ReadCloser
+	// we could change body handles to be io.Reader but then we won't be able to write it..
+	// if it was an io.ReadWriteCloser then we could in this case set it up with a discarding
+	// writer?
 	var bhandle = &bodyHandle{}
 	io.Copy(bhandle, w.Body)
 	i.bodies = append(i.bodies, bhandle)

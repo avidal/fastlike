@@ -1,7 +1,7 @@
 //! Default Compute@Edge template program.
 
 use fastly::http::{HeaderValue, Method, StatusCode};
-//use fastly::request::CacheOverride;
+use fastly::request::CacheOverride;
 use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
 use fastly::downstream_request;
 use std::convert::TryFrom;
@@ -74,7 +74,7 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             // Request handling logic could go here...
             // Eg. send the request to an origin backend and then cache the
             // response for one minute.
-            //req.set_cache_override(CacheOverride::ttl(60));
+            req.set_cache_override(CacheOverride::ttl(60));
             req.send(BACKEND_NAME)
         }
 
@@ -85,7 +85,7 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
         // If request is a `GET` to a path starting with `/other/`.
         (&Method::GET, path) if path.starts_with("/other/") => {
             // Send request to a different backend and don't cache response.
-            //req.set_cache_override(CacheOverride::Pass);
+            req.set_cache_override(CacheOverride::Pass);
             req.send(OTHER_BACKEND_NAME)
         }
 
