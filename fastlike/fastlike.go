@@ -127,8 +127,9 @@ func (f *Fastlike) Instantiate() *Instance {
 	check(err)
 	i.i = wi
 	i.memory = &Memory{wi.GetExport("memory").Memory()}
-	i.requests = []*http.Request{}
-	i.responses = []*http.Response{}
+	i.requests = []*requestHandle{}
+	i.responses = []*responseHandle{}
+	i.bodies = []*bodyHandle{}
 	return i
 }
 
@@ -142,31 +143,24 @@ type Instance struct {
 	i      *wasmtime.Instance
 	memory *Memory
 
-	requests  []*http.Request
-	responses []*http.Response
+	requests  []*requestHandle
+	responses []*responseHandle
+	bodies    []*bodyHandle
 
-	// request and response bodies both go in here
-	bodies [][]byte
+	// ds_request represents the downstream request, ie the one originated from the user agent
+	ds_request *http.Request
 
-	rw http.ResponseWriter
+	// ds_response represents the downstream response, where we're going to write the final output
+	ds_response http.ResponseWriter
 }
 
 func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
-	// The incoming request is always handle 0
-	i.requests = append(i.requests, r)
-	i.rw = w
-
-	// Preinitialize two bodies i guess?
-	i.bodies = append(i.bodies, []byte{})
-	i.bodies = append(i.bodies, []byte{})
+	i.ds_request = r
+	i.ds_response = w
 
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
 	// and sending a response downstream.
-	// What this means is that while we store the rw in the response slice at position 0, we
-	// actually don't do anything with it until the program attempts to send a downstream response,
-	// at which point we can copy the response they are sending to the response the go http server
-	// created.
 	entry := i.i.GetExport("_start").Func()
 	val, err := entry.Call()
 	check(err)

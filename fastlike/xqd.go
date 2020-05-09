@@ -320,7 +320,7 @@ func p(name string, args ...int32) {
 		xs = append(xs, fmt.Sprintf("%d", x))
 	}
 
-	fmt.Printf("called %s with %s\n", name, strings.Join(xs, ", "))
+	fmt.Printf(":STUB: %s with %s\n", name, strings.Join(xs, ", "))
 }
 
 func (i *Instance) wasm0(name string) func() int32 {
