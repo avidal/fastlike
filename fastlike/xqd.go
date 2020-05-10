@@ -10,6 +10,25 @@ import (
 	"strings"
 )
 
+// XQD defines the ABI implementation for fastly compute programs, as described in the `abi` module
+// of the `fastly` crate.
+// In order to operate, it needs:
+//   - A function that can return the downstream request
+//   - An implementation of RequestHandles
+//   - An implementation of ResponseHandles
+//   - An implementation of BodyHandles
+//   - A function that takes a ResponseHandle and a BodyHandle and writes it downstream
+//   - A Memory implementation
+// There are default implementations for all of the above that can be used.
+// The caller is responsible for linking the XQD methods to the wasmtime store and constructing
+// an instance of the module.
+// Note that preparing an XQD is then a two-call process. You can't instantiate a fastly compute
+// program without linking the XQD ABI, but linking it alone is not enough to make an XQD
+// ready-to-use since it needs access to the downstream request, response, instance memory, etc.
+type XQD struct {
+	mem Memory
+}
+
 func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 	fmt.Printf("xqd_req_body_downstream_get, rh=%d, bh=%d\n", rh, bh)
 
@@ -21,8 +40,8 @@ func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 	rhandle.headers.Set("host", i.ds_request.Host)
 	rhandle.method = i.ds_request.Method
 
-	// TODO: Support http other than 1.1
-	rhandle.version = http11
+	// TODO: Support http other than 1.1?
+	rhandle.version = Http11
 
 	var scheme = "http"
 	if i.ds_request.TLS != nil {
@@ -192,6 +211,37 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 	return 0
 }
 
+func (i *Instance) xqd_req_header_values_set(rh int32, nameaddr int32, namelen int32, addr int32, valuesz int32) int32 {
+	fmt.Printf("xqd_req_header_values_set, rh=%d, nameaddr=%d\n", rh, nameaddr)
+	var r = i.requests[rh]
+
+	// read namelen bytes at nameaddr for the name of the header that the caller wants to set
+	var hdrb = make([]byte, namelen)
+	i.memory.ReadAt(hdrb, int64(nameaddr))
+
+	var hdr = http.CanonicalHeaderKey(string(hdrb))
+
+	fmt.Printf("\tsetting values for for header %s\n", hdr)
+
+	// read valuesz bytes from addr for a list of \0 terminated values for the header
+	// but, read 1 less than that to avoid the trailing nul
+	var valuebytes = make([]byte, valuesz-1)
+	i.memory.ReadAt(valuebytes, int64(addr))
+
+	var values = bytes.Split(valuebytes, []byte("\x00"))
+
+	if r.headers == nil {
+		r.headers = http.Header{}
+	}
+
+	for _, v := range values {
+		fmt.Printf("\tadding value %q\n", v)
+		r.headers.Add(hdr, string(v))
+	}
+
+	return 0
+}
+
 func (i *Instance) xqd_req_uri_get(rh int32, addr int32, maxlen, nwrittenaddr int32) int32 {
 	fmt.Printf("xqd_req_uri_get, rh=%d, addr=%d\n", rh, addr)
 	var r = i.requests[rh]
@@ -252,15 +302,15 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	var whandle = &responseHandle{}
 	switch w.Proto {
 	case "HTTP/0.9":
-		whandle.version = http09
+		whandle.version = Http09
 	case "HTTP/1.0":
-		whandle.version = http10
+		whandle.version = Http10
 	case "HTTP/1.1":
-		whandle.version = http11
+		whandle.version = Http11
 	case "HTTP/2":
-		whandle.version = http2
+		whandle.version = Http2
 	case "HTTP/3":
-		whandle.version = http3
+		whandle.version = Http3
 	}
 	whandle.status = w.StatusCode
 	whandle.headers = w.Header.Clone()
