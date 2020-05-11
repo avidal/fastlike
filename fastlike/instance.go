@@ -23,6 +23,9 @@ type Instance struct {
 
 	// ds_response represents the downstream response, where we're going to write the final output
 	ds_response http.ResponseWriter
+
+	// transport is used to issue subrequests
+	transport http.RoundTripper
 }
 
 // serve serves the supplied request and response pair. This is not safe to call twice.
@@ -123,5 +126,6 @@ func (f *Fastlike) Instantiate() *Instance {
 	i.requests = []*requestHandle{}
 	i.responses = []*responseHandle{}
 	i.bodies = []*bodyHandle{}
+	i.transport = f.transport
 	return i
 }

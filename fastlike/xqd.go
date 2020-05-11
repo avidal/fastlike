@@ -265,14 +265,12 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	// rewrite the url hostname to hit my python server
 	r.url.Host = "localhost:8000"
 
-	var client = http.Client{}
 	fmt.Printf("\tsending request %v\n", r)
-
 	// create a new http.Request using the values specified in the request handle
 	req, err := http.NewRequest(r.method, r.url.String(), rb)
 	check(err)
-
-	w, err := client.Do(req)
+	w, err := i.transport.RoundTrip(req)
+	//w, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("\tgot error? %s\n", err.Error())
 	}

@@ -22,9 +22,10 @@ import (
 // Fastlike carries the wasm module, store, and linker and is capable of creating new instances
 // ready to serve requests
 type Fastlike struct {
-	store  *wasmtime.Store
-	wasi   *wasmtime.WasiInstance
-	module *wasmtime.Module
+	store     *wasmtime.Store
+	wasi      *wasmtime.WasiInstance
+	module    *wasmtime.Module
+	transport http.RoundTripper
 }
 
 // New returns a new Fastlike ready to create new instances from
@@ -46,6 +47,7 @@ func New(wasmfile string) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
+		transport: http.DefaultTransport,
 	}
 }
 
@@ -68,7 +70,13 @@ func NewFromWasm(wasm []byte) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
+		transport: http.DefaultTransport,
 	}
+}
+
+// Transport sets the transport that a fastlike instance will use when making subrequests
+func (f *Fastlike) Transport(t http.RoundTripper) {
+	f.transport = t
 }
 
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
