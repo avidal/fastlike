@@ -33,3 +33,17 @@ Assuming you're using the same rust code, which has a specific path check for `/
 should see the `Cargo.toml` from this repository come back from curl.
 
 Go, running Rust, calling Go, proxying to Python.
+
+## TODO
+
+- How to handle Go errors? We just panic.
+- How to handle errors over the ABI? Just return the proper XQD status?
+    - Maybe have `Fastlike` take a writer to send logs to, and abi methods can write
+      warnings/errors there
+- Allow callers to define mapping of "backend" to `http.Transport`
+    - This would allow them to describe how to handle subrequests by backend
+    - Maybe it's just a `HandleSubrequest(backend string, r *http.Request) (*http.Response, error)`?
+    - This may need(?) to take a *RequestHandle instead for Fastly metadata?
+    - Maybe sig isn't `backend string` but instead
+      `r *http.Request, metadata *FastlyMetadata`?
+- Implement the rest of the ABI

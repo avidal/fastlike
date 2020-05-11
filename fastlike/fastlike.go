@@ -7,6 +7,10 @@
 // The public surface area of this package is intentionally small, as it is designed to operate on
 // a single (request, response) pair and any fiddling with the internals can cause serious
 // side-effects.
+// For reference to the *guest* side of the ABI, see the following for the ABI methods:
+// https://docs.rs/crate/fastly/0.3.2/source/src/abi.rs
+// And for some of the constants (such as the ABI response status codes), see:
+// https://docs.rs/crate/fastly-shared/0.3.2/source/src/lib.rs
 package fastlike
 
 import (
