@@ -12,7 +12,6 @@ package fastlike
 import (
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -181,20 +180,6 @@ func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
 	val, err := entry.Call()
 	check(err)
 	fmt.Printf("entry() = %+v\n", val)
-}
-
-func (i *Instance) Run() {
-	var r, err = http.NewRequest("GET", "http://localhost:8080", nil)
-	check(err)
-
-	r.Header.Add("authorization", "bearer foobar")
-	r.Header.Add("kaac", "whatever")
-	var w = httptest.NewRecorder()
-
-	i.serve(w, r)
-
-	fmt.Printf("Response:\n")
-	fmt.Printf("%+v\n", w)
 }
 
 func check(err error) {
