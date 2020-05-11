@@ -141,7 +141,7 @@ func (f *Fastlike) Instantiate() *Instance {
 	wi, err := linker.Instantiate(f.module)
 	check(err)
 	i.i = wi
-	i.memory = &Memory{wi.GetExport("memory").Memory()}
+	i.memory = &Memory{&wasmMemory{mem: wi.GetExport("memory").Memory()}}
 	i.requests = []*requestHandle{}
 	i.responses = []*responseHandle{}
 	i.bodies = []*bodyHandle{}

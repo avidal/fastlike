@@ -10,25 +10,6 @@ import (
 	"strings"
 )
 
-// XQD defines the ABI implementation for fastly compute programs, as described in the `abi` module
-// of the `fastly` crate.
-// In order to operate, it needs:
-//   - A function that can return the downstream request
-//   - An implementation of RequestHandles
-//   - An implementation of ResponseHandles
-//   - An implementation of BodyHandles
-//   - A function that takes a ResponseHandle and a BodyHandle and writes it downstream
-//   - A Memory implementation
-// There are default implementations for all of the above that can be used.
-// The caller is responsible for linking the XQD methods to the wasmtime store and constructing
-// an instance of the module.
-// Note that preparing an XQD is then a two-call process. You can't instantiate a fastly compute
-// program without linking the XQD ABI, but linking it alone is not enough to make an XQD
-// ready-to-use since it needs access to the downstream request, response, instance memory, etc.
-type XQD struct {
-	mem Memory
-}
-
 func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 	fmt.Printf("xqd_req_body_downstream_get, rh=%d, bh=%d\n", rh, bh)
 
@@ -68,7 +49,7 @@ func (i *Instance) xqd_body_write(bh int32, addr int32, maxlen int32, end int32,
 	fmt.Printf("xqd_body_write, bh=%d, addr=%d, maxlen=%d\n", bh, addr, maxlen)
 
 	// write maxlen bytes starting at addr to the body with handle bh
-	nread, err := io.CopyN(i.bodies[bh], bytes.NewReader(i.memory.Bytes()[addr:addr+maxlen]), int64(maxlen))
+	nread, err := io.CopyN(i.bodies[bh], bytes.NewReader(i.memory.Data()[addr:addr+maxlen]), int64(maxlen))
 	check(err)
 	i.memory.PutUint32(uint32(nread), int64(nreadaddr))
 	return 0
