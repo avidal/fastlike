@@ -1,14 +1,7 @@
-# Compute@Edge default template for Rust
+# Fastlike
 
-Default package template used by the [Fastly CLI][cli] for Rust-based Compute@Edge projects.
+Fastlike is a Go project that implements the Fastly Compute@Edge ABI using `wasmtime` and exposes
+a `http.Handler` for you to use.
 
-## Usage
-- Install the [Fastly CLI][latest] to your `$PATH`
-- Run `fastly compute init`
-
-[cli]: https://github.com/fastly/cli
-[latest]: https://github.com/fastly/cli/releases/latest
-
-## Security issues
-
-Please see our [SECURITY.md](SECURITY.md) for guidance on reporting security-related issues.
+See `main.go` for an example. We also have the original Rust source in `src/` and a pre-built wasm
+binary in `bin/main.wasm`.
