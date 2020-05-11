@@ -22,10 +22,10 @@ import (
 // Fastlike carries the wasm module, store, and linker and is capable of creating new instances
 // ready to serve requests
 type Fastlike struct {
-	store     *wasmtime.Store
-	wasi      *wasmtime.WasiInstance
-	module    *wasmtime.Module
-	transport http.RoundTripper
+	store      *wasmtime.Store
+	wasi       *wasmtime.WasiInstance
+	module     *wasmtime.Module
+	subrequest SubrequestHandler
 }
 
 // New returns a new Fastlike ready to create new instances from
@@ -47,7 +47,7 @@ func New(wasmfile string) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
-		transport: http.DefaultTransport,
+		subrequest: SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip),
 	}
 }
 
@@ -70,18 +70,26 @@ func NewFromWasm(wasm []byte) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
-		transport: http.DefaultTransport,
+		subrequest: SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip),
 	}
 }
 
-// Transport sets the transport that a fastlike instance will use when making subrequests
-func (f *Fastlike) Transport(t http.RoundTripper) {
-	f.transport = t
+// SubrequestHandler overrides the SubrequestHandler used by instantiated wasm programs.
+func (f *Fastlike) SubrequestHandler(fn SubrequestHandler) {
+	f.subrequest = fn
 }
 
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var instance = f.Instantiate()
 	instance.serve(w, r)
+}
+
+type SubrequestHandler func(backend string, r *http.Request) (*http.Response, error)
+
+func SubrequestHandlerIgnoreBackend(fn func(*http.Request) (*http.Response, error)) SubrequestHandler {
+	return func(backend string, r *http.Request) (*http.Response, error) {
+		return fn(r)
+	}
 }
 
 func check(err error) {
