@@ -264,6 +264,10 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 
 	fmt.Printf("\tsending request %v\n", r)
 	// create a new http.Request using the values specified in the request handle
+
+	// TODO: This panics if we don't replace the host with something that'll go somewhere else. By
+	// default the host will be the original host, which is our proxy, which will send requests
+	// back into wasm.
 	req, err := http.NewRequest(r.method, r.url.String(), rb)
 	check(err)
 	w, err := i.subrequest(string(backend), req)

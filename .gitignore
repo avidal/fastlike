@@ -1,5 +1,5 @@
-/target
-**/*.rs.bk
-pkg/
-bin/
-main
+fastlike
+
+testdata/pkg
+testdata/bin
+testdata/target

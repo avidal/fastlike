@@ -1,6 +1,0 @@
-version = 1
-name = "fastlike2"
-description = "Default package template used by the Fastly CLI for Rust-based Compute@Edge projects."
-authors = ["it+fastlybeta@khanacademy.org"]
-language = "rust"
-service_id = "5PjBZ4C4pQyearWZGuTxoG"

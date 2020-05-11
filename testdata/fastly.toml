@@ -1,0 +1,6 @@
+version = 1
+name = "fastlike-example"
+description = "An example program for the Fastlike implementation"
+authors = ["alexvidal@khanacademy.org", "infrastructure@khanacademy.org"]
+language = "rust"
+service_id = "5PjBZ4C4pQyearWZGuTxoG"

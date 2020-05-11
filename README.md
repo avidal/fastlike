@@ -3,34 +3,32 @@
 Fastlike is a Go project that implements the Fastly Compute@Edge ABI using `wasmtime` and exposes
 a `http.Handler` for you to use.
 
-See `main.go` for an example. We also have the original Rust source in `src/`.
-
-You can run it with:
+There's a proxy implementation in `cmd/fastlike` which you can run with:
 
 ```
-$ fastly compute build
-$ go run main.go
+$ go run ./cmd/fastlike -wasm <wasmfile> -proxy-to <proxy address>
 ```
 
-It'll start an http server on `localhost:5001`. All subrequests issued by the wasm binary will be
-sent to `localhost:8000`.
+You can use a provided wasm binary by building the testdata:
 
-Try a full example with:
+```
+$ cd testdata; fastly compute build; cd ..
+$ go run ./cmd/fastlike -wasm ./testdata/bin/main.wasm -proxy-to <proxy address>
+```
+
+For a more full-featured example:
 
 ```
 # in one terminal:
-$ fastly compute build
-$ go run main.go
+$ cd testdata; fastly compute build; cd ..
+$ go run ./cmd/fastlike -wasm ./testdata/bin/main.wasm -proxy-to localhost:8000 -bind localhost:5000
 
 # in another
 $ python3 -m http.server
 
 # in a third
-$ curl localhost:5001/Cargo.toml
+$ curl localhost:5000/testdata/src/main.rs
 ```
-
-Assuming you're using the same rust code, which has a specific path check for `/Cargo.toml`, you
-should see the `Cargo.toml` from this repository come back from curl.
 
 Go, running Rust, calling Go, proxying to Python.
 
