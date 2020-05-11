@@ -270,6 +270,10 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	// back into wasm.
 	req, err := http.NewRequest(r.method, r.url.String(), rb)
 	check(err)
+
+	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
+	req.Header.Add("cdn-loop", "fastlike")
+
 	w, err := i.subrequest(string(backend), req)
 	if err != nil {
 		fmt.Printf("\tgot error? %s\n", err.Error())

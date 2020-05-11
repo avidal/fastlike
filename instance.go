@@ -3,6 +3,7 @@ package fastlike
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -30,6 +31,14 @@ type Instance struct {
 
 // serve serves the supplied request and response pair. This is not safe to call twice.
 func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(strings.Join(r.Header.Values("cdn-loop"), "\x00"), "fastlike") {
+		// immediately respond with a loop detection
+		w.WriteHeader(http.StatusLoopDetected)
+		w.Write([]byte("Loop detected! This request has already come through your fastly program."))
+		w.Write([]byte("\n"))
+		w.Write([]byte("You probably need to create a custom subrequest handler?"))
+		return
+	}
 	i.ds_request = r
 	i.ds_response = w
 
