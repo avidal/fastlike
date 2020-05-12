@@ -1,7 +1,6 @@
 package fastlike
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,7 +11,7 @@ import (
 // TODO: This has no public methods or public members. Should it even be public? The API could just
 // be New and Fastlike.ServeHTTP(w, r)?
 type Instance struct {
-	i      *wasmtime.Instance
+	wasm   *wasmtime.Instance
 	memory *Memory
 
 	requests  []*requestHandle
@@ -45,16 +44,12 @@ func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
 	// and sending a response downstream.
-	entry := i.i.GetExport("_start").Func()
-	val, err := entry.Call()
+	entry := i.wasm.GetExport("_start").Func()
+	_, err := entry.Call()
 	check(err)
-	fmt.Printf("entry() = %+v\n", val)
 }
 
-// Instantiate returns a new Instance ready to serve requests.
-// This *must* be called for each request, as the XQD runtime is designed around a single
-// request/response pair for each instance.
-func (f *Fastlike) Instantiate() *Instance {
+func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *wasmtime.Linker {
 	// While linkers are reusable across multiple instances, in practice it's not very helpful, as
 	// we need to be able to bind host methods that are instance specific. It wouldn't be very
 	// useful to make a generic "xqd_req_body_downstream_get" function available to module
@@ -63,10 +58,8 @@ func (f *Fastlike) Instantiate() *Instance {
 	// *responses* back to the originating requests in order to send them back downstream.
 	// The linking step is cheap enough that it's not worth the implementation overhead to come up
 	// with an alternative solution.
-	linker := wasmtime.NewLinker(f.store)
-	check(linker.DefineWasi(f.wasi))
-
-	var i = &Instance{}
+	linker := wasmtime.NewLinker(store)
+	check(linker.DefineWasi(wasi))
 
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
@@ -128,13 +121,32 @@ func (f *Fastlike) Instantiate() *Instance {
 	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
 	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)
 
-	wi, err := linker.Instantiate(f.module)
-	check(err)
-	i.i = wi
-	i.memory = &Memory{&wasmMemory{mem: wi.GetExport("memory").Memory()}}
-	i.requests = []*requestHandle{}
-	i.responses = []*responseHandle{}
-	i.bodies = []*bodyHandle{}
-	i.subrequest = f.subrequest
-	return i
+	return linker
+}
+
+// InstanceOption is a functional option applied to an Instance when it's created
+type InstanceOption func(*Instance)
+
+// SubrequestHandlerOption is an InstanceOption which configures how subrequests are issued
+// from wasm programs
+func SubrequestHandlerOption(sh SubrequestHandler) InstanceOption {
+	return func(i *Instance) {
+		i.subrequest = sh
+	}
+}
+
+// MemoryOption is an InstanceOption which configures the underlying MemorySlice our instance uses.
+// Generally only useful in tests on an Instance.
+func MemoryOption(memfn func() MemorySlice) InstanceOption {
+	return func(i *Instance) {
+		i.memory = &Memory{memfn()}
+	}
+}
+
+type SubrequestHandler func(backend string, r *http.Request) (*http.Response, error)
+
+func SubrequestHandlerIgnoreBackend(fn func(*http.Request) (*http.Response, error)) SubrequestHandler {
+	return func(backend string, r *http.Request) (*http.Response, error) {
+		return fn(r)
+	}
 }

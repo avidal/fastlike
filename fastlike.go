@@ -22,14 +22,15 @@ import (
 // Fastlike carries the wasm module, store, and linker and is capable of creating new instances
 // ready to serve requests
 type Fastlike struct {
-	store      *wasmtime.Store
-	wasi       *wasmtime.WasiInstance
-	module     *wasmtime.Module
-	subrequest SubrequestHandler
+	store  *wasmtime.Store
+	wasi   *wasmtime.WasiInstance
+	module *wasmtime.Module
+
+	instanceOpts []InstanceOption
 }
 
 // New returns a new Fastlike ready to create new instances from
-func New(wasmfile string) *Fastlike {
+func New(wasmfile string, instanceOpts ...InstanceOption) *Fastlike {
 	config := wasmtime.NewConfig()
 	config.SetDebugInfo(true)
 	config.SetWasmMultiValue(true)
@@ -47,12 +48,12 @@ func New(wasmfile string) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
-		subrequest: SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip),
+		instanceOpts: instanceOpts,
 	}
 }
 
 // NewFromWasm returns a new Fastlike using the wasm bytes supplied
-func NewFromWasm(wasm []byte) *Fastlike {
+func NewFromWasm(wasm []byte, instanceOpts ...InstanceOption) *Fastlike {
 	config := wasmtime.NewConfig()
 	config.SetDebugInfo(true)
 	config.SetWasmMultiValue(true)
@@ -70,26 +71,38 @@ func NewFromWasm(wasm []byte) *Fastlike {
 
 	return &Fastlike{
 		store: store, wasi: wasi, module: module,
-		subrequest: SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip),
+		instanceOpts: instanceOpts,
 	}
-}
-
-// SubrequestHandler overrides the SubrequestHandler used by instantiated wasm programs.
-func (f *Fastlike) SubrequestHandler(fn SubrequestHandler) {
-	f.subrequest = fn
 }
 
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var instance = f.Instantiate()
+	var instance = f.Instantiate(f.instanceOpts...)
 	instance.serve(w, r)
 }
 
-type SubrequestHandler func(backend string, r *http.Request) (*http.Response, error)
+// Instantiate returns a new Instance ready to serve requests.
+// This *must* be called for each request, as the XQD runtime is designed around a single
+// request/response pair for each instance.
+func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
+	var i = &Instance{}
+	var linker = i.linker(f.store, f.wasi)
 
-func SubrequestHandlerIgnoreBackend(fn func(*http.Request) (*http.Response, error)) SubrequestHandler {
-	return func(backend string, r *http.Request) (*http.Response, error) {
-		return fn(r)
+	wasm, err := linker.Instantiate(f.module)
+	check(err)
+	i.wasm = wasm
+
+	// setup our defaults here, then apply the instance options
+	i.memory = &Memory{&wasmMemory{mem: wasm.GetExport("memory").Memory()}}
+	i.subrequest = SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip)
+	i.requests = []*requestHandle{}
+	i.responses = []*responseHandle{}
+	i.bodies = []*bodyHandle{}
+
+	for _, o := range opts {
+		o(i)
 	}
+
+	return i
 }
 
 func check(err error) {
