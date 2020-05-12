@@ -105,50 +105,22 @@ func (i *Instance) xqd_req_uri_set(rh int32, addr int32, size int32) int32 {
 
 func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
 	fmt.Printf("xqd_req_header_names_get, rh=%d, addr=%d, cursor=%d\n", rh, addr, cursor)
+
 	var r = i.requests.Get(int(rh))
 	var names = []string{}
 	for n, _ := range r.Header {
 		names = append(names, n)
 	}
 
-	// If there's no headers, return early
-	if len(names) == 0 {
-		i.memory.PutUint32(uint32(0), int64(nwrittenaddr))
-
-		// Set the cursor to -1 to stop asking
-		i.memory.PutInt64(-1, int64(ending_cursor_addr))
-		return XqdStatusOK
-	}
-
 	// these names are explicitly unsorted, so let's sort them ourselves
 	sort.Strings(names[:])
 
-	// and then join them together with a nul byte
-	namelist := strings.Join(names, "\x00")
-
-	// add another null byte to the end
-	namelist += "\x00"
-
-	// write the entire list, panic if it's over maxlen
-	if int32(len(namelist)) > maxlen {
-		panic("There's a bug in the ABI for Multi-Value Host Calls, where we cannot advance the cursor, which means we can't go over this single buffer.")
-	}
-
-	nwritten, err := i.memory.WriteAt([]byte(namelist), int64(addr))
-	check(err)
-
-	i.memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
-
-	// Set the cursor to -1 to stop asking
-	i.memory.PutInt64(-1, int64(ending_cursor_addr))
-
-	fmt.Printf("  wrote %d bytes\n", nwritten)
-
-	return 0
+	return multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_addr, nwrittenaddr)
 }
 
-func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) int32 {
+func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
 	fmt.Printf("xqd_req_header_values_get, rh=%d, nameaddr=%d, cursor=%d\n", rh, nameaddr, cursor)
+
 	var r = i.requests.Get(int(rh))
 
 	// read namelen bytes at nameaddr for the name of the header that the caller wants
@@ -159,37 +131,12 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 
 	fmt.Printf("\tlooking for header %s\n", hdr)
 
-	var names = r.Header.Values(hdr)
+	var values = r.Header.Values(hdr)
 
 	// these names are explicitly unsorted, so let's sort them ourselves
-	sort.Strings(names[:])
+	sort.Strings(values[:])
 
-	// and then join them together with a nul byte
-	namelist := strings.Join(names, "\x00")
-
-	// add another null byte to the end
-	namelist += "\x00"
-
-	// write the entire list, panic if it's over maxlen
-	if int32(len(namelist)) > maxlen {
-		panic("There's a bug in the ABI for Multi-Value Host Calls, where we cannot advance the cursor, which means we can't go over this single buffer.")
-	}
-
-	nwritten, err := i.memory.WriteAt([]byte(namelist), int64(addr))
-	check(err)
-
-	// read the names back out and pretty print
-	var b2 = make([]byte, len(namelist))
-	i.memory.ReadAt(b2, int64(addr))
-
-	i.memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
-
-	// Set the cursor to -1 to stop asking
-	i.memory.PutInt64(-1, int64(ending_cursor_addr))
-
-	fmt.Printf("\twrote %d bytes\n", nwritten)
-
-	return 0
+	return multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_addr, nwrittenaddr)
 }
 
 func (i *Instance) xqd_req_header_values_set(rh int32, nameaddr int32, namelen int32, addr int32, valuesz int32) int32 {
@@ -352,6 +299,42 @@ func (i *Instance) xqd_resp_send_downstream(wh int32, bh int32, stream int32) in
 	return 0
 }
 
+func (i *Instance) xqd_resp_header_names_get(rh int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
+	fmt.Printf("xqd_resp_header_names_get, rh=%d, addr=%d, cursor=%d\n", rh, addr, cursor)
+
+	var r = i.responses.Get(int(rh))
+	var names = []string{}
+	for n, _ := range r.Header {
+		names = append(names, n)
+	}
+
+	// these names are explicitly unsorted, so let's sort them ourselves
+	sort.Strings(names[:])
+
+	return multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_addr, nwrittenaddr)
+}
+
+func (i *Instance) xqd_resp_header_values_get(rh int32, nameaddr int32, namelen int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
+	fmt.Printf("xqd_resp_header_values_get, rh=%d, nameaddr=%d, cursor=%d\n", rh, nameaddr, cursor)
+
+	var r = i.responses.Get(int(rh))
+
+	// read namelen bytes at nameaddr for the name of the header that the caller wants
+	var hdrb = make([]byte, namelen)
+	i.memory.ReadAt(hdrb, int64(nameaddr))
+
+	var hdr = http.CanonicalHeaderKey(string(hdrb))
+
+	fmt.Printf("\tlooking for header %s\n", hdr)
+
+	var values = r.Header.Values(hdr)
+
+	// these names are explicitly unsorted, so let's sort them ourselves
+	sort.Strings(values[:])
+
+	return multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_addr, nwrittenaddr)
+}
+
 func (i *Instance) xqd_init(abiv int64) int32 {
 	fmt.Printf("xqd_init, abiv=%d\n", abiv)
 	return 0
@@ -362,6 +345,46 @@ func (i *Instance) xqd_body_new(bh int32) int32 {
 	var bhh, _ = i.bodies.New()
 	i.memory.PutUint32(uint32(bhh), int64(bh))
 	return 0
+}
+
+func multivalue(memory *Memory, data []string, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
+	// If there's no data, return early
+	if len(data) == 0 {
+		memory.PutUint32(uint32(0), int64(nwrittenaddr))
+
+		// Set the cursor to -1 to stop asking
+		memory.PutInt64(-1, int64(ending_cursor_addr))
+		return XqdStatusOK
+	}
+
+	// If the cursor points past our slice, return early
+	if int(cursor) >= len(data) {
+		memory.PutUint32(uint32(0), int64(nwrittenaddr))
+
+		// Set the cursor to -1 to stop asking
+		memory.PutInt64(-1, int64(ending_cursor_addr))
+		return XqdStatusOK
+	}
+
+	var v = []byte(data[cursor])
+	v = append(v, '\x00')
+
+	nwritten, err := memory.WriteAt(v, int64(addr))
+	check(err)
+
+	memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
+
+	// If there's more entries, set the cursor to +1
+	var ec int
+	if int(cursor) < len(data)-1 {
+		ec = int(cursor) + 1
+	} else {
+		ec = -1
+	}
+
+	memory.PutInt64(int64(ec), int64(ending_cursor_addr))
+
+	return XqdStatusOK
 }
 
 func p(name string, args ...int32) {
