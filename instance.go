@@ -46,7 +46,12 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and sending a response downstream.
 	entry := i.wasm.GetExport("_start").Func()
 	_, err := entry.Call()
-	check(err)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error running wasm program.\n"))
+		w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
+		w.Write([]byte(err.Error()))
+	}
 }
 
 func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *wasmtime.Linker {

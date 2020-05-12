@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/khan/fastlike"
@@ -28,11 +29,11 @@ func TestFastlike(t *testing.T) {
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "Hello, world!" {
-			t.Fail()
+			st.Fail()
 		}
 
 		if w.Code != http.StatusOK {
-			t.Fail()
+			st.Fail()
 		}
 	})
 
@@ -43,11 +44,11 @@ func TestFastlike(t *testing.T) {
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "" {
-			t.Fail()
+			st.Fail()
 		}
 
 		if w.Code != http.StatusNoContent {
-			t.Fail()
+			st.Fail()
 		}
 	})
 
@@ -61,11 +62,11 @@ func TestFastlike(t *testing.T) {
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "i am a teapot" {
-			t.Fail()
+			st.Fail()
 		}
 
 		if w.Code != http.StatusTeapot {
-			t.Fail()
+			st.Fail()
 		}
 	})
 
@@ -85,6 +86,21 @@ func TestFastlike(t *testing.T) {
 			}
 		}))
 		i.ServeHTTP(w, r)
+	})
+
+	t.Run("panic!", func(st *testing.T) {
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusInternalServerError {
+			st.Fail()
+		}
+
+		if !strings.Contains(w.Body.String(), "Error running wasm program") {
+			st.Fail()
+		}
 	})
 }
 

@@ -41,6 +41,10 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             req.send(BACKEND_NAME)
         },
 
+        (&Method::GET, "/panic!") => {
+            panic!("you told me to");
+        },
+
         // This one is used for example purposes, not tests
         (&Method::GET, path) if path.starts_with("/testdata") => {
             req.send(BACKEND_NAME)
