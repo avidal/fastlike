@@ -14,9 +14,9 @@ type Instance struct {
 	wasm   *wasmtime.Instance
 	memory *Memory
 
-	requests  []*requestHandle
-	responses []*responseHandle
-	bodies    []*bodyHandle
+	requests  RequestHandles
+	responses ResponseHandles
+	bodies    BodyHandles
 
 	// ds_request represents the downstream request, ie the one originated from the user agent
 	ds_request *http.Request
@@ -128,7 +128,7 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 type InstanceOption func(*Instance)
 
 // SubrequestHandlerOption is an InstanceOption which configures how subrequests are issued
-// from wasm programs
+// from wasm programs.
 func SubrequestHandlerOption(sh SubrequestHandler) InstanceOption {
 	return func(i *Instance) {
 		i.subrequest = sh
@@ -137,12 +137,19 @@ func SubrequestHandlerOption(sh SubrequestHandler) InstanceOption {
 
 // MemoryOption is an InstanceOption which configures the underlying MemorySlice our instance uses.
 // Generally only useful in tests on an Instance.
+// TODO: Consider removing this as an option. It's not useful for the public API, where you need to
+// have valid wasm-backed memory, and package tests can directly replace the memory anyway.
 func MemoryOption(memfn func() MemorySlice) InstanceOption {
 	return func(i *Instance) {
 		i.memory = &Memory{memfn()}
 	}
 }
 
+// TODO: Consider swapping this for an approach where callers register a func for each backend
+// explicitly? Something like: `i.RegisterBackend("origin", http.DefaultTransport.RoundTrip)`
+// It should be specifiable on the `Fastlike` type and carry over to the Instance, so an
+// InstanceOption seems ideal. Maybe `BackendRegistryOption` which provides a func that takes
+// a backend and returns a func(request) (response, error)?
 type SubrequestHandler func(backend string, r *http.Request) (*http.Response, error)
 
 func SubrequestHandlerIgnoreBackend(fn func(*http.Request) (*http.Response, error)) SubrequestHandler {

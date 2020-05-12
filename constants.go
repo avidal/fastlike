@@ -16,3 +16,13 @@ const (
 	XqdErrHttpUserInvalid XqdStatus = 8
 	XqdErrHttpIncomplete  XqdStatus = 9
 )
+
+type HttpVersion int32
+
+const (
+	Http09 HttpVersion = 0
+	Http10 HttpVersion = 1
+	Http11 HttpVersion = 2
+	Http2  HttpVersion = 3
+	Http3  HttpVersion = 4
+)

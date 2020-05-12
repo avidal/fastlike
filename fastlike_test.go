@@ -23,7 +23,7 @@ func TestFastlike(t *testing.T) {
 	// Each test case will create its own instance and request/response pair to test against
 	t.Run("simple-response", func(st *testing.T) {
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.SubrequestHandlerOption(failingSubrequestHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -38,7 +38,7 @@ func TestFastlike(t *testing.T) {
 
 	t.Run("no-body", func(st *testing.T) {
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.SubrequestHandlerOption(failingSubrequestHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -53,7 +53,7 @@ func TestFastlike(t *testing.T) {
 
 	t.Run("proxy", func(st *testing.T) {
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.SubrequestHandlerOption(testSubrequestHandler(st, &http.Response{
 			StatusCode: http.StatusTeapot,
 			Body:       ioutil.NopCloser(bytes.NewBuffer([]byte("i am a teapot"))),
@@ -72,7 +72,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("append-header", func(st *testing.T) {
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.SubrequestHandlerOption(func(_ string, r *http.Request) (*http.Response, error) {
 			if r.Header.Get("test-header") != "test-value" {
 				st.Fail()

@@ -14,42 +14,35 @@ func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 	fmt.Printf("xqd_req_body_downstream_get, rh=%d, bh=%d\n", rh, bh)
 
 	// Convert the downstream request into a (request, body) handle pair
-	var rhandle = &requestHandle{}
-	var bhandle = &bodyHandle{}
+	var rhh, rhandle = i.requests.New()
+	var bhh, bhandle = i.bodies.New()
+	rhandle.Request = i.ds_request
 
-	rhandle.headers = i.ds_request.Header.Clone()
-	rhandle.headers.Set("host", i.ds_request.Host)
-	rhandle.method = i.ds_request.Method
-
-	// TODO: Support http other than 1.1?
-	rhandle.version = Http11
-
-	var scheme = "http"
-	if i.ds_request.TLS != nil {
-		scheme = "https"
+	// downstream requests don't carry host or scheme on their url for some dumb reason
+	rhandle.URL.Host = rhandle.Host
+	rhandle.URL.Scheme = "http"
+	if rhandle.TLS != nil {
+		rhandle.URL.Scheme = "https"
 	}
 
-	var urlstr = fmt.Sprintf("%s://%s%s", scheme, i.ds_request.Host, i.ds_request.URL.String())
-	var uri, err = url.Parse(urlstr)
-	check(err)
-	rhandle.url = uri
+	io.Copy(bhandle, rhandle.Body)
+	defer rhandle.Body.Close()
 
-	io.Copy(bhandle, i.ds_request.Body)
-	defer i.ds_request.Body.Close()
-
-	i.requests = append(i.requests, rhandle)
-	i.bodies = append(i.bodies, bhandle)
-
-	i.memory.PutUint32(uint32(len(i.requests)-1), int64(rh))
-	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bh))
+	i.memory.PutUint32(uint32(rhh), int64(rh))
+	i.memory.PutUint32(uint32(bhh), int64(bh))
 	return 0
 }
 
-func (i *Instance) xqd_body_write(bh int32, addr int32, maxlen int32, end int32, nreadaddr int32) int32 {
+func (i *Instance) xqd_body_write(bh int32, addr int32, maxlen int32, end int32, nreadaddr int32) XqdStatus {
 	fmt.Printf("xqd_body_write, bh=%d, addr=%d, maxlen=%d\n", bh, addr, maxlen)
 
 	// write maxlen bytes starting at addr to the body with handle bh
-	nread, err := io.CopyN(i.bodies[bh], bytes.NewReader(i.memory.Data()[addr:addr+maxlen]), int64(maxlen))
+	var bhandle = i.bodies.Get(int(bh))
+	if bhandle == nil {
+		return XqdErrInvalidHandle
+	}
+
+	nread, err := io.CopyN(bhandle, bytes.NewReader(i.memory.Data()[addr:addr+maxlen]), int64(maxlen))
 	check(err)
 	i.memory.PutUint32(uint32(nread), int64(nreadaddr))
 	return 0
@@ -57,9 +50,7 @@ func (i *Instance) xqd_body_write(bh int32, addr int32, maxlen int32, end int32,
 
 func (i *Instance) xqd_req_version_get(rh int32, addr int32) int32 {
 	fmt.Printf("xqd_req_version_get, rh=%d, addr=%d\n", rh, addr)
-
-	var r = i.requests[rh]
-	i.memory.PutUint32(uint32(r.version), int64(addr))
+	i.memory.PutUint32(uint32(Http11), int64(addr))
 	return 0
 }
 
@@ -67,17 +58,21 @@ func (i *Instance) xqd_req_version_set(reqH int32, httpversion int32) int32 {
 	fmt.Printf("xqd_req_version_set, rh=%d, vers=%d\n", reqH, httpversion)
 
 	// The default http version is http/1.1. Panic if we get anything else.
-	if httpversion != 2 {
+	if httpversion != int32(Http11) {
 		panic("Unsupported HTTP version")
 	}
 	return 0
 }
 
-func (i *Instance) xqd_req_method_get(rh int32, addr int32, maxlen, nwrittenaddr int32) int32 {
+func (i *Instance) xqd_req_method_get(rh int32, addr int32, maxlen, nwrittenaddr int32) XqdStatus {
 	fmt.Printf("xqd_req_method_get, rh=%d, addr=%d\n", rh, addr)
 
-	var r = i.requests[rh]
-	nwritten, err := i.memory.WriteAt([]byte(r.method), int64(addr))
+	var rhandle = i.requests.Get(int(rh))
+	if rhandle == nil {
+		return XqdErrInvalidHandle
+	}
+
+	nwritten, err := i.memory.WriteAt([]byte(rhandle.Method), int64(addr))
 	check(err)
 	i.memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
 	return 0
@@ -89,8 +84,8 @@ func (i *Instance) xqd_req_method_set(rh int32, addr int32, size int32) int32 {
 	var meth = make([]byte, size)
 	i.memory.ReadAt(meth, int64(addr))
 
-	var r = i.requests[rh]
-	r.method = string(meth)
+	var r = i.requests.Get(int(rh))
+	r.Method = string(meth)
 	return 0
 }
 
@@ -103,17 +98,26 @@ func (i *Instance) xqd_req_uri_set(rh int32, addr int32, size int32) int32 {
 	var u, err = url.Parse(string(uri))
 	check(err)
 
-	var r = i.requests[rh]
-	r.url = u
+	var r = i.requests.Get(int(rh))
+	r.URL = u
 	return 0
 }
 
-func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) int32 {
+func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) XqdStatus {
 	fmt.Printf("xqd_req_header_names_get, rh=%d, addr=%d, cursor=%d\n", rh, addr, cursor)
-	var r = i.requests[rh]
+	var r = i.requests.Get(int(rh))
 	var names = []string{}
-	for n, _ := range r.headers {
+	for n, _ := range r.Header {
 		names = append(names, n)
+	}
+
+	// If there's no headers, return early
+	if len(names) == 0 {
+		i.memory.PutUint32(uint32(0), int64(nwrittenaddr))
+
+		// Set the cursor to -1 to stop asking
+		i.memory.PutInt64(-1, int64(ending_cursor_addr))
+		return XqdStatusOK
 	}
 
 	// these names are explicitly unsorted, so let's sort them ourselves
@@ -133,10 +137,6 @@ func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, 
 	nwritten, err := i.memory.WriteAt([]byte(namelist), int64(addr))
 	check(err)
 
-	// read the names back out and pretty print
-	var b2 = make([]byte, len(namelist))
-	i.memory.ReadAt(b2, int64(addr))
-
 	i.memory.PutUint32(uint32(nwritten), int64(nwrittenaddr))
 
 	// Set the cursor to -1 to stop asking
@@ -149,7 +149,7 @@ func (i *Instance) xqd_req_header_names_get(rh int32, addr int32, maxlen int32, 
 
 func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen int32, addr int32, maxlen int32, cursor int32, ending_cursor_addr int32, nwrittenaddr int32) int32 {
 	fmt.Printf("xqd_req_header_values_get, rh=%d, nameaddr=%d, cursor=%d\n", rh, nameaddr, cursor)
-	var r = i.requests[rh]
+	var r = i.requests.Get(int(rh))
 
 	// read namelen bytes at nameaddr for the name of the header that the caller wants
 	var hdrb = make([]byte, namelen)
@@ -159,7 +159,7 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 
 	fmt.Printf("\tlooking for header %s\n", hdr)
 
-	var names = r.headers[hdr]
+	var names = r.Header.Values(hdr)
 
 	// these names are explicitly unsorted, so let's sort them ourselves
 	sort.Strings(names[:])
@@ -194,7 +194,7 @@ func (i *Instance) xqd_req_header_values_get(rh int32, nameaddr int32, namelen i
 
 func (i *Instance) xqd_req_header_values_set(rh int32, nameaddr int32, namelen int32, addr int32, valuesz int32) int32 {
 	fmt.Printf("xqd_req_header_values_set, rh=%d, nameaddr=%d\n", rh, nameaddr)
-	var r = i.requests[rh]
+	var r = i.requests.Get(int(rh))
 
 	// read namelen bytes at nameaddr for the name of the header that the caller wants to set
 	var hdrb = make([]byte, namelen)
@@ -211,13 +211,13 @@ func (i *Instance) xqd_req_header_values_set(rh int32, nameaddr int32, namelen i
 
 	var values = bytes.Split(valuebytes, []byte("\x00"))
 
-	if r.headers == nil {
-		r.headers = http.Header{}
+	if r.Header == nil {
+		r.Header = http.Header{}
 	}
 
 	for _, v := range values {
 		fmt.Printf("\tadding value %q\n", v)
-		r.headers.Add(hdr, string(v))
+		r.Header.Add(hdr, string(v))
 	}
 
 	return 0
@@ -225,9 +225,9 @@ func (i *Instance) xqd_req_header_values_set(rh int32, nameaddr int32, namelen i
 
 func (i *Instance) xqd_req_uri_get(rh int32, addr int32, maxlen, nwrittenaddr int32) int32 {
 	fmt.Printf("xqd_req_uri_get, rh=%d, addr=%d\n", rh, addr)
-	var r = i.requests[rh]
+	var r = i.requests.Get(int(rh))
 	//uri := fmt.Sprintf("%s://%s%s", "http", r.Host, r.URL.String())
-	uri := r.url.String()
+	uri := r.URL.String()
 	fmt.Printf("\twrote url as %s\n", uri)
 	nwritten, err := i.memory.WriteAt([]byte(uri), int64(addr))
 	check(err)
@@ -237,15 +237,15 @@ func (i *Instance) xqd_req_uri_get(rh int32, addr int32, maxlen, nwrittenaddr in
 
 func (i *Instance) xqd_req_new(reqH int32) int32 {
 	fmt.Printf("xqd_req_new, rh=%d\n", reqH)
-	i.requests = append(i.requests, &requestHandle{})
-	i.memory.PutUint32(uint32(len(i.requests)-1), int64(reqH))
+	var rh, _ = i.requests.New()
+	i.memory.PutUint32(uint32(rh), int64(reqH))
 	return 0
 }
 
 func (i *Instance) xqd_resp_new(wh int32) int32 {
 	fmt.Printf("xqd_resp_new, wh=%d\n", wh)
-	i.responses = append(i.responses, &responseHandle{})
-	i.memory.PutUint32(uint32(len(i.responses)-1), int64(wh))
+	var whh, _ = i.responses.New()
+	i.memory.PutUint32(uint32(whh), int64(wh))
 	return 0
 }
 
@@ -254,8 +254,8 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	// expects a response handle and response body handle
 	fmt.Printf("xqd_req_send, rh=%d, bh=%d\n", rh, bh)
 
-	var r = i.requests[rh]
-	var rb = i.bodies[bh]
+	var r = i.requests.Get(int(rh))
+	var rb = i.bodies.Get(int(bh))
 
 	var backend = make([]byte, backendSize)
 	i.memory.ReadAt(backend, int64(backendOffset))
@@ -268,10 +268,10 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	// TODO: This panics if we don't replace the host with something that'll go somewhere else. By
 	// default the host will be the original host, which is our proxy, which will send requests
 	// back into wasm.
-	req, err := http.NewRequest(r.method, r.url.String(), rb)
+	req, err := http.NewRequest(r.Method, r.URL.String(), rb)
 	check(err)
 
-	for k, v := range r.headers {
+	for k, v := range r.Header {
 		req.Header[http.CanonicalHeaderKey(k)] = v
 	}
 
@@ -286,50 +286,37 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 
 	// Convert the response into an (rh, bh) pair, put them in the list, and write out the handle
 	// numbers
-	var whandle = &responseHandle{}
-	switch w.Proto {
-	case "HTTP/0.9":
-		whandle.version = Http09
-	case "HTTP/1.0":
-		whandle.version = Http10
-	case "HTTP/1.1":
-		whandle.version = Http11
-	case "HTTP/2":
-		whandle.version = Http2
-	case "HTTP/3":
-		whandle.version = Http3
-	}
-	whandle.status = w.StatusCode
-	whandle.headers = w.Header.Clone()
-
-	i.responses = append(i.responses, whandle)
+	var whh, whandle = i.responses.New()
+	whandle.Status = w.Status
+	whandle.StatusCode = w.StatusCode
+	whandle.Header = w.Header.Clone()
 
 	// and stick the body into a new body handle
 	// TODO: Figure out how to stream this? w.Body is a ReadCloser
 	// we could change body handles to be io.Reader but then we won't be able to write it..
 	// if it was an io.ReadWriteCloser then we could in this case set it up with a discarding
 	// writer?
-	var bhandle = &bodyHandle{}
+	var bhh, bhandle = i.bodies.New()
 	io.Copy(bhandle, w.Body)
-	i.bodies = append(i.bodies, bhandle)
 
-	i.memory.PutUint32(uint32(len(i.responses)-1), int64(whaddr))
-	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bhaddr))
+	i.memory.PutUint32(uint32(whh), int64(whaddr))
+	i.memory.PutUint32(uint32(bhh), int64(bhaddr))
 
 	return 0
 }
 
 func (i *Instance) xqd_resp_status_set(wh int32, httpstatus int32) int32 {
 	fmt.Printf("xqd_resp_status_set, wh=%d, status=%d\n", wh, httpstatus)
-	w := i.responses[wh]
-	w.status = int(httpstatus)
+	w := i.responses.Get(int(wh))
+	w.StatusCode = int(httpstatus)
+	w.Status = http.StatusText(w.StatusCode)
 	return 0
 }
 
 func (i *Instance) xqd_resp_status_get(wh int32, addr int32) int32 {
 	fmt.Printf("xqd_resp_status_get, wh=%d, addr=%d\n", wh, addr)
-	w := i.responses[wh]
-	i.memory.PutUint32(uint32(w.status), int64(addr))
+	w := i.responses.Get(int(wh))
+	i.memory.PutUint32(uint32(w.StatusCode), int64(addr))
 	return 0
 }
 
@@ -350,14 +337,14 @@ func (i *Instance) xqd_resp_send_downstream(wh int32, bh int32, stream int32) in
 		panic("Cannot stream responses...yet.")
 	}
 
-	var w, b = i.responses[wh], i.bodies[bh]
+	var w, b = i.responses.Get(int(wh)), i.bodies.Get(int(bh))
 	fmt.Printf("\trw=%v, w=%v, b=%v\n", i.ds_response, w, b)
 
-	for k, v := range w.headers {
+	for k, v := range w.Header {
 		i.ds_response.Header()[k] = v
 	}
 
-	i.ds_response.WriteHeader(w.status)
+	i.ds_response.WriteHeader(w.StatusCode)
 
 	io.Copy(i.ds_response, b)
 
@@ -371,8 +358,8 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 
 func (i *Instance) xqd_body_new(bh int32) int32 {
 	fmt.Printf("xqd_body_new, bh=%d\n", bh)
-	i.bodies = append(i.bodies, &bodyHandle{})
-	i.memory.PutUint32(uint32(len(i.bodies)-1), int64(bh))
+	var bhh, _ = i.bodies.New()
+	i.memory.PutUint32(uint32(bhh), int64(bh))
 	return 0
 }
 
