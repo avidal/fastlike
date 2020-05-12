@@ -24,8 +24,8 @@ type Instance struct {
 	// ds_response represents the downstream response, where we're going to write the final output
 	ds_response http.ResponseWriter
 
-	// subrequest is used to issue subrequests
-	subrequest SubrequestHandler
+	// backends is used to issue subrequests
+	backends BackendHandler
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
@@ -35,7 +35,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusLoopDetected)
 		w.Write([]byte("Loop detected! This request has already come through your fastly program."))
 		w.Write([]byte("\n"))
-		w.Write([]byte("You probably need to create a custom subrequest handler?"))
+		w.Write([]byte("You probably have a non-exhaustive backend handler?"))
 		return
 	}
 	i.ds_request = r
@@ -127,11 +127,10 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 // InstanceOption is a functional option applied to an Instance when it's created
 type InstanceOption func(*Instance)
 
-// SubrequestHandlerOption is an InstanceOption which configures how subrequests are issued
-// from wasm programs.
-func SubrequestHandlerOption(sh SubrequestHandler) InstanceOption {
+// BackendHandlerOption is an InstanceOption which configures how subrequests are issued by backend
+func BackendHandlerOption(b BackendHandler) InstanceOption {
 	return func(i *Instance) {
-		i.subrequest = sh
+		i.backends = b
 	}
 }
 
@@ -142,18 +141,5 @@ func SubrequestHandlerOption(sh SubrequestHandler) InstanceOption {
 func MemoryOption(memfn func() MemorySlice) InstanceOption {
 	return func(i *Instance) {
 		i.memory = &Memory{memfn()}
-	}
-}
-
-// TODO: Consider swapping this for an approach where callers register a func for each backend
-// explicitly? Something like: `i.RegisterBackend("origin", http.DefaultTransport.RoundTrip)`
-// It should be specifiable on the `Fastlike` type and carry over to the Instance, so an
-// InstanceOption seems ideal. Maybe `BackendRegistryOption` which provides a func that takes
-// a backend and returns a func(request) (response, error)?
-type SubrequestHandler func(backend string, r *http.Request) (*http.Response, error)
-
-func SubrequestHandlerIgnoreBackend(fn func(*http.Request) (*http.Response, error)) SubrequestHandler {
-	return func(backend string, r *http.Request) (*http.Response, error) {
-		return fn(r)
 	}
 }

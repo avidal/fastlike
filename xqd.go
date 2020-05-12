@@ -278,7 +278,8 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
 	req.Header.Add("cdn-loop", "fastlike")
 
-	w, err := i.subrequest(string(backend), req)
+	var backendH = i.backends(string(backend))
+	w, err := backendH(req)
 	if err != nil {
 		fmt.Printf("\tgot error? %s\n", err.Error())
 	}

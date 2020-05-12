@@ -24,7 +24,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("simple-response", func(st *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.SubrequestHandlerOption(failingSubrequestHandler(st)))
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "Hello, world!" {
@@ -39,7 +39,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("no-body", func(st *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.SubrequestHandlerOption(failingSubrequestHandler(st)))
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "" {
@@ -54,7 +54,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("proxy", func(st *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.SubrequestHandlerOption(testSubrequestHandler(st, &http.Response{
+		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, &http.Response{
 			StatusCode: http.StatusTeapot,
 			Body:       ioutil.NopCloser(bytes.NewBuffer([]byte("i am a teapot"))),
 		})))
@@ -73,30 +73,36 @@ func TestFastlike(t *testing.T) {
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.SubrequestHandlerOption(func(_ string, r *http.Request) (*http.Response, error) {
-			if r.Header.Get("test-header") != "test-value" {
-				st.Fail()
-			}
+		i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
+			return func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("test-header") != "test-value" {
+					st.Fail()
+				}
 
-			return &http.Response{
-				StatusCode: http.StatusNoContent, Body: ioutil.NopCloser(bytes.NewBuffer(nil)),
-			}, nil
+				return &http.Response{
+					StatusCode: http.StatusNoContent, Body: ioutil.NopCloser(bytes.NewBuffer(nil)),
+				}, nil
+			}
 		}))
 		i.ServeHTTP(w, r)
 	})
 }
 
-func failingSubrequestHandler(t *testing.T) fastlike.SubrequestHandler {
-	return func(_ string, _ *http.Request) (*http.Response, error) {
-		t.Helper()
-		t.Fail()
-		return nil, errors.New("No subrequests allowed!")
+func failingBackendHandler(t *testing.T) fastlike.BackendHandler {
+	return func(_ string) fastlike.Backend {
+		return func(_ *http.Request) (*http.Response, error) {
+			t.Helper()
+			t.Fail()
+			return nil, errors.New("No subrequests allowed!")
+		}
 	}
 }
 
-func testSubrequestHandler(t *testing.T, w *http.Response) fastlike.SubrequestHandler {
-	return func(_ string, _ *http.Request) (*http.Response, error) {
-		t.Helper()
-		return w, nil
+func testBackendHandler(t *testing.T, w *http.Response) fastlike.BackendHandler {
+	return func(_ string) fastlike.Backend {
+		return func(_ *http.Request) (*http.Response, error) {
+			t.Helper()
+			return w, nil
+		}
 	}
 }

@@ -93,10 +93,12 @@ func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
 
 	// setup our defaults here, then apply the instance options
 	i.memory = &Memory{&wasmMemory{mem: wasm.GetExport("memory").Memory()}}
-	i.subrequest = SubrequestHandlerIgnoreBackend(http.DefaultTransport.RoundTrip)
 	i.requests = RequestHandles{}
 	i.responses = ResponseHandles{}
 	i.bodies = BodyHandles{}
+
+	// By default, any subrequests will return a 502
+	i.backends = defaultBackendHandler()
 
 	for _, o := range opts {
 		o(i)

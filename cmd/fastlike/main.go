@@ -26,9 +26,11 @@ func main() {
 	// NOTE: You probably want to specify a proxy-to, otherwise any requests that get proxied
 	// without changing the hostname will loop and be blocked.
 	if *proxyTo != "" {
-		opts = append(opts, fastlike.SubrequestHandlerOption(func(_ string, r *http.Request) (*http.Response, error) {
-			r.URL.Host = *proxyTo
-			return http.DefaultClient.Do(r)
+		opts = append(opts, fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
+			return func(r *http.Request) (*http.Response, error) {
+				r.URL.Host = *proxyTo
+				return http.DefaultClient.Do(r)
+			}
 		}))
 	}
 
