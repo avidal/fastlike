@@ -36,6 +36,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastlike-example"
+version = "0.1.0"
+dependencies = [
+ "fastly 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "fastly"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -70,13 +77,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "http 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "fastly-template-rust-default"
-version = "0.1.0"
-dependencies = [
- "fastly 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
