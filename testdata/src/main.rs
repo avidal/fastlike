@@ -32,6 +32,16 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             .status(StatusCode::NO_CONTENT)
             .body(Body::new()?)?),
 
+        (&Method::GET, "/append-header") => {
+            req.headers_mut().insert("test-header", HeaderValue::from_static("test-value"));
+            req.send(BACKEND_NAME)
+        },
+
+        (&Method::GET, path) if path.starts_with("/proxy") => {
+            req.send(BACKEND_NAME)
+        },
+
+        // This one is used for example purposes, not tests
         (&Method::GET, path) if path.starts_with("/testdata") => {
             req.send(BACKEND_NAME)
         },

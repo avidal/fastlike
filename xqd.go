@@ -271,6 +271,10 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	req, err := http.NewRequest(r.method, r.url.String(), rb)
 	check(err)
 
+	for k, v := range r.headers {
+		req.Header[http.CanonicalHeaderKey(k)] = v
+	}
+
 	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
 	req.Header.Add("cdn-loop", "fastlike")
 

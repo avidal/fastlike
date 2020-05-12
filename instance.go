@@ -28,8 +28,8 @@ type Instance struct {
 	subrequest SubrequestHandler
 }
 
-// serve serves the supplied request and response pair. This is not safe to call twice.
-func (i *Instance) serve(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
+func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(strings.Join(r.Header.Values("cdn-loop"), "\x00"), "fastlike") {
 		// immediately respond with a loop detection
 		w.WriteHeader(http.StatusLoopDetected)

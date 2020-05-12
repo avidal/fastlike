@@ -77,7 +77,7 @@ func NewFromWasm(wasm []byte, instanceOpts ...InstanceOption) *Fastlike {
 
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var instance = f.Instantiate(f.instanceOpts...)
-	instance.serve(w, r)
+	instance.ServeHTTP(w, r)
 }
 
 // Instantiate returns a new Instance ready to serve requests.
