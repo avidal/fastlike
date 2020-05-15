@@ -15,7 +15,6 @@ func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 
 	// Convert the downstream request into a (request, body) handle pair
 	var rhh, rhandle = i.requests.New()
-	var bhh, bhandle = i.bodies.New()
 	rhandle.Request = i.ds_request
 
 	// downstream requests don't carry host or scheme on their url for some dumb reason
@@ -25,8 +24,7 @@ func (i *Instance) xqd_req_body_downstream_get(rh int32, bh int32) int32 {
 		rhandle.URL.Scheme = "https"
 	}
 
-	io.Copy(bhandle, rhandle.Body)
-	defer rhandle.Body.Close()
+	var bhh, _ = i.bodies.NewReader(rhandle.Body)
 
 	i.memory.PutUint32(uint32(rhh), int64(rh))
 	i.memory.PutUint32(uint32(bhh), int64(bh))
@@ -238,14 +236,10 @@ func (i *Instance) xqd_req_send(rh int32, bh int32, backendOffset, backendSize i
 	whandle.Status = w.Status
 	whandle.StatusCode = w.StatusCode
 	whandle.Header = w.Header.Clone()
+	whandle.Body = w.Body
 
-	// and stick the body into a new body handle
-	// TODO: Figure out how to stream this? w.Body is a ReadCloser
-	// we could change body handles to be io.Reader but then we won't be able to write it..
-	// if it was an io.ReadWriteCloser then we could in this case set it up with a discarding
-	// writer?
-	var bhh, bhandle = i.bodies.New()
-	io.Copy(bhandle, w.Body)
+	var bhh, bhhandle = i.bodies.NewReader(whandle.Body)
+	fmt.Printf("\tcreated response body handle %+v\n", bhhandle)
 
 	i.memory.PutUint32(uint32(whh), int64(whaddr))
 	i.memory.PutUint32(uint32(bhh), int64(bhaddr))
@@ -286,7 +280,7 @@ func (i *Instance) xqd_resp_send_downstream(wh int32, bh int32, stream int32) in
 	}
 
 	var w, b = i.responses.Get(int(wh)), i.bodies.Get(int(bh))
-	fmt.Printf("\trw=%v, w=%v, b=%v\n", i.ds_response, w, b)
+	fmt.Printf("\trw=%v, w=%v, b=%+v\n", i.ds_response, w, b)
 
 	for k, v := range w.Header {
 		i.ds_response.Header()[k] = v
@@ -342,7 +336,7 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 
 func (i *Instance) xqd_body_new(bh int32) int32 {
 	fmt.Printf("xqd_body_new, bh=%d\n", bh)
-	var bhh, _ = i.bodies.New()
+	var bhh, _ = i.bodies.NewBuffer()
 	i.memory.PutUint32(uint32(bhh), int64(bh))
 	return 0
 }

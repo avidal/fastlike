@@ -76,6 +76,7 @@ func TestFastlike(t *testing.T) {
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
 			return func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
 				if r.Header.Get("test-header") != "test-value" {
 					st.Fail()
 				}

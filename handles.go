@@ -2,6 +2,8 @@ package fastlike
 
 import (
 	"bytes"
+	"io"
+	"io/ioutil"
 	"net/http"
 )
 
@@ -60,17 +62,34 @@ func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
 	return len(rhs.handles) - 1, rh
 }
 
-// BodyHandle is a bytes.Buffer..and that's about it.
-// TODO: Should this have flags for readable/writable? Need more deep-diving on the ABI to see how
-// exactly bodies are treated on the guest. We may be able to say that a BodyHandle is an
-// io.ReadWriteCloser? Might just defer until if/when we implement streaming.
+// BodyHandle represents a body. It could be readable or writable, but not both.
+// For cases where it's already connected to a request or response body, the reader or writer
+// properties will reference the original request or response respectively.
+// For new bodies, `buf` will hold the contents and either the reader or writer will wrap it.
 type BodyHandle struct {
-	*bytes.Buffer
+	reader io.Reader
+	writer io.Writer
+	closer io.Closer
+
+	buf *bytes.Buffer
 }
 
 // Close implements io.Closer for a BodyHandle
 func (b *BodyHandle) Close() error {
+	if b.closer != nil {
+		return b.closer.Close()
+	}
 	return nil
+}
+
+// Read implements io.Reader for a BodyHandle
+func (b *BodyHandle) Read(p []byte) (int, error) {
+	return b.reader.Read(p)
+}
+
+// Write implements io.Writer for a BodyHandle
+func (b *BodyHandle) Write(p []byte) (int, error) {
+	return b.writer.Write(p)
 }
 
 type BodyHandles struct {
@@ -84,8 +103,28 @@ func (bhs *BodyHandles) Get(id int) *BodyHandle {
 
 	return bhs.handles[id]
 }
-func (bhs *BodyHandles) New() (int, *BodyHandle) {
-	bh := &BodyHandle{new(bytes.Buffer)}
+
+// NewBuffer creates a BodyHandle backed by a buffer which can be read from or written to
+func (bhs *BodyHandles) NewBuffer() (int, *BodyHandle) {
+	bh := &BodyHandle{buf: new(bytes.Buffer)}
+	bh.reader = io.Reader(bh.buf)
+	bh.writer = io.Writer(bh.buf)
+	bhs.handles = append(bhs.handles, bh)
+	return len(bhs.handles) - 1, bh
+}
+
+func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
+	bh := &BodyHandle{}
+	bh.reader = rdr
+	bh.closer = rdr
+	bh.writer = ioutil.Discard
+	bhs.handles = append(bhs.handles, bh)
+	return len(bhs.handles) - 1, bh
+}
+
+func (bhs *BodyHandles) NewWriter(w io.Writer) (int, *BodyHandle) {
+	bh := &BodyHandle{}
+	bh.writer = w
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles) - 1, bh
 }
