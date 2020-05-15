@@ -15,6 +15,7 @@ package fastlike
 
 import (
 	"net/http"
+	"sync"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -22,6 +23,7 @@ import (
 // Fastlike carries the wasm module, store, and linker and is capable of creating new instances
 // ready to serve requests
 type Fastlike struct {
+	*sync.Mutex
 	store  *wasmtime.Store
 	wasi   *wasmtime.WasiInstance
 	module *wasmtime.Module
@@ -47,6 +49,7 @@ func New(wasmfile string, instanceOpts ...InstanceOption) *Fastlike {
 	check(err)
 
 	return &Fastlike{
+		Mutex: &sync.Mutex{},
 		store: store, wasi: wasi, module: module,
 		instanceOpts: instanceOpts,
 	}
@@ -70,6 +73,7 @@ func NewFromWasm(wasm []byte, instanceOpts ...InstanceOption) *Fastlike {
 	check(err)
 
 	return &Fastlike{
+		Mutex: &sync.Mutex{},
 		store: store, wasi: wasi, module: module,
 		instanceOpts: instanceOpts,
 	}
@@ -84,6 +88,9 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // This *must* be called for each request, as the XQD runtime is designed around a single
 // request/response pair for each instance.
 func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
+	f.Lock()
+	defer f.Unlock()
+
 	var i = &Instance{}
 	var linker = i.linker(f.store, f.wasi)
 
