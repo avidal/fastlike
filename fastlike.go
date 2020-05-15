@@ -1,16 +1,3 @@
-// package fastlike is a Go implementation of the Fastly Compute@Edge XQD ABI, as described in the
-// `fastly` crate.
-// It is designed to be used as an `http.Handler`, and has a `ServeHTTP` method to accomodate.
-// The ABI is designed around a single instance handling a single request and response pair. This
-// package is thus designed accordingly, with each incoming HTTP request being passed to a fresh
-// wasm instance.
-// The public surface area of this package is intentionally small, as it is designed to operate on
-// a single (request, response) pair and any fiddling with the internals can cause serious
-// side-effects.
-// For reference to the *guest* side of the ABI, see the following for the ABI methods:
-// https://docs.rs/crate/fastly/0.3.2/source/src/abi.rs
-// And for some of the constants (such as the ABI response status codes), see:
-// https://docs.rs/crate/fastly-shared/0.3.2/source/src/lib.rs
 package fastlike
 
 import (
