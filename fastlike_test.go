@@ -67,6 +67,22 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("user-agent", func(st *testing.T) {
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i.ServeHTTP(w, r)
+
+		if w.Body.String() != "Firefox 76.1.15" {
+			st.Fail()
+		}
+
+		if w.Code != http.StatusOK {
+			st.Fail()
+		}
+	})
+
 	t.Run("proxy", func(st *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))

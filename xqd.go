@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/ua-parser/uap-go/uaparser"
 )
 
 func (i *Instance) xqd_init(abiv int64) XqdStatus {
@@ -62,7 +64,56 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 		return XqdError
 	}
 
-	return 0
+	return XqdStatusOK
+}
+
+// TODO: Bring in `tobie/ua-parser/go/uaparser` for this?
+func (i *Instance) xqd_uap_parse(
+	addr int32, size int32,
+	family_out, family_maxlen, family_nwritten_out int32,
+	major_out, major_maxlen, major_nwritten_out int32,
+	minor_out, minor_maxlen, minor_nwritten_out int32,
+	patch_out, patch_maxlen, patch_nwritten_out int32,
+) XqdStatus {
+	fmt.Printf("xqd_uap_parse, addr=%d, size=%d\n", addr, size)
+
+	var buf = make([]byte, size)
+	_, err := i.memory.ReadAt(buf, int64(addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var useragent = string(buf)
+	fmt.Printf("\tparsing ua %q\n", useragent)
+
+	var parser = uaparser.NewFromSaved()
+	var ua = parser.ParseUserAgent(useragent)
+
+	family_nwritten, err := i.memory.WriteAt([]byte(ua.Family), int64(family_out))
+	if err != nil {
+		return XqdError
+	}
+	i.memory.PutUint32(uint32(family_nwritten), int64(family_nwritten_out))
+
+	major_nwritten, err := i.memory.WriteAt([]byte(ua.Major), int64(major_out))
+	if err != nil {
+		return XqdError
+	}
+	i.memory.PutUint32(uint32(major_nwritten), int64(major_nwritten_out))
+
+	minor_nwritten, err := i.memory.WriteAt([]byte(ua.Minor), int64(minor_out))
+	if err != nil {
+		return XqdError
+	}
+	i.memory.PutUint32(uint32(minor_nwritten), int64(minor_nwritten_out))
+
+	patch_nwritten, err := i.memory.WriteAt([]byte(ua.Patch), int64(patch_out))
+	if err != nil {
+		return XqdError
+	}
+	i.memory.PutUint32(uint32(patch_nwritten), int64(patch_nwritten_out))
+
+	return XqdStatusOK
 }
 
 func p(name string, args ...int32) {
@@ -77,62 +128,62 @@ func p(name string, args ...int32) {
 func (i *Instance) wasm0(name string) func() int32 {
 	return func() int32 {
 		p(name)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm1(name string) func(a int32) int32 {
 	return func(a int32) int32 {
 		p(name, a)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm2(name string) func(a, b int32) int32 {
 	return func(a, b int32) int32 {
 		p(name, a, b)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm3(name string) func(a, b, c int32) int32 {
 	return func(a, b, c int32) int32 {
 		p(name, a, b, c)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm4(name string) func(a, b, c, d int32) int32 {
 	return func(a, b, c, d int32) int32 {
 		p(name, a, b, c, d)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm5(name string) func(a, b, c, d, e int32) int32 {
 	return func(a, b, c, d, e int32) int32 {
 		p(name, a, b, c, d, e)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm6(name string) func(a, b, c, d, e, f int32) int32 {
 	return func(a, b, c, d, e, f int32) int32 {
 		p(name, a, b, c, d, e, f)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm7(name string) func(a, b, c, d, e, f, g int32) int32 {
 	return func(a, b, c, d, e, f, g int32) int32 {
 		p(name, a, b, c, d, e, f, g)
-		return 0
+		return 5
 	}
 }
 
 func (i *Instance) wasm8(name string) func(a, b, c, d, e, f, g, h int32) int32 {
 	return func(a, b, c, d, e, f, g, h int32) int32 {
 		p(name, a, b, c, d, e, f, g, h)
-		return 0
+		return 5
 	}
 }

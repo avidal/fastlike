@@ -1,7 +1,7 @@
 use fastly::http::{HeaderValue, Method, StatusCode};
 use fastly::request::CacheOverride;
 use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
-use fastly::downstream_request;
+use fastly::{downstream_request, uap_parse};
 use std::convert::TryFrom;
 
 /// The name of a backend server associated with this service.
@@ -31,6 +31,30 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
         (&Method::GET, "/no-body") => Ok(Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::new()?)?),
+
+        (&Method::GET, "/user-agent") => {
+            let ua = req.headers().get("user-agent");
+            let result = match ua {
+                Some(inner) => {
+                    uap_parse(inner.to_str()?)
+                },
+                None => uap_parse(""),
+            };
+            let s = match result {
+                Ok((family, major, minor, patch)) => {
+                    format!("{} {}.{}.{}",
+                            family,
+                            major.unwrap_or("0".to_string()),
+                            minor.unwrap_or("0".to_string()),
+                            patch.unwrap_or("0".to_string())
+                    )
+                },
+                Err(_) => { "error".to_string() },
+            };
+            Ok(Response::builder()
+               .status(StatusCode::OK)
+               .body(Body::try_from(s)?)?)
+        },
 
         (&Method::GET, "/append-header") => {
             req.headers_mut().insert("test-header", HeaderValue::from_static("test-value"));
