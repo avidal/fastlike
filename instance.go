@@ -70,7 +70,6 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
 	for _, n := range []string{
-		"xqd_resp_version_get",
 		"xqd_body_append",
 	} {
 		check(linker.DefineFunc("env", n, i.wasm2(n)))
@@ -81,12 +80,6 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 		"xqd_body_read",
 	} {
 		check(linker.DefineFunc("env", n, i.wasm4(n)))
-	}
-
-	for _, n := range []string{
-		"xqd_resp_header_values_set",
-	} {
-		check(linker.DefineFunc("env", n, i.wasm5(n)))
 	}
 	// End XQD Stubbing -}}}
 
@@ -109,9 +102,11 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
 	linker.DefineFunc("env", "xqd_resp_status_get", i.xqd_resp_status_get)
 	linker.DefineFunc("env", "xqd_resp_status_set", i.xqd_resp_status_set)
+	linker.DefineFunc("env", "xqd_resp_version_get", i.xqd_resp_version_get)
 	linker.DefineFunc("env", "xqd_resp_version_set", i.xqd_resp_version_set)
 	linker.DefineFunc("env", "xqd_resp_header_names_get", i.xqd_resp_header_names_get)
 	linker.DefineFunc("env", "xqd_resp_header_values_get", i.xqd_resp_header_values_get)
+	linker.DefineFunc("env", "xqd_resp_header_values_set", i.xqd_resp_header_values_set)
 
 	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
 	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)

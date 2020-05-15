@@ -16,7 +16,7 @@
 // looking at the source code of the fastly rust crate, particularly [abi.rs] and [lib.rs] for
 // some constants.
 //
-// Our implementation of the ABI is in xqd.go, and it's linked to your wasm program via the `linker`
+// Our implementation of the ABI is in xqd*.go, and it's linked to your wasm program via the `linker`
 // method of the Instance type, implemented in instance.go.
 //
 // Each ABI method purposefully follows the signatures defined on the guest-side to make it easy to
