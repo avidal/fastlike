@@ -37,6 +37,16 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             req.send(BACKEND_NAME)
         },
 
+        (&Method::GET, "/append-body") => {
+            let other = Body::try_from("appended")?;
+            let rw = Response::new(Body::try_from("original\n")?);
+            let (mut parts, mut body) = rw.into_parts();
+            body.append(other)?;
+            parts.status = StatusCode::OK;
+            let rv = Response::from_parts(parts, body);
+            Ok(rv)
+        },
+
         (&Method::GET, path) if path.starts_with("/proxy") => {
             req.send(BACKEND_NAME)
         },

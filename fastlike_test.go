@@ -52,6 +52,21 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("append-body", func(st *testing.T) {
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i.ServeHTTP(w, r)
+
+		if w.Body.String() != "original\nappended" {
+			st.Fail()
+		}
+
+		if w.Code != http.StatusOK {
+			st.Fail()
+		}
+	})
+
 	t.Run("proxy", func(st *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))

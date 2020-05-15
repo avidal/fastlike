@@ -34,6 +34,17 @@ func (i *Instance) xqd_req_version_set(handle int32, version int32) XqdStatus {
 	return XqdStatusOK
 }
 
+func (i *Instance) xqd_req_cache_override_set(handle int32, tag int32, ttl int32, swr int32) XqdStatus {
+	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
+	fmt.Printf("xqd_req_cache_override_set, rh=%d, tag=%d, ttl=%d, swr=%d\n", handle, tag, ttl, swr)
+
+	if i.requests.Get(int(handle)) == nil {
+		return XqdErrInvalidHandle
+	}
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_req_method_get(handle int32, addr int32, maxlen int32, nwritten_out int32) XqdStatus {
 	fmt.Printf("xqd_req_method_get, rh=%d, addr=%d\n", handle, addr)
 

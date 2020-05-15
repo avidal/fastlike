@@ -18,7 +18,6 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	// 1 (front)
 	fmt.Printf("xqd_body_write, bh=%d, addr=%d, size=%d\n", handle, addr, size)
 
-	// write maxlen bytes starting at addr to the body with handle bh
 	var body = i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
@@ -32,6 +31,57 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 	// Write out how many bytes we copied
 	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) XqdStatus {
+	fmt.Printf("xqd_body_read, bh=%d, addr=%d, size=%d\n", handle, addr, maxlen)
+
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Copy maxlen bytes from the body into addr
+	// TODO: Clean this up
+	var buf = new(bytes.Buffer)
+	var nread, err = io.CopyN(buf, body, int64(maxlen))
+	if err != nil {
+		return XqdError
+	}
+
+	var nread2, err2 = i.memory.WriteAt(buf.Bytes(), int64(addr))
+	if err2 != nil {
+		return XqdError
+	}
+
+	if nread != int64(nread2) {
+		return XqdError
+	}
+
+	// Write out how many bytes we copied
+	i.memory.PutUint32(uint32(nread), int64(nread_out))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) XqdStatus {
+	fmt.Printf("xqd_body_append, dst=%d, src=%d\n", dst_handle, src_handle)
+
+	var dst = i.bodies.Get(int(dst_handle))
+	if dst == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var src = i.bodies.Get(int(src_handle))
+	if src == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// replace the destination reader with a multireader that reads first from the original reader
+	// and then from the source
+	dst.reader = io.MultiReader(dst.reader, src)
 
 	return XqdStatusOK
 }
