@@ -2,6 +2,7 @@ package fastlike_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/ioutil"
 	"net/http"
@@ -131,6 +132,30 @@ func TestFastlike(t *testing.T) {
 		}
 
 		if !strings.Contains(w.Body.String(), "Error running wasm program") {
+			st.Fail()
+		}
+	})
+
+	t.Run("geo", func(st *testing.T) {
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/geo", ioutil.NopCloser(bytes.NewBuffer(nil)))
+
+		// In normal operation (ie, part of an http server handler), these requests will always
+		// have a remote addr. But not if you create them yourself.
+		r.RemoteAddr = "127.0.0.1:9999"
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			st.Fail()
+		}
+
+		var payload = struct {
+			ASName string `json:"as_name"`
+		}{}
+		json.NewDecoder(w.Body).Decode(&payload)
+
+		if payload.ASName != "fastlike" {
 			st.Fail()
 		}
 	})

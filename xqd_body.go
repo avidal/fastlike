@@ -26,6 +26,8 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	// Copy size bytes starting at addr into the body handle
 	nwritten, err := io.CopyN(body, bytes.NewReader(i.memory.Data()[addr:]), int64(size))
 	if err != nil {
+		// TODO: If err == EOF then there's a specific error code we can return (it means they
+		// didn't have `size` bytes in memory)
 		return XqdError
 	}
 
@@ -43,10 +45,8 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 		return XqdErrInvalidHandle
 	}
 
-	// Copy maxlen bytes from the body into addr
-	// TODO: Clean this up
-	var buf = new(bytes.Buffer)
-	var nread, err = io.CopyN(buf, body, int64(maxlen))
+	var buf = bytes.NewBuffer(make([]byte, 0, maxlen))
+	var nread, err = io.Copy(buf, io.LimitReader(body, int64(maxlen)))
 	if err != nil {
 		return XqdError
 	}

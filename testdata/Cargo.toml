@@ -9,3 +9,4 @@ debug = true
 
 [dependencies]
 fastly = "^0.3.2"
+serde_json = "*"

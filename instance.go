@@ -26,6 +26,10 @@ type Instance struct {
 
 	// backends is used to issue subrequests
 	backends BackendHandler
+
+	// geobackend is a backend for geographic requests
+	// these are issued by the guest when you attempt to lookup geo data
+	geobackend Backend
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
@@ -81,7 +85,6 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 	linker.DefineFunc("env", "xqd_pending_req_select", i.wasm5("xqd_pending_req_select"))
 	linker.DefineFunc("env", "xqd_pending_req_wait", i.wasm3("xqd_pending_req_wait"))
 
-	linker.DefineFunc("env", "xqd_req_downstream_client_ip_addr", i.wasm2("xqd_req_downstream_client_ip_addr"))
 	linker.DefineFunc("env", "xqd_req_downstream_tls_cipher_openssl_name", i.wasm3("xqd_req_downstream_tls_cipher_openssl_name"))
 	linker.DefineFunc("env", "xqd_req_downstream_tls_protocol", i.wasm3("xqd_req_downstream_tls_protocol"))
 	linker.DefineFunc("env", "xqd_req_downstream_tls_client_hello", i.wasm3("xqd_req_downstream_tls_client_hello"))
@@ -100,6 +103,7 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
 	linker.DefineFunc("env", "xqd_resp_send_downstream", i.xqd_resp_send_downstream)
 	linker.DefineFunc("env", "xqd_uap_parse", i.xqd_uap_parse)
+	linker.DefineFunc("env", "xqd_req_downstream_client_ip_addr", i.xqd_req_downstream_client_ip_addr)
 
 	// xqd_request.go
 	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
@@ -144,6 +148,13 @@ type InstanceOption func(*Instance)
 func BackendHandlerOption(b BackendHandler) InstanceOption {
 	return func(i *Instance) {
 		i.backends = b
+	}
+}
+
+// GeoHandlerOption is an InstanceOption which controls how geographic requests are handled
+func GeoHandlerOption(b Backend) InstanceOption {
+	return func(i *Instance) {
+		i.geobackend = b
 	}
 }
 

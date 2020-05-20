@@ -3,6 +3,7 @@ package fastlike
 import (
 	"fmt"
 	"io"
+	"net"
 	"strings"
 
 	"github.com/ua-parser/uap-go/uaparser"
@@ -63,6 +64,29 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	if err != nil {
 		return XqdError
 	}
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_out int32) XqdStatus {
+	fmt.Printf("xqd_req_downstream_client_ip_addr\n")
+
+	var ip = net.ParseIP(strings.SplitN(i.ds_request.RemoteAddr, ":", 2)[0])
+	fmt.Printf("\twriting %v from %s\n", ip, i.ds_request.RemoteAddr)
+
+	// If there's no good IP on the incoming request, we can exit early
+	if ip == nil {
+		return XqdStatusOK
+	}
+
+	// Otherwise, we can just write it to memory. net.IP is implemented a byte slice, which we can
+	// write directly out
+	nwritten, err := i.memory.WriteAt(ip, int64(octets_out))
+	if err != nil {
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
 
 	return XqdStatusOK
 }

@@ -94,6 +94,9 @@ func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
 	// By default, any subrequests will return a 502
 	i.backends = defaultBackendHandler()
 
+	// By default, all geo requests return the same data
+	i.geobackend = GeoHandler(DefaultGeo)
+
 	for _, o := range opts {
 		o(i)
 	}

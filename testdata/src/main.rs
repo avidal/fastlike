@@ -1,25 +1,13 @@
 use fastly::http::{HeaderValue, Method, StatusCode};
-use fastly::request::CacheOverride;
+use fastly::request::downstream_client_ip_addr;
+use fastly::geo::geo_lookup;
 use fastly::{Body, Error, Request, RequestExt, Response, ResponseExt};
-use fastly::{downstream_request, uap_parse};
+use fastly::uap_parse;
 use std::convert::TryFrom;
+use serde_json;
 
-/// The name of a backend server associated with this service.
-///
-/// This should be changed to match the name of your own backend. See the the `Hosts` section of
-/// the Fastly WASM service UI for more information.
-const BACKEND_NAME: &str = "backend_name";
+const BACKEND: &str = "backend";
 
-/// The name of a second backend associated with this service.
-const OTHER_BACKEND_NAME: &str = "other_backend_name";
-
-/// The entrypoint for your application.
-///
-/// This function is triggered when your service receives a client request. It could be used to
-/// route based on the request properties (such as method or path), send the request to a backend,
-/// make completely new requests, and/or generate synthetic responses.
-///
-/// If `main` returns an error a 500 error response will be delivered to the client.
 #[fastly::main]
 fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
     match (req.method(), req.uri().path()) {
@@ -58,7 +46,7 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
 
         (&Method::GET, "/append-header") => {
             req.headers_mut().insert("test-header", HeaderValue::from_static("test-value"));
-            req.send(BACKEND_NAME)
+            req.send(BACKEND)
         },
 
         (&Method::GET, "/append-body") => {
@@ -72,16 +60,34 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
         },
 
         (&Method::GET, path) if path.starts_with("/proxy") => {
-            req.send(BACKEND_NAME)
+            req.send(BACKEND)
         },
 
         (&Method::GET, "/panic!") => {
             panic!("you told me to");
         },
 
+        (&Method::GET, "/geo") => {
+            let ip = downstream_client_ip_addr();
+            if ip.is_none() {
+                return Ok(Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::new()?)?);
+            }
+            let geodata = geo_lookup(ip.unwrap()).unwrap();
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(
+                    Body::try_from(
+                        serde_json::json!({
+                            "as_name": geodata.as_name(),
+                        }).to_string()
+                    )?
+                )?
+            )
+        },
+
         // This one is used for example purposes, not tests
         (&Method::GET, path) if path.starts_with("/testdata") => {
-            req.send(BACKEND_NAME)
+            req.send(BACKEND)
         },
 
         _ => Ok(Response::builder()

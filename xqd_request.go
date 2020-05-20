@@ -279,10 +279,16 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
 	req.Header.Add("cdn-loop", "fastlike")
 
-	var transport = i.backends(backend)
+	// If the backend is geolocation, we select the geobackend explicitly
+	var transport Backend
+	if backend == "geolocation" {
+		transport = i.geobackend
+	} else {
+		transport = i.backends(backend)
+	}
+
 	w, err := transport(req)
 	if err != nil {
-		fmt.Printf("\tunexpected error sending request: %s\n", err.Error())
 		return XqdError
 	}
 
