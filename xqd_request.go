@@ -161,9 +161,12 @@ func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name
 	}
 
 	var header = http.CanonicalHeaderKey(string(buf))
-	var values = r.Header.Values(header)
-
 	fmt.Printf("\tlooking for header %s\n", header)
+
+	var values, ok = r.Header[header]
+	if !ok {
+		values = []string{}
+	}
 
 	// Sort the values otherwise cursors don't work
 	sort.Strings(values[:])

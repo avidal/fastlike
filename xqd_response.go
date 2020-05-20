@@ -91,7 +91,10 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 	}
 
 	var header = http.CanonicalHeaderKey(string(buf))
-	var values = w.Header.Values(header)
+	var values, ok = w.Header[header]
+	if !ok {
+		values = []string{}
+	}
 
 	fmt.Printf("\tlooking for header %s\n", header)
 

@@ -30,7 +30,12 @@ type Instance struct {
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
 func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(strings.Join(r.Header.Values("cdn-loop"), "\x00"), "fastlike") {
+	var loops, ok = r.Header[http.CanonicalHeaderKey("cdn-loop")]
+	if !ok {
+		loops = []string{""}
+	}
+
+	if strings.Contains(strings.Join(loops, "\x00"), "fastlike") {
 		// immediately respond with a loop detection
 		w.WriteHeader(http.StatusLoopDetected)
 		w.Write([]byte("Loop detected! This request has already come through your fastly program."))
