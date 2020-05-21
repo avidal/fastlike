@@ -5,8 +5,6 @@ import (
 	"io"
 	"net"
 	"strings"
-
-	"github.com/ua-parser/uap-go/uaparser"
 )
 
 func (i *Instance) xqd_init(abiv int64) XqdStatus {
@@ -91,7 +89,6 @@ func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_
 	return XqdStatusOK
 }
 
-// TODO: Bring in `tobie/ua-parser/go/uaparser` for this?
 func (i *Instance) xqd_uap_parse(
 	addr int32, size int32,
 	family_out, family_maxlen, family_nwritten_out int32,
@@ -110,8 +107,7 @@ func (i *Instance) xqd_uap_parse(
 	var useragent = string(buf)
 	fmt.Printf("\tparsing ua %q\n", useragent)
 
-	var parser = uaparser.NewFromSaved()
-	var ua = parser.ParseUserAgent(useragent)
+	var ua = i.uaparser(useragent)
 
 	family_nwritten, err := i.memory.WriteAt([]byte(ua.Family), int64(family_out))
 	if err != nil {

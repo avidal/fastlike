@@ -30,6 +30,8 @@ type Instance struct {
 	// geobackend is a backend for geographic requests
 	// these are issued by the guest when you attempt to lookup geo data
 	geobackend Backend
+
+	uaparser UserAgentParser
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.

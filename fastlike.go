@@ -97,6 +97,11 @@ func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
 	// By default, all geo requests return the same data
 	i.geobackend = GeoHandler(DefaultGeo)
 
+	// By default, user agent parsing returns an empty useragent
+	i.uaparser = func(_ string) UserAgent {
+		return UserAgent{}
+	}
+
 	for _, o := range opts {
 		o(i)
 	}

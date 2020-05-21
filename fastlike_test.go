@@ -72,7 +72,14 @@ func TestFastlike(t *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)), fastlike.UserAgentParserOption(func(_ string) fastlike.UserAgent {
+			return fastlike.UserAgent{
+				Family: "Firefox",
+				Major:  "76",
+				Minor:  "1",
+				Patch:  "15",
+			}
+		}))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "Firefox 76.1.15" {
