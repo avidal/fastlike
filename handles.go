@@ -71,7 +71,8 @@ type BodyHandle struct {
 	writer io.Writer
 	closer io.Closer
 
-	buf *bytes.Buffer
+	buf    *bytes.Buffer
+	length int64
 }
 
 // Close implements io.Closer for a BodyHandle
@@ -89,7 +90,9 @@ func (b *BodyHandle) Read(p []byte) (int, error) {
 
 // Write implements io.Writer for a BodyHandle
 func (b *BodyHandle) Write(p []byte) (int, error) {
-	return b.writer.Write(p)
+	n, e := b.writer.Write(p)
+	b.length += int64(n)
+	return n, e
 }
 
 type BodyHandles struct {
