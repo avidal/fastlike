@@ -5,34 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/khan/fastlike"
 )
 
 func TestFastlike(t *testing.T) {
+	t.Parallel()
 	// Skip the test of the module doesn't exist
 	if _, perr := os.Stat("testdata/bin/main.wasm"); os.IsNotExist(perr) {
 		t.Skip("wasm test file does not exist. Try running `fastly compute build` in ./testdata")
 	}
 
-	var opts = []fastlike.InstanceOption{}
-	if testing.Verbose() {
-		opts = append(opts, fastlike.LoggerConfigOption(func(logger, abilog *log.Logger) {
-			logger.SetOutput(os.Stdout)
-			abilog.SetOutput(os.Stdout)
-		}))
-	}
-
-	f := fastlike.New("testdata/bin/main.wasm", opts...)
+	f := fastlike.New("testdata/bin/main.wasm")
 
 	// Each test case will create its own instance and request/response pair to test against
 	t.Run("simple-response", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
@@ -48,6 +42,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("no-body", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
@@ -63,6 +58,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("append-body", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
@@ -78,6 +74,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("user-agent", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
@@ -101,6 +98,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("proxy", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, &http.Response{
@@ -119,6 +117,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("append-header", func(st *testing.T) {
+		st.Parallel()
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
@@ -138,6 +137,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("panic!", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
@@ -153,6 +153,7 @@ func TestFastlike(t *testing.T) {
 	})
 
 	t.Run("geo", func(st *testing.T) {
+		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/geo", ioutil.NopCloser(bytes.NewBuffer(nil)))
 
@@ -173,6 +174,35 @@ func TestFastlike(t *testing.T) {
 
 		if payload.ASName != "fastlike" {
 			st.Fail()
+		}
+	})
+
+	t.Run("parallel", func(st *testing.T) {
+		// Assert that we can safely handle concurrent requests by sending off 5 requests each of
+		// which sleep for 500ms in the host.
+		for i := 1; i <= 5; i++ {
+			st.Run("", func(stt *testing.T) {
+				stt.Parallel()
+				w := httptest.NewRecorder()
+				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+
+				r.RemoteAddr = "127.0.0.1:9999"
+				i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
+					return func(r *http.Request) (*http.Response, error) {
+						<-time.After(500 * time.Millisecond)
+						return &http.Response{
+							StatusCode: http.StatusTeapot,
+							Status:     "419",
+							Body:       ioutil.NopCloser(bytes.NewBuffer(nil)),
+						}, nil
+					}
+				}))
+				i.ServeHTTP(w, r)
+
+				if w.Code != http.StatusTeapot {
+					stt.Fail()
+				}
+			})
 		}
 	})
 }
