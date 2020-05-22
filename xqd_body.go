@@ -2,13 +2,12 @@ package fastlike
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 )
 
 func (i *Instance) xqd_body_new(handle_out int32) XqdStatus {
-	fmt.Printf("xqd_body_new, bh=%d\n", handle_out)
 	var bhid, _ = i.bodies.NewBuffer()
+	i.abilog.Printf("body_new: handle=%d", bhid)
 	i.memory.PutUint32(uint32(bhid), int64(handle_out))
 	return XqdStatusOK
 }
@@ -16,7 +15,7 @@ func (i *Instance) xqd_body_new(handle_out int32) XqdStatus {
 func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) XqdStatus {
 	// TODO: Figure out what we're supposed to do with `body_end` which can be 0 (back) or
 	// 1 (front)
-	fmt.Printf("xqd_body_write, bh=%d, addr=%d, size=%d\n", handle, addr, size)
+	i.abilog.Printf("body_write: handle=%d size=%d, body_end=%d", handle, size, body_end)
 
 	var body = i.bodies.Get(int(handle))
 	if body == nil {
@@ -38,36 +37,39 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 }
 
 func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) XqdStatus {
-	fmt.Printf("xqd_body_read, bh=%d, addr=%d, size=%d\n", handle, addr, maxlen)
-
 	var body = i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
 	var buf = bytes.NewBuffer(make([]byte, 0, maxlen))
-	var nread, err = io.Copy(buf, io.LimitReader(body, int64(maxlen)))
+	var ncopied, err = io.Copy(buf, io.LimitReader(body, int64(maxlen)))
 	if err != nil {
+		i.abilog.Printf("body_read: error copying got=%s", err.Error())
 		return XqdError
 	}
 
-	var nread2, err2 = i.memory.WriteAt(buf.Bytes(), int64(addr))
+	var nwritten, err2 = i.memory.WriteAt(buf.Bytes(), int64(addr))
 	if err2 != nil {
+		i.abilog.Printf("body_read: error writing got=%s", err2.Error())
 		return XqdError
 	}
 
-	if nread != int64(nread2) {
+	if ncopied != int64(nwritten) {
+		i.abilog.Printf("body_read: error copying copied=%d wrote=%d", ncopied, nwritten)
 		return XqdError
 	}
+
+	i.abilog.Printf("body_read: handle=%d copied=%d", handle, ncopied)
 
 	// Write out how many bytes we copied
-	i.memory.PutUint32(uint32(nread), int64(nread_out))
+	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
 
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) XqdStatus {
-	fmt.Printf("xqd_body_append, dst=%d, src=%d\n", dst_handle, src_handle)
+	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
 
 	var dst = i.bodies.Get(int(dst_handle))
 	if dst == nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,7 +21,15 @@ func TestFastlike(t *testing.T) {
 		t.Skip("wasm test file does not exist. Try running `fastly compute build` in ./testdata")
 	}
 
-	f := fastlike.New("testdata/bin/main.wasm")
+	var opts = []fastlike.InstanceOption{}
+	if testing.Verbose() {
+		opts = append(opts, fastlike.LoggerConfigOption(func(logger, abilog *log.Logger) {
+			logger.SetOutput(os.Stdout)
+			abilog.SetOutput(os.Stdout)
+		}))
+	}
+
+	f := fastlike.New("testdata/bin/main.wasm", opts...)
 
 	// Each test case will create its own instance and request/response pair to test against
 	t.Run("simple-response", func(st *testing.T) {

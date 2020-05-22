@@ -1,6 +1,8 @@
 package fastlike
 
 import (
+	"io/ioutil"
+	"log"
 	"net/http"
 	"sync"
 
@@ -67,7 +69,7 @@ func NewFromWasm(wasm []byte, instanceOpts ...InstanceOption) *Fastlike {
 }
 
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var instance = f.Instantiate(f.instanceOpts...)
+	var instance = f.Instantiate()
 	instance.ServeHTTP(w, r)
 }
 
@@ -100,6 +102,13 @@ func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
 	// By default, user agent parsing returns an empty useragent
 	i.uaparser = func(_ string) UserAgent {
 		return UserAgent{}
+	}
+
+	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
+	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
+
+	for _, o := range f.instanceOpts {
+		o(i)
 	}
 
 	for _, o := range opts {

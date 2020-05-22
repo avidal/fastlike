@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -32,6 +33,9 @@ type Instance struct {
 	geobackend Backend
 
 	uaparser UserAgentParser
+
+	log    *log.Logger
+	abilog *log.Logger
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
@@ -167,5 +171,12 @@ func GeoHandlerOption(b Backend) InstanceOption {
 func MemoryOption(memfn func() MemorySlice) InstanceOption {
 	return func(i *Instance) {
 		i.memory = &Memory{memfn()}
+	}
+}
+
+// LoggerConfigOption is an InstanceOption that allows configuring the loggers
+func LoggerConfigOption(fn func(logger, abilogger *log.Logger)) InstanceOption {
+	return func(i *Instance) {
+		fn(i.log, i.abilog)
 	}
 }

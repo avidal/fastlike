@@ -2,24 +2,24 @@ package fastlike
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"sort"
 )
 
 func (i *Instance) xqd_resp_new(handle_out int32) XqdStatus {
-	fmt.Printf("xqd_resp_new, wh=%d\n", handle_out)
 	var whid, _ = i.responses.New()
+	i.abilog.Printf("resp_new handle=%d\n", whid)
 	i.memory.PutUint32(uint32(whid), int64(handle_out))
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_resp_status_set(handle int32, status int32) XqdStatus {
-	fmt.Printf("xqd_resp_status_set, wh=%d, status=%d\n", handle, status)
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
+
+	i.abilog.Printf("resp_status_set: handle=%d status=%d", handle, status)
 
 	w.StatusCode = int(status)
 	w.Status = http.StatusText(w.StatusCode)
@@ -27,38 +27,43 @@ func (i *Instance) xqd_resp_status_set(handle int32, status int32) XqdStatus {
 }
 
 func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) XqdStatus {
-	fmt.Printf("xqd_resp_status_get, wh=%d, addr=%d\n", handle, status_out)
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
+	i.abilog.Printf("resp_status_get: handle=%d status=%d", handle, w.StatusCode)
 	i.memory.PutUint32(uint32(w.StatusCode), int64(status_out))
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_resp_version_set(handle int32, version int32) XqdStatus {
-	fmt.Printf("xqd_resp_version_set, wh=%d, version=%d\n", handle, version)
+	i.abilog.Printf("resp_version_set: handle=%d version=%d", handle, version)
+
 	if i.responses.Get(int(handle)) == nil {
 		return XqdErrInvalidHandle
+	}
+
+	if HttpVersion(version) != Http11 {
+		i.abilog.Printf("resp_version_set: unsupported version=%d", version)
 	}
 
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) XqdStatus {
-	fmt.Printf("xqd_resp_version_get, wh=%d, addr=%d\n", handle, version_out)
-
 	if i.responses.Get(int(handle)) == nil {
 		return XqdErrInvalidHandle
 	}
+
+	i.abilog.Printf("resp_version_get: handle=%d version=%d", handle, Http11)
 
 	i.memory.PutUint32(uint32(Http11), int64(version_out))
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) XqdStatus {
-	fmt.Printf("xqd_resp_header_names_get, wh=%d, addr=%d, cursor=%d\n", handle, addr, cursor)
+	i.abilog.Printf("resp_header_names_get: handle=%d cursor=%d", handle, cursor)
 
 	var w = i.responses.Get(int(handle))
 	if w == nil {
@@ -66,7 +71,7 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 	}
 
 	var names = []string{}
-	for n, _ := range w.Header {
+	for n := range w.Header {
 		names = append(names, n)
 	}
 
@@ -77,8 +82,6 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 }
 
 func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) XqdStatus {
-	fmt.Printf("xqd_resp_header_values_get, wh=%d, nameaddr=%d, cursor=%d\n", handle, name_addr, cursor)
-
 	var w = i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
@@ -96,7 +99,7 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 		values = []string{}
 	}
 
-	fmt.Printf("\tlooking for header %s\n", header)
+	i.abilog.Printf("resp_header_values_get: handle=%d header=%q cursor=%d\n", handle, header, cursor)
 
 	// Sort the values otherwise cursors don't work
 	sort.Strings(values[:])
@@ -105,7 +108,6 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 }
 
 func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) XqdStatus {
-	fmt.Printf("xqd_resp_header_values_set, wh=%d, nameaddr=%d\n", handle, name_addr)
 	var w = i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
@@ -118,7 +120,6 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	}
 
 	var header = http.CanonicalHeaderKey(string(buf))
-	fmt.Printf("\tsetting values for for header %s\n", header)
 
 	// read values_size bytes from values_addr for a list of \0 terminated values for the header
 	// but, read 1 less than that to avoid the trailing nul
@@ -130,12 +131,13 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 	var values = bytes.Split(buf, []byte("\x00"))
 
+	i.abilog.Printf("resp_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
+
 	if w.Header == nil {
 		w.Header = http.Header{}
 	}
 
 	for _, v := range values {
-		fmt.Printf("\tadding value %q\n", v)
 		w.Header.Add(header, string(v))
 	}
 
