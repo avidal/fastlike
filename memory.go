@@ -3,8 +3,6 @@ package fastlike
 import (
 	"bytes"
 	"encoding/binary"
-	"reflect"
-	"unsafe"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -58,23 +56,8 @@ func (m *wasmMemory) Data() []byte {
 		return m.slice
 	}
 
-	m.slice = m.data()
+	m.slice = m.mem.UnsafeData()
 	return m.slice
-}
-
-func (m *wasmMemory) data() []byte {
-	var length = m.mem.DataSize()
-	var data = (*uint8)(m.mem.Data())
-
-	var header reflect.SliceHeader
-	header = *(*reflect.SliceHeader)(unsafe.Pointer(&header))
-
-	header.Data = uintptr(unsafe.Pointer(data))
-	header.Len = int(length)
-	header.Cap = int(length)
-
-	var buf = *(*[]byte)(unsafe.Pointer(&header))
-	return buf
 }
 
 // Memory is a wrapper around a MemorySlice that adds convenience functions for reading and writing
