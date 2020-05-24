@@ -37,5 +37,7 @@ func main() {
 	proxy := fastlike.New(*wasm, opts...)
 
 	fmt.Printf("Listening on %s\n", *bind)
-	http.ListenAndServe(*bind, proxy)
+	if err := http.ListenAndServe(*bind, proxy); err != nil {
+		fmt.Printf("Error starting server, got %s\n", err.Error())
+	}
 }
