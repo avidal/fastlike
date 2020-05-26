@@ -98,17 +98,24 @@ func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *w
 	linker.DefineFunc("env", "xqd_req_header_insert", i.wasm5("xqd_req_header_insert"))
 	linker.DefineFunc("env", "xqd_req_send_async", i.wasm5("xqd_req_send_async"))
 
+	linker.DefineFunc("env", "xqd_req_original_header_count", i.wasm1("xqd_req_original_header_count"))
+	linker.DefineFunc("env", "xqd_req_header_remove", i.wasm3("xqd_req_header_remove"))
+
 	linker.DefineFunc("env", "xqd_resp_header_append", i.wasm5("xqd_resp_header_append"))
 	linker.DefineFunc("env", "xqd_resp_header_insert", i.wasm5("xqd_resp_header_insert"))
 	linker.DefineFunc("env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
+	linker.DefineFunc("env", "xqd_resp_header_remove", i.wasm3("xqd_resp_header_remove"))
+
+	linker.DefineFunc("env", "xqd_body_close_downstream", i.wasm1("xqd_body_close_downstream"))
 
 	// End XQD Stubbing -}}}
 
 	// xqd.go
-	linker.DefineFunc("env", "xqd_init", i.xqd_init)
+	linker.DefineFunc("fastly", "init", i.xqd_init)
+	linker.DefineFunc("fastly_uap", "parse", i.xqd_uap_parse)
+
 	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
 	linker.DefineFunc("env", "xqd_resp_send_downstream", i.xqd_resp_send_downstream)
-	linker.DefineFunc("env", "xqd_uap_parse", i.xqd_uap_parse)
 	linker.DefineFunc("env", "xqd_req_downstream_client_ip_addr", i.xqd_req_downstream_client_ip_addr)
 
 	// xqd_request.go

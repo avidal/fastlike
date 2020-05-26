@@ -8,5 +8,5 @@ edition = "2018"
 debug = true
 
 [dependencies]
-fastly = "^0.3.2"
+fastly = "^0.3.3"
 serde_json = "*"
