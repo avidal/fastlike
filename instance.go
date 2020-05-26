@@ -1,8 +1,10 @@
 package fastlike
 
 import (
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/bytecodealliance/wasmtime-go"
@@ -12,12 +14,17 @@ import (
 // TODO: This has no public methods or public members. Should it even be public? The API could just
 // be New and Fastlike.ServeHTTP(w, r)?
 type Instance struct {
-	wasm   *wasmtime.Instance
-	memory *Memory
+	wasmctx *wasmContext
 
-	requests  RequestHandles
-	responses ResponseHandles
-	bodies    BodyHandles
+	// This is used to get a memory handle and call the entrypoint function
+	// Everything from here and below is reset on each incoming request
+	wasm      *wasmtime.Instance
+	interrupt *wasmtime.InterruptHandle
+	memory    *Memory
+
+	requests  *RequestHandles
+	responses *ResponseHandles
+	bodies    *BodyHandles
 
 	// ds_request represents the downstream request, ie the one originated from the user agent
 	ds_request *http.Request
@@ -38,11 +45,89 @@ type Instance struct {
 	abilog *log.Logger
 }
 
+// NewInstance returns an http.Handler that can handle a single request.
+func NewInstance(wasmbytes []byte, opts ...InstanceOption) *Instance {
+	var i = new(Instance)
+	i.compile(wasmbytes)
+
+	i.requests = &RequestHandles{}
+	i.bodies = &BodyHandles{}
+	i.responses = &ResponseHandles{}
+
+	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
+	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
+
+	// By default, any subrequests will return a 502
+	i.backends = defaultBackendHandler()
+
+	// By default, all geo requests return the same data
+	i.geobackend = GeoHandler(DefaultGeo)
+
+	// By default, user agent parsing returns an empty useragent
+	i.uaparser = func(_ string) UserAgent {
+		return UserAgent{}
+	}
+
+	for _, o := range opts {
+		o(i)
+	}
+
+	return i
+}
+
+func (i *Instance) reset() {
+	// once i is done, drop everything off of it
+	for _, r := range i.requests.handles {
+		if r.Body != nil {
+			r.Body.Close()
+		}
+	}
+	for _, w := range i.responses.handles {
+		if w.Body != nil {
+			w.Body.Close()
+		}
+	}
+	for _, b := range i.bodies.handles {
+		if b.closer != nil {
+			b.closer.Close()
+		}
+		if b.buf != nil {
+			b.buf = nil
+		}
+	}
+
+	// reset the handles, but we can reuse the already allocated space
+	*i.requests = RequestHandles{}
+	*i.responses = ResponseHandles{}
+	*i.bodies = BodyHandles{}
+
+	i.ds_response = nil
+	i.ds_request = nil
+	i.wasm = nil
+	i.memory = nil
+}
+
+func (i *Instance) setup() {
+	var err error
+	i.wasm, err = i.wasmctx.linker.Instantiate(i.wasmctx.module)
+	check(err)
+
+	i.memory = &Memory{&wasmMemory{mem: i.wasm.GetExport("memory").Memory()}}
+}
+
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
 func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	i.setup()
+	defer i.reset()
+
 	var loops, ok = r.Header[http.CanonicalHeaderKey("cdn-loop")]
 	if !ok {
 		loops = []string{""}
+	}
+
+	var _, yeslog = r.Header[http.CanonicalHeaderKey("fastlike-verbose")]
+	if yeslog {
+		i.abilog.SetOutput(os.Stdout)
 	}
 
 	if strings.Contains(strings.Join(loops, "\x00"), "fastlike") {
@@ -53,6 +138,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("You probably have a non-exhaustive backend handler?"))
 		return
 	}
+
 	i.ds_request = r
 	i.ds_response = w
 
@@ -66,124 +152,6 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Error running wasm program.\n"))
 		w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
 		w.Write([]byte(err.Error()))
-	}
-}
-
-func (i *Instance) linker(store *wasmtime.Store, wasi *wasmtime.WasiInstance) *wasmtime.Linker {
-	// While linkers are reusable across multiple instances, in practice it's not very helpful, as
-	// we need to be able to bind host methods that are instance specific. It wouldn't be very
-	// useful to make a generic "xqd_req_body_downstream_get" function available to module
-	// instances if that function has no way to find the downstream request.
-	// While we *could* have a list of waiting requests, we'd have no reasonable way to bind the
-	// *responses* back to the originating requests in order to send them back downstream.
-	// The linking step is cheap enough that it's not worth the implementation overhead to come up
-	// with an alternative solution.
-	linker := wasmtime.NewLinker(store)
-	check(linker.DefineWasi(wasi))
-
-	// XQD Stubbing -{{{
-	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
-	// here and explicitly linked in the section below.
-	linker.DefineFunc("env", "xqd_log_endpoint_get", i.wasm3("xqd_log_endpoint_get"))
-	linker.DefineFunc("env", "xqd_log_write", i.wasm4("xqd_log_write"))
-
-	linker.DefineFunc("env", "xqd_pending_req_poll", i.wasm4("xqd_pending_req_poll"))
-	linker.DefineFunc("env", "xqd_pending_req_select", i.wasm5("xqd_pending_req_select"))
-	linker.DefineFunc("env", "xqd_pending_req_wait", i.wasm3("xqd_pending_req_wait"))
-
-	linker.DefineFunc("env", "xqd_req_downstream_tls_cipher_openssl_name", i.wasm3("xqd_req_downstream_tls_cipher_openssl_name"))
-	linker.DefineFunc("env", "xqd_req_downstream_tls_protocol", i.wasm3("xqd_req_downstream_tls_protocol"))
-	linker.DefineFunc("env", "xqd_req_downstream_tls_client_hello", i.wasm3("xqd_req_downstream_tls_client_hello"))
-
-	linker.DefineFunc("env", "xqd_req_header_insert", i.wasm5("xqd_req_header_insert"))
-	linker.DefineFunc("env", "xqd_req_send_async", i.wasm5("xqd_req_send_async"))
-
-	linker.DefineFunc("env", "xqd_req_original_header_count", i.wasm1("xqd_req_original_header_count"))
-	linker.DefineFunc("env", "xqd_req_header_remove", i.wasm3("xqd_req_header_remove"))
-
-	linker.DefineFunc("env", "xqd_resp_header_append", i.wasm5("xqd_resp_header_append"))
-	linker.DefineFunc("env", "xqd_resp_header_insert", i.wasm5("xqd_resp_header_insert"))
-	linker.DefineFunc("env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
-	linker.DefineFunc("env", "xqd_resp_header_remove", i.wasm3("xqd_resp_header_remove"))
-
-	linker.DefineFunc("env", "xqd_body_close_downstream", i.wasm1("xqd_body_close_downstream"))
-
-	// End XQD Stubbing -}}}
-
-	// xqd.go
-	linker.DefineFunc("fastly", "init", i.xqd_init)
-	linker.DefineFunc("fastly_uap", "parse", i.xqd_uap_parse)
-
-	linker.DefineFunc("env", "xqd_req_body_downstream_get", i.xqd_req_body_downstream_get)
-	linker.DefineFunc("env", "xqd_resp_send_downstream", i.xqd_resp_send_downstream)
-	linker.DefineFunc("env", "xqd_req_downstream_client_ip_addr", i.xqd_req_downstream_client_ip_addr)
-
-	// xqd_request.go
-	linker.DefineFunc("env", "xqd_req_new", i.xqd_req_new)
-	linker.DefineFunc("env", "xqd_req_version_get", i.xqd_req_version_get)
-	linker.DefineFunc("env", "xqd_req_version_set", i.xqd_req_version_set)
-	linker.DefineFunc("env", "xqd_req_method_get", i.xqd_req_method_get)
-	linker.DefineFunc("env", "xqd_req_method_set", i.xqd_req_method_set)
-	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
-	linker.DefineFunc("env", "xqd_req_uri_set", i.xqd_req_uri_set)
-	linker.DefineFunc("env", "xqd_req_header_names_get", i.xqd_req_header_names_get)
-	linker.DefineFunc("env", "xqd_req_header_values_get", i.xqd_req_header_values_get)
-	linker.DefineFunc("env", "xqd_req_header_values_set", i.xqd_req_header_values_set)
-	linker.DefineFunc("env", "xqd_req_send", i.xqd_req_send)
-	linker.DefineFunc("env", "xqd_req_cache_override_set", i.xqd_req_cache_override_set)
-	// The Go http implementation doesn't make it easy to get at the original headers in order, so
-	// we just use the same sorted order
-	linker.DefineFunc("env", "xqd_req_original_header_names_get", i.xqd_req_header_names_get)
-
-	// xqd_response.go
-	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
-	linker.DefineFunc("env", "xqd_resp_status_get", i.xqd_resp_status_get)
-	linker.DefineFunc("env", "xqd_resp_status_set", i.xqd_resp_status_set)
-	linker.DefineFunc("env", "xqd_resp_version_get", i.xqd_resp_version_get)
-	linker.DefineFunc("env", "xqd_resp_version_set", i.xqd_resp_version_set)
-	linker.DefineFunc("env", "xqd_resp_header_names_get", i.xqd_resp_header_names_get)
-	linker.DefineFunc("env", "xqd_resp_header_values_get", i.xqd_resp_header_values_get)
-	linker.DefineFunc("env", "xqd_resp_header_values_set", i.xqd_resp_header_values_set)
-
-	// xqd_body.go
-	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
-	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)
-	linker.DefineFunc("env", "xqd_body_read", i.xqd_body_read)
-	linker.DefineFunc("env", "xqd_body_append", i.xqd_body_append)
-
-	return linker
-}
-
-// InstanceOption is a functional option applied to an Instance when it's created
-type InstanceOption func(*Instance)
-
-// BackendHandlerOption is an InstanceOption which configures how subrequests are issued by backend
-func BackendHandlerOption(b BackendHandler) InstanceOption {
-	return func(i *Instance) {
-		i.backends = b
-	}
-}
-
-// GeoHandlerOption is an InstanceOption which controls how geographic requests are handled
-func GeoHandlerOption(b Backend) InstanceOption {
-	return func(i *Instance) {
-		i.geobackend = b
-	}
-}
-
-// MemoryOption is an InstanceOption which configures the underlying MemorySlice our instance uses.
-// Generally only useful in tests on an Instance.
-// TODO: Consider removing this as an option. It's not useful for the public API, where you need to
-// have valid wasm-backed memory, and package tests can directly replace the memory anyway.
-func MemoryOption(memfn func() MemorySlice) InstanceOption {
-	return func(i *Instance) {
-		i.memory = &Memory{memfn()}
-	}
-}
-
-// LoggerConfigOption is an InstanceOption that allows configuring the loggers
-func LoggerConfigOption(fn func(logger, abilogger *log.Logger)) InstanceOption {
-	return func(i *Instance) {
-		fn(i.log, i.abilog)
+		return
 	}
 }

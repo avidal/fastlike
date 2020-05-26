@@ -1,121 +1,98 @@
 package fastlike
 
 import (
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"runtime"
 	"sync"
-
-	"github.com/bytecodealliance/wasmtime-go"
 )
 
-// Fastlike carries the wasm module, store, and linker and is capable of creating new instances
-// ready to serve requests
+// Fastlike is the entrypoint to the package, used to construct new instances ready to serve
+// incoming HTTP requests. It maintains a pool of compiled and linked wasm modules to amortize
+// startup costs across multiple requests. In the case of a spike of incoming requests, new
+// instances will be constructed on-demand and thrown away when the request is finished to avoid an
+// ever-increasing memory cost.
 type Fastlike struct {
-	*sync.Mutex
-	store  *wasmtime.Store
-	wasi   *wasmtime.WasiInstance
-	module *wasmtime.Module
+	instances chan *Instance
 
-	instanceOpts []InstanceOption
+	// instancefn is called when a new instance must be created from scratch
+	instancefn func(opts ...InstanceOption) *Instance
 }
 
 // New returns a new Fastlike ready to create new instances from
 func New(wasmfile string, instanceOpts ...InstanceOption) *Fastlike {
-	config := wasmtime.NewConfig()
-	config.SetDebugInfo(true)
-	config.SetWasmMultiValue(true)
+	var f = &Fastlike{}
 
-	store := wasmtime.NewStore(wasmtime.NewEngineWithConfig(config))
-	module, err := wasmtime.NewModuleFromFile(store, wasmfile)
+	// read in the file and store the bytes
+	wasmbytes, err := ioutil.ReadFile(wasmfile)
 	check(err)
 
-	// These options ensure our wasm module can write to stdout/stderr
-	wasicfg := wasmtime.NewWasiConfig()
-	wasicfg.InheritStdout()
-	wasicfg.InheritStderr()
-	wasi, err := wasmtime.NewWasiInstance(store, wasicfg, "wasi_snapshot_preview1")
-	check(err)
+	var size = runtime.NumCPU()
 
-	return &Fastlike{
-		Mutex: &sync.Mutex{},
-		store: store, wasi: wasi, module: module,
-		instanceOpts: instanceOpts,
+	if size > 16 {
+		size = 16
+	} else if size < 0 {
+		size = 0
 	}
+
+	f.instances = make(chan *Instance, size)
+	f.instancefn = func(opts ...InstanceOption) *Instance {
+		// merge the original options with any supplied options
+		opts = append(instanceOpts, opts...)
+		return NewInstance(wasmbytes, opts...)
+	}
+
+	return f
 }
 
-// NewFromWasm returns a new Fastlike using the wasm bytes supplied
-func NewFromWasm(wasm []byte, instanceOpts ...InstanceOption) *Fastlike {
-	config := wasmtime.NewConfig()
-	config.SetDebugInfo(true)
-	config.SetWasmMultiValue(true)
-
-	store := wasmtime.NewStore(wasmtime.NewEngineWithConfig(config))
-	module, err := wasmtime.NewModule(store, wasm)
-	check(err)
-
-	// These options ensure our wasm module can write to stdout/stderr
-	wasicfg := wasmtime.NewWasiConfig()
-	wasicfg.InheritStdout()
-	wasicfg.InheritStderr()
-	wasi, err := wasmtime.NewWasiInstance(store, wasicfg, "wasi_snapshot_preview1")
-	check(err)
-
-	return &Fastlike{
-		Mutex: &sync.Mutex{},
-		store: store, wasi: wasi, module: module,
-		instanceOpts: instanceOpts,
-	}
-}
-
+// ServeHTTP implements http.Handler for a Fastlike module. It's a convenience function over
+// `Instantiate()` followed by `.ServeHTTP` on the returned instance.
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var instance = f.Instantiate()
-	instance.ServeHTTP(w, r)
+	var i = f.Instantiate()
+
+	i.ServeHTTP(w, r)
+
+	select {
+	case f.instances <- i:
+	default:
+	}
 }
 
-// Instantiate returns a new Instance ready to serve requests.
+func (f *Fastlike) Warmup(n int) {
+	if n > cap(f.instances) {
+		fmt.Printf("Warmup count %d is greater than max pool size %d. Clamping to max.\n", n, cap(f.instances))
+		n = cap(f.instances)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case f.instances <- f.instancefn():
+			default:
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// Instantiate returns an Instance ready to serve requests. This may come from the instance pool if
+// one is available, but otherwise will be constructed fresh.
 // This *must* be called for each request, as the XQD runtime is designed around a single
 // request/response pair for each instance.
 func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
-	f.Lock()
-	defer f.Unlock()
-
-	var i = &Instance{}
-	var linker = i.linker(f.store, f.wasi)
-
-	wasm, err := linker.Instantiate(f.module)
-	check(err)
-	i.wasm = wasm
-
-	// setup our defaults here, then apply the instance options
-	i.memory = &Memory{&wasmMemory{mem: wasm.GetExport("memory").Memory()}}
-	i.requests = RequestHandles{}
-	i.responses = ResponseHandles{}
-	i.bodies = BodyHandles{}
-
-	// By default, any subrequests will return a 502
-	i.backends = defaultBackendHandler()
-
-	// By default, all geo requests return the same data
-	i.geobackend = GeoHandler(DefaultGeo)
-
-	// By default, user agent parsing returns an empty useragent
-	i.uaparser = func(_ string) UserAgent {
-		return UserAgent{}
+	select {
+	case i := <-f.instances:
+		for _, opt := range opts {
+			opt(i)
+		}
+		return i
+	default:
+		return f.instancefn(opts...)
 	}
-
-	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
-	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
-
-	for _, o := range f.instanceOpts {
-		o(i)
-	}
-
-	for _, o := range opts {
-		o(i)
-	}
-
-	return i
 }
 
 func check(err error) {
