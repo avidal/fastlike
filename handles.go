@@ -95,6 +95,13 @@ func (b *BodyHandle) Write(p []byte) (int, error) {
 	return n, e
 }
 
+func (b *BodyHandle) Size() int64 {
+	if b.length == 0 {
+		return -1
+	}
+	return b.length
+}
+
 type BodyHandles struct {
 	handles []*BodyHandle
 }

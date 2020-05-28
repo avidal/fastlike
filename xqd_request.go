@@ -270,7 +270,6 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	}
 
 	req.Header = r.Header.Clone()
-	req.ContentLength = b.length
 
 	// TODO: Ensure we always have something in r.Header so we can avoid the nil check here
 	if req.Header == nil {
@@ -279,7 +278,14 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
 	req.Header.Add("cdn-loop", "fastlike")
-	req.Header.Add("content-length", fmt.Sprintf("%d", b.length))
+
+	// TODO: Not sure if this is strictly necessary (or correct!)
+	if req.Header.Get("content-length") == "" {
+		req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
+		req.ContentLength = b.Size()
+	} else if req.ContentLength <= 0 {
+		req.ContentLength = b.Size()
+	}
 
 	// If the backend is geolocation, we select the geobackend explicitly
 	var transport Backend
