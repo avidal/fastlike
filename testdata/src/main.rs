@@ -8,8 +8,15 @@ use serde_json;
 
 const BACKEND: &str = "backend";
 
+// The example server will send any requests for this backend to httpbin.org
+const HTTPBIN: &str = "httpbin";
+
 #[fastly::main]
 fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
+    if req.headers().contains_key("httpbin-proxy") {
+        return req.send(HTTPBIN)
+    }
+
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/simple-response") => Ok(Response::builder()
             .status(StatusCode::OK)
