@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -20,16 +21,19 @@ func (i *Instance) xqd_init(abiv int64) XqdStatus {
 func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) XqdStatus {
 	// Convert the downstream request into a (request, body) handle pair
 	var rhid, rh = i.requests.New()
-	rh.Request = i.ds_request
+	rh.Request = i.ds_request.Clone(context.Background())
 
-	// downstream requests don't carry host or scheme on their url for some dumb reason
-	rh.URL.Host = rh.Host
-	rh.URL.Scheme = "http"
-	if rh.TLS != nil {
-		rh.URL.Scheme = "https"
-	}
+	// downstream requests don't have host or scheme on the URL, but we need it
+	rh.Request.URL.Host = i.ds_request.Host
+	rh.Request.URL.Scheme = "http"
 
-	var bhid, _ = i.bodies.NewReader(rh.Body)
+	// NOTE: Originally, we setup the body handle using `bodies.NewReader(rh.Body)`, but there is
+	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
+	// get the body. I don't know why. This "solves" the problem for fastlike, at least
+	// temporarily.
+	var bhid, bh = i.bodies.NewBuffer()
+	io.Copy(bh, i.ds_request.Body)
+	i.ds_request.Body.Close()
 
 	i.memory.PutUint32(uint32(rhid), int64(request_handle_out))
 	i.memory.PutUint32(uint32(bhid), int64(body_handle_out))
