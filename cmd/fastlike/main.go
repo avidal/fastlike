@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/khan/fastlike"
+	"github.com/Khan/fastlike"
 )
 
 func main() {
