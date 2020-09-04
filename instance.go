@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"context"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -112,6 +113,9 @@ func (i *Instance) setup() {
 	i.wasm, err = i.wasmctx.linker.Instantiate(i.wasmctx.module)
 	check(err)
 
+	i.interrupt, err = i.wasmctx.store.InterruptHandle()
+	check(err)
+
 	i.memory = &Memory{&wasmMemory{mem: i.wasm.GetExport("memory").Memory()}}
 }
 
@@ -142,11 +146,26 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.ds_request = r
 	i.ds_response = w
 
+	// Start a goroutine which will wait for the context to cancel or wait until the wasm calls are
+	// complete
+	donech := make(chan struct{}, 1)
+	go func(ctx context.Context) {
+		select {
+		case <-ctx.Done():
+			// If the context cancels before we write to the donech it's a timeout/deadline/client
+			// hung up and we should interrupt the wasm program.
+			i.interrupt.Interrupt()
+		case <-donech:
+			// Otherwise, we're good and don't need to do anything else.
+		}
+	}(r.Context())
+
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
 	// and sending a response downstream.
 	entry := i.wasm.GetExport("_start").Func()
 	_, err := entry.Call()
+	donech <- struct{}{}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("Error running wasm program.\n"))

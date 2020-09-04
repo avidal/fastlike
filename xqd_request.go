@@ -127,6 +127,7 @@ func (i *Instance) xqd_req_uri_set(handle int32, addr int32, size int32) XqdStat
 	}
 
 	i.abilog.Printf("req_uri_set: handle=%d uri=%q", handle, u)
+
 	r.URL = u
 	return XqdStatusOK
 }
@@ -297,6 +298,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	w, err := transport(req)
 	if err != nil {
+		i.abilog.Printf("req_send: handle=%d request error=%q", rhandle, err)
 		return XqdError
 	}
 

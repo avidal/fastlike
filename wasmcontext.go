@@ -15,6 +15,7 @@ func (i *Instance) compile(wasmbytes []byte) {
 	config := wasmtime.NewConfig()
 
 	check(config.CacheConfigLoadDefault())
+	config.SetInterruptable(true)
 
 	store := wasmtime.NewStore(wasmtime.NewEngineWithConfig(config))
 	module, err := wasmtime.NewModule(store, wasmbytes)

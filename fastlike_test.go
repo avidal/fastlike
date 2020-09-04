@@ -2,6 +2,7 @@ package fastlike_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
@@ -17,7 +18,8 @@ import (
 
 func TestFastlike(t *testing.T) {
 	t.Parallel()
-	// Skip the test of the module doesn't exist
+
+	// Skip the test if the module doesn't exist
 	if _, perr := os.Stat("testdata/bin/main.wasm"); os.IsNotExist(perr) {
 		t.Skip("wasm test file does not exist. Try running `fastly compute build` in ./testdata")
 	}
@@ -203,6 +205,41 @@ func TestFastlike(t *testing.T) {
 					stt.Fail()
 				}
 			})
+		}
+	})
+
+	t.Run("context-cancel", func(st *testing.T) {
+		st.Parallel()
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Millisecond)
+		defer cancel()
+
+		r = r.WithContext(ctx)
+		r.RemoteAddr = "127.0.0.1:9999"
+		i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
+			return func(r *http.Request) (*http.Response, error) {
+				<-time.After(100 * time.Millisecond)
+				return &http.Response{
+					StatusCode: http.StatusTeapot,
+					Status:     "419",
+					Body:       ioutil.NopCloser(bytes.NewBuffer(nil)),
+				}, nil
+			}
+		}))
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusInternalServerError {
+			st.Fail()
+		}
+
+		// TODO: Come up with a better way to test this behavior.
+		// If the embedding application sets up a custom deadline for fastlike calls, they may want
+		// to catch this case and return their own response. In the default setup though, the
+		// context will only cancel when the client hangs up and they won't see whatever we write
+		// to the response.
+		if !strings.Contains(w.Body.String(), "wasm trap: interrupt") {
+			st.Fail()
 		}
 	})
 }
