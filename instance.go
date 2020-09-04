@@ -42,6 +42,9 @@ type Instance struct {
 
 	uaparser UserAgentParser
 
+	// isSecure is used to determine if a request should be considered secure
+	isSecure func(*http.Request) bool
+
 	log    *log.Logger
 	abilog *log.Logger
 }
@@ -67,6 +70,11 @@ func NewInstance(wasmbytes []byte, opts ...InstanceOption) *Instance {
 	// By default, user agent parsing returns an empty useragent
 	i.uaparser = func(_ string) UserAgent {
 		return UserAgent{}
+	}
+
+	// By default, requests are "secure" if they have TLS info
+	i.isSecure = func(r *http.Request) bool {
+		return r.TLS != nil
 	}
 
 	for _, o := range opts {

@@ -25,7 +25,13 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 
 	// downstream requests don't have host or scheme on the URL, but we need it
 	rh.Request.URL.Host = i.ds_request.Host
-	rh.Request.URL.Scheme = "http"
+
+	if i.isSecure(i.ds_request) {
+		rh.Request.URL.Scheme = "https"
+		rh.Request.Header.Set("fastly-ssl", "1")
+	} else {
+		rh.Request.URL.Scheme = "http"
+	}
 
 	// NOTE: Originally, we setup the body handle using `bodies.NewReader(rh.Body)`, but there is
 	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
