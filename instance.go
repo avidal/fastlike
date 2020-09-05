@@ -38,7 +38,7 @@ type Instance struct {
 
 	// geobackend is a backend for geographic requests
 	// these are issued by the guest when you attempt to lookup geo data
-	geobackend Backend
+	geobackend http.Handler
 
 	uaparser UserAgentParser
 

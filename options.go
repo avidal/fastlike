@@ -16,7 +16,7 @@ func BackendHandlerOption(b BackendHandler) InstanceOption {
 }
 
 // GeoHandlerOption is an InstanceOption which controls how geographic requests are handled
-func GeoHandlerOption(b Backend) InstanceOption {
+func GeoHandlerOption(b http.Handler) InstanceOption {
 	return func(i *Instance) {
 		i.geobackend = b
 	}

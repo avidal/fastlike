@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strings"
@@ -289,18 +290,21 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	}
 
 	// If the backend is geolocation, we select the geobackend explicitly
-	var transport Backend
+	var handler http.Handler
 	if backend == "geolocation" {
-		transport = i.geobackend
+		handler = i.geobackend
 	} else {
-		transport = i.backends(backend)
+		handler = i.backends(backend)
 	}
 
-	w, err := transport(req)
-	if err != nil {
-		i.abilog.Printf("req_send: handle=%d request error=%q", rhandle, err)
-		return XqdError
-	}
+	// TODO: Is there a better way to get an *http.Response from an http.Handler?
+	// The Handler interface is useful for embedders, since often-times they'll be processing wasm
+	// requests in the embedding application, and it's very easy to adapt an http.Handler to an
+	// http.RoundTripper if they want it to go offsite.
+	wr := httptest.NewRecorder()
+	handler.ServeHTTP(wr, req)
+
+	w := wr.Result()
 
 	// Convert the response into an (rh, bh) pair, put them in the list, and write out the handles
 	var whid, wh = i.responses.New()

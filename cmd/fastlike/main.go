@@ -4,7 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/Khan/fastlike"
 )
@@ -21,27 +24,42 @@ func main() {
 		os.Exit(1)
 	}
 
+	httpbin := httputil.NewSingleHostReverseProxy(parse("http://httpbin.org"))
+	proxy := httputil.NewSingleHostReverseProxy(parse(*proxyTo))
+
 	var opts = []fastlike.InstanceOption{}
 
 	// NOTE: You probably want to specify a proxy-to, otherwise any requests that get proxied
 	// without changing the hostname will loop and be blocked.
 	if *proxyTo != "" {
-		opts = append(opts, fastlike.BackendHandlerOption(func(be string) fastlike.Backend {
-			return func(r *http.Request) (*http.Response, error) {
+		opts = append(opts, fastlike.BackendHandlerOption(func(be string) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if be == "httpbin" {
-					r.URL.Host = "httpbin.org"
+					httpbin.ServeHTTP(w, r)
 				} else {
-					r.URL.Host = *proxyTo
+					proxy.ServeHTTP(w, r)
 				}
-				return http.DefaultClient.Do(r)
-			}
+			})
 		}))
 	}
 
-	proxy := fastlike.New(*wasm, opts...)
+	fl := fastlike.New(*wasm, opts...)
 
 	fmt.Printf("Listening on %s\n", *bind)
-	if err := http.ListenAndServe(*bind, proxy); err != nil {
+	if err := http.ListenAndServe(*bind, fl); err != nil {
 		fmt.Printf("Error starting server, got %s\n", err.Error())
 	}
+}
+
+func parse(u string) *url.URL {
+	if !strings.HasPrefix(u, "http") {
+		u = fmt.Sprintf("http://%s", u)
+	}
+
+	out, err := url.Parse(u)
+	if err != nil {
+		panic(err)
+	}
+
+	return out
 }

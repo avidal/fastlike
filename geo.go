@@ -1,9 +1,7 @@
 package fastlike
 
 import (
-	"bytes"
 	"encoding/json"
-	"io/ioutil"
 	"net"
 	"net/http"
 )
@@ -49,25 +47,13 @@ func DefaultGeo(ip net.IP) Geo {
 	}
 }
 
-func GeoHandler(fn func(net.IP) Geo) Backend {
-	return func(r *http.Request) (*http.Response, error) {
+func GeoHandler(fn func(net.IP) Geo) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var ip = net.ParseIP(r.Header.Get("fastly-xqd-arg1"))
 		var geo = fn(ip)
 
-		var buf = new(bytes.Buffer)
-		json.NewEncoder(buf).Encode(geo)
+		w.WriteHeader(http.StatusOK)
 
-		var w = &http.Response{
-			Status:     http.StatusText(http.StatusOK),
-			StatusCode: http.StatusOK,
-			Proto:      "HTTP/1.1",
-			ProtoMajor: 1,
-			ProtoMinor: 1,
-			Body:       ioutil.NopCloser(buf),
-			Header:     make(http.Header, 0),
-		}
-
-		return w, nil
-	}
-
+		json.NewEncoder(w).Encode(geo)
+	})
 }

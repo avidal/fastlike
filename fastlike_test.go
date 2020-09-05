@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -103,9 +102,9 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, &http.Response{
-			StatusCode: http.StatusTeapot,
-			Body:       ioutil.NopCloser(bytes.NewBuffer([]byte("i am a teapot"))),
+		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+			w.Write([]byte("i am a teapot"))
 		})))
 		i.ServeHTTP(w, r)
 
@@ -123,18 +122,14 @@ func TestFastlike(t *testing.T) {
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
-			return func(r *http.Request) (*http.Response, error) {
-				defer r.Body.Close()
-				if r.Header.Get("test-header") != "test-value" {
-					st.Fail()
-				}
-
-				return &http.Response{
-					StatusCode: http.StatusNoContent, Body: ioutil.NopCloser(bytes.NewBuffer(nil)),
-				}, nil
+		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			defer r.Body.Close()
+			if r.Header.Get("test-header") != "test-value" {
+				st.Fail()
 			}
-		}))
+
+			w.WriteHeader(http.StatusNoContent)
+		})))
 		i.ServeHTTP(w, r)
 	})
 
@@ -189,16 +184,11 @@ func TestFastlike(t *testing.T) {
 				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
 
 				r.RemoteAddr = "127.0.0.1:9999"
-				i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
-					return func(r *http.Request) (*http.Response, error) {
-						<-time.After(500 * time.Millisecond)
-						return &http.Response{
-							StatusCode: http.StatusTeapot,
-							Status:     "419",
-							Body:       ioutil.NopCloser(bytes.NewBuffer(nil)),
-						}, nil
-					}
-				}))
+				i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+					<-time.After(500 * time.Millisecond)
+					w.WriteHeader(http.StatusTeapot)
+					w.Write([]byte("i am a teapot"))
+				})))
 				i.ServeHTTP(w, r)
 
 				if w.Code != http.StatusTeapot {
@@ -217,16 +207,11 @@ func TestFastlike(t *testing.T) {
 
 		r = r.WithContext(ctx)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.BackendHandlerOption(func(_ string) fastlike.Backend {
-			return func(r *http.Request) (*http.Response, error) {
-				<-time.After(100 * time.Millisecond)
-				return &http.Response{
-					StatusCode: http.StatusTeapot,
-					Status:     "419",
-					Body:       ioutil.NopCloser(bytes.NewBuffer(nil)),
-				}, nil
-			}
-		}))
+		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			<-time.After(100 * time.Millisecond)
+			w.WriteHeader(http.StatusTeapot)
+			w.Write([]byte("i am a teapot"))
+		})))
 		i.ServeHTTP(w, r)
 
 		if w.Code != http.StatusInternalServerError {
@@ -245,20 +230,18 @@ func TestFastlike(t *testing.T) {
 }
 
 func failingBackendHandler(t *testing.T) fastlike.BackendHandler {
-	return func(_ string) fastlike.Backend {
-		return func(_ *http.Request) (*http.Response, error) {
+	return func(_ string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			t.Helper()
 			t.Fail()
-			return nil, errors.New("No subrequests allowed!")
-		}
+			w.WriteHeader(http.StatusTeapot)
+		})
 	}
 }
 
-func testBackendHandler(t *testing.T, w *http.Response) fastlike.BackendHandler {
-	return func(_ string) fastlike.Backend {
-		return func(_ *http.Request) (*http.Response, error) {
-			t.Helper()
-			return w, nil
-		}
+func testBackendHandler(t *testing.T, h http.HandlerFunc) fastlike.BackendHandler {
+	return func(_ string) http.Handler {
+		t.Helper()
+		return h
 	}
 }
