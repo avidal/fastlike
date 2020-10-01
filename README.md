@@ -1,6 +1,6 @@
-# Fastlike
+# fastlike
 
-Fastlike is a Go project that implements the Fastly Compute@Edge ABI using `wasmtime` and exposes
+fastlike is a Go project that implements the Fastly Compute@Edge ABI using `wasmtime` and exposes
 a `http.Handler` for you to use.
 
 There's a proxy implementation in `cmd/fastlike` which you can run with:
