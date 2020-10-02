@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Khan/fastlike"
+	"fastlike.dev"
 )
 
 func main() {

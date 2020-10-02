@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Khan/fastlike"
+	"fastlike.dev"
 )
 
 func TestFastlike(t *testing.T) {
