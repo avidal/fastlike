@@ -57,7 +57,7 @@ func (rhs *ResponseHandles) Get(id int) *ResponseHandle {
 	return rhs.handles[id]
 }
 func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
-	rh := &ResponseHandle{Response: &http.Response{}}
+	rh := &ResponseHandle{Response: &http.Response{StatusCode: 200}}
 	rhs.handles = append(rhs.handles, rh)
 	return len(rhs.handles) - 1, rh
 }
