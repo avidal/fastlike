@@ -15,15 +15,17 @@ import (
 	"fastlike.dev"
 )
 
+const wasmfile = "testdata/target/wasm32-wasi/debug/fastlike-example.wasm"
+
 func TestFastlike(t *testing.T) {
 	t.Parallel()
 
 	// Skip the test if the module doesn't exist
-	if _, perr := os.Stat("testdata/bin/main.wasm"); os.IsNotExist(perr) {
-		t.Skip("wasm test file does not exist. Try running `fastly compute build` in ./testdata")
+	if _, perr := os.Stat(wasmfile); os.IsNotExist(perr) {
+		t.Skip("wasm test file does not exist. Try running `cargo build` in ./testdata")
 	}
 
-	f := fastlike.New("testdata/bin/main.wasm")
+	f := fastlike.New(wasmfile)
 
 	// Each test case will create its own instance and request/response pair to test against
 	t.Run("simple-response", func(st *testing.T) {
