@@ -9,13 +9,6 @@ There's a proxy implementation in `cmd/fastlike` which you can run with:
 $ go run ./cmd/fastlike -wasm <wasmfile> -proxy-to <proxy address>
 ```
 
-You can use a provided wasm binary by building the testdata:
-
-```
-$ cd testdata; fastly compute build; cd ..
-$ go run ./cmd/fastlike -wasm ./testdata/bin/main.wasm -proxy-to <proxy address>
-```
-
 You don't need the fastly CLI to build the test program either, as long as you have rust installed
 and the wasm32-wasi target available:
 
