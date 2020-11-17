@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-func (i *Instance) xqd_init(abiv int64) XqdStatus {
+func (i *Instance) xqd_init(abiv int64) int32 {
 	i.abilog.Printf("init: version=%d\n", abiv)
 	if abiv != 1 {
 		return XqdErrUnsupported
@@ -18,7 +18,7 @@ func (i *Instance) xqd_init(abiv int64) XqdStatus {
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) XqdStatus {
+func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) int32 {
 	// Convert the downstream request into a (request, body) handle pair
 	var rhid, rh = i.requests.New()
 	rh.Request = i.ds_request.Clone(context.Background())
@@ -49,7 +49,7 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) XqdStatus {
+func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
 	if stream != 0 {
 		i.abilog.Printf("resp_send_downstream: streaming unsupported")
 		return XqdErrUnsupported
@@ -80,7 +80,7 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_out int32) XqdStatus {
+func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_out int32) int32 {
 
 	var ip = net.ParseIP(strings.SplitN(i.ds_request.RemoteAddr, ":", 2)[0])
 	i.abilog.Printf("req_downstream_client_ip_addr: remoteaddr=%s, ip=%q\n", i.ds_request.RemoteAddr, ip)
@@ -108,7 +108,7 @@ func (i *Instance) xqd_uap_parse(
 	major_out, major_maxlen, major_nwritten_out int32,
 	minor_out, minor_maxlen, minor_nwritten_out int32,
 	patch_out, patch_maxlen, patch_nwritten_out int32,
-) XqdStatus {
+) int32 {
 	var buf = make([]byte, size)
 	_, err := i.memory.ReadAt(buf, int64(addr))
 	if err != nil {

@@ -3,7 +3,7 @@ package fastlike
 // xqd_multivalue is not an actual ABI method, but it's an implementation of a mechanism used by
 // the guest to make multiple hostcalls via a cursor
 // For usage, see the abi methods for headers
-func xqd_multivalue(memory *Memory, data []string, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) XqdStatus {
+func xqd_multivalue(memory *Memory, data []string, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	// If there's no data, return early
 	if len(data) == 0 {
 		memory.PutUint32(uint32(0), int64(nwritten_out))

@@ -6,14 +6,14 @@ import (
 	"sort"
 )
 
-func (i *Instance) xqd_resp_new(handle_out int32) XqdStatus {
+func (i *Instance) xqd_resp_new(handle_out int32) int32 {
 	var whid, _ = i.responses.New()
 	i.abilog.Printf("resp_new handle=%d\n", whid)
 	i.memory.PutUint32(uint32(whid), int64(handle_out))
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_status_set(handle int32, status int32) XqdStatus {
+func (i *Instance) xqd_resp_status_set(handle int32, status int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
@@ -26,7 +26,7 @@ func (i *Instance) xqd_resp_status_set(handle int32, status int32) XqdStatus {
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) XqdStatus {
+func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
@@ -37,21 +37,21 @@ func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) XqdStatus
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_version_set(handle int32, version int32) XqdStatus {
+func (i *Instance) xqd_resp_version_set(handle int32, version int32) int32 {
 	i.abilog.Printf("resp_version_set: handle=%d version=%d", handle, version)
 
 	if i.responses.Get(int(handle)) == nil {
 		return XqdErrInvalidHandle
 	}
 
-	if HttpVersion(version) != Http11 {
+	if int32(version) != Http11 {
 		i.abilog.Printf("resp_version_set: unsupported version=%d", version)
 	}
 
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) XqdStatus {
+func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) int32 {
 	if i.responses.Get(int(handle)) == nil {
 		return XqdErrInvalidHandle
 	}
@@ -62,7 +62,7 @@ func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) XqdStat
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) XqdStatus {
+func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("resp_header_names_get: handle=%d cursor=%d", handle, cursor)
 
 	var w = i.responses.Get(int(handle))
@@ -81,7 +81,7 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
-func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) XqdStatus {
+func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	var w = i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
@@ -107,7 +107,7 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
-func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) XqdStatus {
+func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
 	var w = i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
