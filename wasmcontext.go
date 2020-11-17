@@ -18,7 +18,7 @@ func (i *Instance) compile(wasmbytes []byte) {
 	config.SetInterruptable(true)
 
 	store := wasmtime.NewStore(wasmtime.NewEngineWithConfig(config))
-	module, err := wasmtime.NewModule(store, wasmbytes)
+	module, err := wasmtime.NewModule(store.Engine, wasmbytes)
 	check(err)
 
 	wasicfg := wasmtime.NewWasiConfig()
