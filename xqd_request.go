@@ -152,6 +152,29 @@ func (i *Instance) xqd_req_header_names_get(handle int32, addr int32, maxlen int
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
+	var r = i.requests.Get(int(handle))
+	if r == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var buf = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var header = http.CanonicalHeaderKey(string(buf))
+
+	i.abilog.Printf("req_header_value_get: handle=%d header=%q\n", handle, header)
+
+	value := r.Header.Get(header)
+	nwritten, err := i.memory.WriteAt([]byte(value), int64(addr))
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	var r = i.requests.Get(int(handle))
 	if r == nil {
