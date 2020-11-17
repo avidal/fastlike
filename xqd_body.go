@@ -5,14 +5,14 @@ import (
 	"io"
 )
 
-func (i *Instance) xqd_body_new(handle_out int32) XqdStatus {
+func (i *Instance) xqd_body_new(handle_out int32) int32 {
 	var bhid, _ = i.bodies.NewBuffer()
 	i.abilog.Printf("body_new: handle=%d", bhid)
 	i.memory.PutUint32(uint32(bhid), int64(handle_out))
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) XqdStatus {
+func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) int32 {
 	// TODO: Figure out what we're supposed to do with `body_end` which can be 0 (back) or
 	// 1 (front)
 	i.abilog.Printf("body_write: handle=%d size=%d, body_end=%d", handle, size, body_end)
@@ -36,7 +36,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) XqdStatus {
+func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) int32 {
 	var body = i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
@@ -68,7 +68,7 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) XqdStatus {
+func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
 
 	var dst = i.bodies.Get(int(dst_handle))
