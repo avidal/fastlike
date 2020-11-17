@@ -61,7 +61,6 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_req", "send_async", i.wasm5("send_async"))
 
 	linker.DefineFunc("fastly_http_req", "original_header_count", i.wasm1("original_header_count"))
-	linker.DefineFunc("fastly_http_req", "header_remove", i.wasm3("header_remove"))
 
 	linker.DefineFunc("fastly_http_resp", "header_append", i.wasm5("header_append"))
 	linker.DefineFunc("fastly_http_resp", "header_insert", i.wasm5("header_insert"))
@@ -87,6 +86,7 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_req", "uri_get", i.xqd_req_uri_get)
 	linker.DefineFunc("fastly_http_req", "uri_set", i.xqd_req_uri_set)
 	linker.DefineFunc("fastly_http_req", "header_names_get", i.xqd_req_header_names_get)
+	linker.DefineFunc("fastly_http_req", "header_remove", i.xqd_req_header_remove)
 	linker.DefineFunc("fastly_http_req", "header_value_get", i.xqd_req_header_value_get)
 	linker.DefineFunc("fastly_http_req", "header_values_get", i.xqd_req_header_values_get)
 	linker.DefineFunc("fastly_http_req", "header_values_set", i.xqd_req_header_values_set)
@@ -104,6 +104,7 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_resp", "version_get", i.xqd_resp_version_get)
 	linker.DefineFunc("fastly_http_resp", "version_set", i.xqd_resp_version_set)
 	linker.DefineFunc("fastly_http_resp", "header_names_get", i.xqd_resp_header_names_get)
+	linker.DefineFunc("fastly_http_resp", "header_remove", i.xqd_resp_header_remove)
 	linker.DefineFunc("fastly_http_resp", "header_values_get", i.xqd_resp_header_values_get)
 	linker.DefineFunc("fastly_http_resp", "header_values_set", i.xqd_resp_header_values_set)
 
@@ -134,12 +135,10 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_req_send_async", i.wasm5("xqd_req_send_async"))
 
 	linker.DefineFunc("env", "xqd_req_original_header_count", i.wasm1("xqd_req_original_header_count"))
-	linker.DefineFunc("env", "xqd_req_header_remove", i.wasm3("xqd_req_header_remove"))
 
 	linker.DefineFunc("env", "xqd_resp_header_append", i.wasm5("xqd_resp_header_append"))
 	linker.DefineFunc("env", "xqd_resp_header_insert", i.wasm5("xqd_resp_header_insert"))
 	linker.DefineFunc("env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
-	linker.DefineFunc("env", "xqd_resp_header_remove", i.wasm3("xqd_resp_header_remove"))
 
 	linker.DefineFunc("env", "xqd_body_close_downstream", i.wasm1("xqd_body_close_downstream"))
 
@@ -161,6 +160,7 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_req_method_set", i.xqd_req_method_set)
 	linker.DefineFunc("env", "xqd_req_uri_get", i.xqd_req_uri_get)
 	linker.DefineFunc("env", "xqd_req_uri_set", i.xqd_req_uri_set)
+	linker.DefineFunc("env", "xqd_req_header_remove", i.xqd_req_header_remove)
 	linker.DefineFunc("env", "xqd_req_header_names_get", i.xqd_req_header_names_get)
 	linker.DefineFunc("env", "xqd_req_header_value_get", i.xqd_req_header_value_get)
 	linker.DefineFunc("env", "xqd_req_header_values_get", i.xqd_req_header_values_get)
@@ -177,6 +177,7 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_resp_status_set", i.xqd_resp_status_set)
 	linker.DefineFunc("env", "xqd_resp_version_get", i.xqd_resp_version_get)
 	linker.DefineFunc("env", "xqd_resp_version_set", i.xqd_resp_version_set)
+	linker.DefineFunc("env", "xqd_resp_header_remove", i.xqd_resp_header_remove)
 	linker.DefineFunc("env", "xqd_resp_header_names_get", i.xqd_resp_header_names_get)
 	linker.DefineFunc("env", "xqd_resp_header_values_get", i.xqd_resp_header_values_get)
 	linker.DefineFunc("env", "xqd_resp_header_values_set", i.xqd_resp_header_values_set)

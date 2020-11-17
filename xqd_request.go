@@ -152,6 +152,23 @@ func (i *Instance) xqd_req_header_names_get(handle int32, addr int32, maxlen int
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_size int32) int32 {
+	var r = i.requests.Get(int(handle))
+	if r == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var name = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	r.Header.Del(string(name))
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	var r = i.requests.Get(int(handle))
 	if r == nil {
