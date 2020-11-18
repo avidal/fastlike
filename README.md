@@ -6,7 +6,7 @@ a `http.Handler` for you to use.
 There's a proxy implementation in `cmd/fastlike` which you can run with:
 
 ```
-$ go run ./cmd/fastlike -wasm <wasmfile> -proxy-to <proxy address>
+$ go run ./cmd/fastlike -wasm <wasmfile> -backend <proxy address>
 ```
 
 You don't need the fastly CLI to build the test program either, as long as you have rust installed
@@ -14,7 +14,7 @@ and the wasm32-wasi target available:
 
 ```
 $ cd testdata; cargo build; cd ..
-$ go run ./cmd/fastlike -wasm ./testdata/target/wasm32-wasi/debug/fastlike-example.wasm -proxy-to <proxy address>
+$ go run ./cmd/fastlike -wasm ./testdata/target/wasm32-wasi/debug/fastlike-example.wasm -backend <proxy address>
 ```
 
 However, the [fastly cli](https://github.com/fastly/cli) will help you get your toolchains up to
@@ -25,7 +25,7 @@ For a more full-featured example:
 ```
 # in one terminal:
 $ cd testdata; fastly compute build; cd ..
-$ go run ./cmd/fastlike -wasm ./testdata/bin/main.wasm -proxy-to localhost:8000 -bind localhost:5000
+$ go run ./cmd/fastlike -wasm ./testdata/bin/main.wasm -backend localhost:8000 -bind localhost:5000
 
 # in another
 $ python3 -m http.server
