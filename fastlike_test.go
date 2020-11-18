@@ -15,7 +15,7 @@ import (
 	"fastlike.dev"
 )
 
-const wasmfile = "testdata/target/wasm32-wasi/debug/fastlike-example.wasm"
+const wasmfile = "testdata/target/wasm32-wasi/debug/example.wasm"
 
 func TestFastlike(t *testing.T) {
 	t.Parallel()
