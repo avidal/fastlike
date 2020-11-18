@@ -14,7 +14,7 @@ and the wasm32-wasi target available:
 
 ```
 $ cd testdata; cargo build; cd ..
-$ go run ./cmd/fastlike -wasm ./testdata/target/wasm32-wasi/debug/fastlike-example.wasm -backend <proxy address>
+$ go run ./cmd/fastlike -wasm ./testdata/target/wasm32-wasi/debug/example.wasm -backend <proxy address>
 ```
 
 However, the [fastly cli](https://github.com/fastly/cli) will help you get your toolchains up to
