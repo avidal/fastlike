@@ -87,3 +87,16 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 
 	return XqdStatusOK
 }
+
+func (i *Instance) xqd_body_close(handle int32) int32 {
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	if err := body.Close(); err != nil {
+		return XqdErrInvalidHandle
+	}
+
+	return XqdStatusOK
+}
