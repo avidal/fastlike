@@ -67,8 +67,6 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	linker.DefineFunc("fastly_http_resp", "header_remove", i.wasm3("header_remove"))
 
-	linker.DefineFunc("fastly_http_body", "close", i.wasm1("close"))
-
 	// End XQD Stubbing -}}}
 
 	// xqd.go
@@ -113,6 +111,7 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_body", "write", i.xqd_body_write)
 	linker.DefineFunc("fastly_http_body", "read", i.xqd_body_read)
 	linker.DefineFunc("fastly_http_body", "append", i.xqd_body_append)
+	linker.DefineFunc("fastly_http_body", "close", i.xqd_body_close)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -140,7 +139,7 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_resp_header_insert", i.wasm5("xqd_resp_header_insert"))
 	linker.DefineFunc("env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
 
-	linker.DefineFunc("env", "xqd_body_close_downstream", i.wasm1("xqd_body_close_downstream"))
+	linker.DefineFunc("env", "xqd_body_close_downstream", i.xqd_body_close)
 
 	// End XQD Stubbing -}}}
 
