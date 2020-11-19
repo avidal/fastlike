@@ -48,6 +48,17 @@ func (i *Instance) xqd_req_cache_override_set(handle int32, tag int32, ttl int32
 	return XqdStatusOK
 }
 
+func (i *Instance) xqd_req_cache_override_v2_set(handle int32, tag int32, ttl int32, swr int32, sk int32, sk_len int32) int32 {
+	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
+
+	if i.requests.Get(int(handle)) == nil {
+		i.abilog.Printf("req_cache_override_v2_set: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_req_method_get(handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	var r = i.requests.Get(int(handle))
 	if r == nil {
