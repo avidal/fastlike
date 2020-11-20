@@ -15,6 +15,7 @@ import (
 func main() {
 	var wasm = flag.String("wasm", "", "wasm program to execute")
 	var bind = flag.String("bind", "localhost:5000", "address to bind to")
+	var verbosity = flag.Int("v", 0, "verbosity level (0, 1, 2)")
 
 	var backends = make(backendFlags)
 	flag.Var(&backends, "backend", "<name=address> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000)")
@@ -34,26 +35,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	var opts = []fastlike.InstanceOption{}
+	var opts = []fastlike.Option{}
 
-	opts = append(opts, fastlike.BackendHandlerOption(func(be string) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			backend, exists := backends[be]
-			if exists {
-				backend.proxy.ServeHTTP(w, r)
-				return
-			}
+	for name, backend := range backends {
+		if name == "" {
+			opts = append(opts, fastlike.WithDefaultBackend(func(_ string) http.Handler {
+				return backend.proxy
+			}))
+		} else {
+			opts = append(opts, fastlike.WithBackend(name, backend.proxy))
+		}
+	}
 
-			fallback, exists := backends[""]
-			if exists {
-				fallback.proxy.ServeHTTP(w, r)
-				return
-			}
-
-			w.WriteHeader(http.StatusBadGateway)
-			w.Write([]byte(fmt.Sprintf("Unknown backend %s.", be)))
-		})
-	}))
+	opts = append(opts, fastlike.WithVerbosity(*verbosity))
 
 	fl := fastlike.New(*wasm, opts...)
 

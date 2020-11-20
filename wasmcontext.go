@@ -46,9 +46,6 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	linker.DefineFunc("fastly_log", "endpoint_get", i.wasm3("endpoint_get"))
-	linker.DefineFunc("fastly_log", "write", i.wasm4("write"))
-
 	linker.DefineFunc("fastly_http_req", "pending_req_poll", i.wasm4("pending_req_poll"))
 	linker.DefineFunc("fastly_http_req", "pending_req_select", i.wasm5("pending_req_select"))
 	linker.DefineFunc("fastly_http_req", "pending_req_wait", i.wasm3("pending_req_wait"))
@@ -66,7 +63,6 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_resp", "header_insert", i.wasm5("header_insert"))
 	linker.DefineFunc("fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	linker.DefineFunc("fastly_http_resp", "header_remove", i.wasm3("header_remove"))
-
 	// End XQD Stubbing -}}}
 
 	// xqd.go
@@ -113,6 +109,10 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_body", "read", i.xqd_body_read)
 	linker.DefineFunc("fastly_http_body", "append", i.xqd_body_append)
 	linker.DefineFunc("fastly_http_body", "close", i.xqd_body_close)
+
+	// xqd_log.go
+	linker.DefineFunc("fastly_log", "endpoint_get", i.xqd_log_endpoint_get)
+	linker.DefineFunc("fastly_log", "write", i.xqd_log_write)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -120,9 +120,6 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	linker.DefineFunc("env", "xqd_log_endpoint_get", i.wasm3("xqd_log_endpoint_get"))
-	linker.DefineFunc("env", "xqd_log_write", i.wasm4("xqd_log_write"))
-
 	linker.DefineFunc("env", "xqd_pending_req_poll", i.wasm4("xqd_pending_req_poll"))
 	linker.DefineFunc("env", "xqd_pending_req_select", i.wasm5("xqd_pending_req_select"))
 	linker.DefineFunc("env", "xqd_pending_req_wait", i.wasm3("xqd_pending_req_wait"))
@@ -141,7 +138,6 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
 
 	linker.DefineFunc("env", "xqd_body_close_downstream", i.xqd_body_close)
-
 	// End XQD Stubbing -}}}
 
 	// xqd.go
@@ -188,4 +184,8 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_body_write", i.xqd_body_write)
 	linker.DefineFunc("env", "xqd_body_read", i.xqd_body_read)
 	linker.DefineFunc("env", "xqd_body_append", i.xqd_body_append)
+
+	// xqd_log.go
+	linker.DefineFunc("env", "xqd_log_endpoint_get", i.xqd_log_endpoint_get)
+	linker.DefineFunc("env", "xqd_log_write", i.xqd_log_write)
 }

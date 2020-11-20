@@ -17,11 +17,11 @@ type Fastlike struct {
 	instances chan *Instance
 
 	// instancefn is called when a new instance must be created from scratch
-	instancefn func(opts ...InstanceOption) *Instance
+	instancefn func(opts ...Option) *Instance
 }
 
 // New returns a new Fastlike ready to create new instances from
-func New(wasmfile string, instanceOpts ...InstanceOption) *Fastlike {
+func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 	var f = &Fastlike{}
 
 	// read in the file and store the bytes
@@ -37,7 +37,7 @@ func New(wasmfile string, instanceOpts ...InstanceOption) *Fastlike {
 	}
 
 	f.instances = make(chan *Instance, size)
-	f.instancefn = func(opts ...InstanceOption) *Instance {
+	f.instancefn = func(opts ...Option) *Instance {
 		// merge the original options with any supplied options
 		opts = append(instanceOpts, opts...)
 		return NewInstance(wasmbytes, opts...)
@@ -83,7 +83,7 @@ func (f *Fastlike) Warmup(n int) {
 // one is available, but otherwise will be constructed fresh.
 // This *must* be called for each request, as the XQD runtime is designed around a single
 // request/response pair for each instance.
-func (f *Fastlike) Instantiate(opts ...InstanceOption) *Instance {
+func (f *Fastlike) Instantiate(opts ...Option) *Instance {
 	select {
 	case i := <-f.instances:
 		for _, opt := range opts {

@@ -343,9 +343,9 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	// If the backend is geolocation, we select the geobackend explicitly
 	var handler http.Handler
 	if backend == "geolocation" {
-		handler = i.geobackend
+		handler = geoHandler(i.geolookup)
 	} else {
-		handler = i.backends(backend)
+		handler = i.getBackend(backend)
 	}
 
 	// TODO: Is there a better way to get an *http.Response from an http.Handler?
