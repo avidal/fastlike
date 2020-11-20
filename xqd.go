@@ -26,7 +26,7 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	// downstream requests don't have host or scheme on the URL, but we need it
 	rh.Request.URL.Host = i.ds_request.Host
 
-	if i.isSecure(i.ds_request) {
+	if i.secureFn(i.ds_request) {
 		rh.Request.URL.Scheme = "https"
 		rh.Request.Header.Set("fastly-ssl", "1")
 	} else {

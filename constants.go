@@ -1,5 +1,7 @@
 package fastlike
 
+// Constants used for return values from ABI functions.
+// See https://docs.rs/fastly-shared for more.
 const (
 	XqdStatusOK           int32 = 0
 	XqdError              int32 = 1

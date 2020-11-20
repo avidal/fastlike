@@ -2,8 +2,10 @@ package fastlike
 
 import (
 	"context"
+	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -34,23 +36,27 @@ type Instance struct {
 	ds_response http.ResponseWriter
 
 	// backends is used to issue subrequests
-	backends BackendHandler
+	backends       map[string]http.Handler
+	defaultBackend func(name string) http.Handler
 
-	// geobackend is a backend for geographic requests
-	// these are issued by the guest when you attempt to lookup geo data
-	geobackend http.Handler
+	// loggers is used to write log output from the wasm program
+	loggers       []logger
+	defaultLogger func(name string) io.Writer
+
+	// geolookup is a function that accepts a net.IP and returns a Geo
+	geolookup func(net.IP) Geo
 
 	uaparser UserAgentParser
 
-	// isSecure is used to determine if a request should be considered secure
-	isSecure func(*http.Request) bool
+	// secureFn is used to determine if a request should be considered secure
+	secureFn func(*http.Request) bool
 
 	log    *log.Logger
 	abilog *log.Logger
 }
 
 // NewInstance returns an http.Handler that can handle a single request.
-func NewInstance(wasmbytes []byte, opts ...InstanceOption) *Instance {
+func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	var i = new(Instance)
 	i.compile(wasmbytes)
 
@@ -61,11 +67,17 @@ func NewInstance(wasmbytes []byte, opts ...InstanceOption) *Instance {
 	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
 
+	i.backends = map[string]http.Handler{}
+	i.loggers = []logger{}
+
 	// By default, any subrequests will return a 502
-	i.backends = defaultBackendHandler()
+	i.defaultBackend = defaultBackend
+
+	// By default, logs are written to stdout, prefixed with the name of the logger
+	i.defaultLogger = defaultLogger
 
 	// By default, all geo requests return the same data
-	i.geobackend = GeoHandler(DefaultGeo)
+	i.geolookup = defaultGeoLookup
 
 	// By default, user agent parsing returns an empty useragent
 	i.uaparser = func(_ string) UserAgent {
@@ -73,7 +85,7 @@ func NewInstance(wasmbytes []byte, opts ...InstanceOption) *Instance {
 	}
 
 	// By default, requests are "secure" if they have TLS info
-	i.isSecure = func(r *http.Request) bool {
+	i.secureFn = func(r *http.Request) bool {
 		return r.TLS != nil
 	}
 

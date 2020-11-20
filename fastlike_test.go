@@ -32,7 +32,7 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "Hello, world!" {
@@ -48,7 +48,7 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "" {
@@ -64,7 +64,7 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Body.String() != "original\nappended" {
@@ -81,7 +81,7 @@ func TestFastlike(t *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", ioutil.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)), fastlike.UserAgentParserOption(func(_ string) fastlike.UserAgent {
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)), fastlike.WithUserAgentParser(func(_ string) fastlike.UserAgent {
 			return fastlike.UserAgent{
 				Family: "Firefox",
 				Major:  "76",
@@ -104,7 +104,7 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTeapot)
 			w.Write([]byte("i am a teapot"))
 		})))
@@ -124,7 +124,7 @@ func TestFastlike(t *testing.T) {
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 			defer r.Body.Close()
 			if r.Header.Get("test-header") != "test-value" {
 				st.Fail()
@@ -139,7 +139,7 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", ioutil.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Code != http.StatusInternalServerError {
@@ -159,7 +159,7 @@ func TestFastlike(t *testing.T) {
 		// In normal operation (ie, part of an http server handler), these requests will always
 		// have a remote addr. But not if you create them yourself.
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.BackendHandlerOption(failingBackendHandler(st)))
+		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
 		if w.Code != http.StatusOK {
@@ -176,6 +176,34 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("logger", func(st *testing.T) {
+		st.Parallel()
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/log", ioutil.NopCloser(bytes.NewBuffer(nil)))
+
+		// In normal operation (ie, part of an http server handler), these requests will always
+		// have a remote addr. But not if you create them yourself.
+		r.RemoteAddr = "127.0.0.1:9999"
+		buf := new(bytes.Buffer)
+		i := f.Instantiate(
+			fastlike.WithDefaultBackend(failingBackendHandler(st)),
+			fastlike.WithLogger("default", buf),
+		)
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusNoContent {
+			st.Fail()
+		}
+
+		// The contents of the buffer must be "Hello from fastlike!"
+		actual := buf.String()
+		expected := "Hello from fastlike!\n"
+		if actual != expected {
+			st.Logf("expected %q, got %q", expected, actual)
+			st.Fail()
+		}
+	})
+
 	t.Run("parallel", func(st *testing.T) {
 		// Assert that we can safely handle concurrent requests by sending off 5 requests each of
 		// which sleep for 500ms in the host.
@@ -186,7 +214,7 @@ func TestFastlike(t *testing.T) {
 				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
 
 				r.RemoteAddr = "127.0.0.1:9999"
-				i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+				i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 					<-time.After(500 * time.Millisecond)
 					w.WriteHeader(http.StatusTeapot)
 					w.Write([]byte("i am a teapot"))
@@ -209,7 +237,7 @@ func TestFastlike(t *testing.T) {
 
 		r = r.WithContext(ctx)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.BackendHandlerOption(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 			<-time.After(100 * time.Millisecond)
 			w.WriteHeader(http.StatusTeapot)
 			w.Write([]byte("i am a teapot"))
@@ -231,7 +259,7 @@ func TestFastlike(t *testing.T) {
 	})
 }
 
-func failingBackendHandler(t *testing.T) fastlike.BackendHandler {
+func failingBackendHandler(t *testing.T) func(string) http.Handler {
 	return func(_ string) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			t.Helper()
@@ -241,7 +269,7 @@ func failingBackendHandler(t *testing.T) fastlike.BackendHandler {
 	}
 }
 
-func testBackendHandler(t *testing.T, h http.HandlerFunc) fastlike.BackendHandler {
+func testBackendHandler(t *testing.T, h http.HandlerFunc) func(string) http.Handler {
 	return func(_ string) http.Handler {
 		t.Helper()
 		return h

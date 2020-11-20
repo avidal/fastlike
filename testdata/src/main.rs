@@ -84,6 +84,14 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             )
         },
 
+        (&Method::GET, "/log") => {
+            use std::io::Write;
+            use fastly::log::Endpoint;
+            let mut endpoint = Endpoint::from_name("default");
+            writeln!(endpoint, "Hello from fastlike!").unwrap();
+            Ok(Response::builder().status(StatusCode::NO_CONTENT).body(Body::new())?)
+        },
+
         // This one is used for example purposes, not tests
         (&Method::GET, path) if path.starts_with("/testdata") => {
             Ok(req.send(BACKEND)?)
