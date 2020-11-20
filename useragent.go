@@ -9,11 +9,3 @@ type UserAgent struct {
 }
 
 type UserAgentParser func(uastring string) UserAgent
-
-// UserAgUserAgentParserOption is an InstanceOption that converts user agent header values into
-// UserAgent structs, called when the guest code uses the user agent parser XQD call.
-func UserAgentParserOption(fn UserAgentParser) InstanceOption {
-	return func(i *Instance) {
-		i.uaparser = fn
-	}
-}
