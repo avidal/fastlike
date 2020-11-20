@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"io"
 	"log"
 	"net/http"
 )
@@ -26,6 +27,13 @@ func GeoHandlerOption(b http.Handler) InstanceOption {
 func LoggerConfigOption(fn func(logger, abilogger *log.Logger)) InstanceOption {
 	return func(i *Instance) {
 		fn(i.log, i.abilog)
+	}
+}
+
+// LogEndpointOption is an InstanceOption which configures a logging endpoint for the wasm guest
+func LogEndpointOption(name string, w io.Writer) InstanceOption {
+	return func(i *Instance) {
+		i.addLogEndpoint(name, w)
 	}
 }
 

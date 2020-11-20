@@ -36,6 +36,9 @@ type Instance struct {
 	// backends is used to issue subrequests
 	backends BackendHandler
 
+	// loggers is used to write log output from the wasm program
+	loggers logEndpoints
+
 	// geobackend is a backend for geographic requests
 	// these are issued by the guest when you attempt to lookup geo data
 	geobackend http.Handler

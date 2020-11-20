@@ -176,6 +176,34 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("logger", func(st *testing.T) {
+		st.Parallel()
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/log", ioutil.NopCloser(bytes.NewBuffer(nil)))
+
+		// In normal operation (ie, part of an http server handler), these requests will always
+		// have a remote addr. But not if you create them yourself.
+		r.RemoteAddr = "127.0.0.1:9999"
+		buf := new(bytes.Buffer)
+		i := f.Instantiate(
+			fastlike.BackendHandlerOption(failingBackendHandler(st)),
+			fastlike.LogEndpointOption("default", buf),
+		)
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusNoContent {
+			st.Fail()
+		}
+
+		// The contents of the buffer must be "Hello from fastlike!"
+		actual := buf.String()
+		expected := "Hello from fastlike!\n"
+		if actual != expected {
+			st.Logf("expected %q, got %q", expected, actual)
+			st.Fail()
+		}
+	})
+
 	t.Run("parallel", func(st *testing.T) {
 		// Assert that we can safely handle concurrent requests by sending off 5 requests each of
 		// which sleep for 500ms in the host.
