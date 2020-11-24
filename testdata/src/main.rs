@@ -92,6 +92,16 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             Ok(Response::builder().status(StatusCode::NO_CONTENT).body(Body::new())?)
         },
 
+        (&Method::GET, path) if path.starts_with("/dictionary") => {
+            // open the dictionary and get the key specified in the path
+            let parts: Vec<&str> = path[1..].split("/").collect();
+            let (name, key) = (parts[1], parts[2]);
+            use fastly::dictionary::Dictionary;
+            let dict = Dictionary::open(name);
+            let value = dict.get(key).unwrap();
+            Ok(Response::builder().status(StatusCode::OK).body(Body::from(value))?)
+        },
+
         // This one is used for example purposes, not tests
         (&Method::GET, path) if path.starts_with("/testdata") => {
             Ok(req.send(BACKEND)?)
