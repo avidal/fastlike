@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -20,6 +21,10 @@ func main() {
 	var backends = make(backendFlags)
 	flag.Var(&backends, "backend", "<name=address> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000)")
 	flag.Var(&backends, "b", "alias for -backend")
+
+	var dictionaries = make(dictionaryFlags)
+	flag.Var(&dictionaries, "dictionary", "<name=file.json> specifying dictionaries. The JSON file supplied must only contain string values.")
+	flag.Var(&dictionaries, "d", "alias for -dictionary")
 
 	flag.Parse()
 
@@ -45,6 +50,10 @@ func main() {
 		} else {
 			opts = append(opts, fastlike.WithBackend(name, backend.proxy))
 		}
+	}
+
+	for name, dictionary := range dictionaries {
+		opts = append(opts, fastlike.WithDictionary(name, dictionary.fn))
 	}
 
 	opts = append(opts, fastlike.WithVerbosity(*verbosity))
@@ -96,5 +105,49 @@ func (f *backendFlags) Set(v string) error {
 	proxy := httputil.NewSingleHostReverseProxy(dest)
 
 	(*f)[name] = backend{address: addr, proxy: proxy}
+	return nil
+}
+
+type dictionary struct {
+	name     string
+	filename string
+	fn       fastlike.LookupFunc
+}
+type dictionaryFlags map[string]dictionary
+
+func (f *dictionaryFlags) String() string {
+	rv := make([]string, len(*f))
+	for name, b := range *f {
+		rv = append(rv, fmt.Sprintf("%s=%s", name, b.filename))
+	}
+	return strings.Join(rv, ", ")
+}
+func (f *dictionaryFlags) Set(v string) error {
+	parts := strings.Split(v, "=")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid dictionary %s specified", v)
+	}
+
+	name := parts[0]
+	filename := parts[1]
+
+	// read in the contents of the file
+	fd, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("error opening dictionary file %s, got %s", filename, err.Error())
+	}
+
+	content := map[string]string{}
+	if err := json.NewDecoder(fd).Decode(&content); err != nil {
+		return fmt.Errorf("error parsing dictionary file %s, got %s", filename, err.Error())
+	}
+
+	(*f)[name] = dictionary{name: name, filename: filename, fn: func(key string) string {
+		if v, ok := content[key]; !ok {
+			return ""
+		} else {
+			return v
+		}
+	}}
 	return nil
 }
