@@ -48,6 +48,13 @@ func WithDefaultLogger(fn func(name string) io.Writer) Option {
 	}
 }
 
+// WithDictionary registers a new dictionary with a corresponding lookup function
+func WithDictionary(name string, fn LookupFunc) Option {
+	return func(i *Instance) {
+		i.addDictionary(name, fn)
+	}
+}
+
 // WithSecureFunc is an Option that determines if a request should be considered "secure" or not.
 // If it returns true, the request url has the "https" scheme and the "fastly-ssl" header set when
 // going into the wasm program.

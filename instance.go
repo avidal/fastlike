@@ -43,6 +43,9 @@ type Instance struct {
 	loggers       []logger
 	defaultLogger func(name string) io.Writer
 
+	// dictionaries are used to look up string values using string keys
+	dictionaries []dictionary
+
 	// geolookup is a function that accepts a net.IP and returns a Geo
 	geolookup func(net.IP) Geo
 
@@ -69,6 +72,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 
 	i.backends = map[string]http.Handler{}
 	i.loggers = []logger{}
+	i.dictionaries = []dictionary{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend

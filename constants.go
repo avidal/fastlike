@@ -15,6 +15,13 @@ const (
 	XqdErrHttpIncomplete  int32 = 9
 )
 
+// HandleInvalid is returned to guests when they attempt to obtain a handle that doesn't exist. For
+// instance, opening a dictionary that is not registered
+// Note that this is dictinct from XqdErrInvalidHandle, which is returned when callers attempt to
+// *use* an otherwise invalid handle, such as attempting to send a request whose handle has not
+// been created.
+const HandleInvalid = 4294967295 - 1
+
 const (
 	Http09 int32 = 0
 	Http10 int32 = 1

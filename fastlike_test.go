@@ -204,6 +204,37 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("dictionary", func(st *testing.T) {
+		st.Parallel()
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequest("GET", "http://localhost:1337/dictionary/testdict/testkey", ioutil.NopCloser(bytes.NewBuffer(nil)))
+
+		// In normal operation (ie, part of an http server handler), these requests will always
+		// have a remote addr. But not if you create them yourself.
+		r.RemoteAddr = "127.0.0.1:9999"
+		i := f.Instantiate(
+			fastlike.WithDefaultBackend(failingBackendHandler(st)),
+			fastlike.WithDictionary("testdict", func(key string) string {
+				if key == "testkey" {
+					return "Hello from the dictionary"
+				}
+				return ""
+			}),
+		)
+		i.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			st.Fail()
+		}
+
+		actual := w.Body.String()
+		expected := "Hello from the dictionary"
+		if actual != expected {
+			st.Logf("expected %q, got %q", expected, actual)
+			st.Fail()
+		}
+	})
+
 	t.Run("parallel", func(st *testing.T) {
 		// Assert that we can safely handle concurrent requests by sending off 5 requests each of
 		// which sleep for 500ms in the host.
