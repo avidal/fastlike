@@ -102,11 +102,6 @@ fn main(mut req: Request<Body>) -> Result<impl ResponseExt, Error> {
             Ok(Response::builder().status(StatusCode::OK).body(Body::from(value))?)
         },
 
-        // This one is used for example purposes, not tests
-        (&Method::GET, path) if path.starts_with("/testdata") => {
-            Ok(req.send(BACKEND)?)
-        },
-
         _ => Ok(Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("The page you requested could not be found"))?
