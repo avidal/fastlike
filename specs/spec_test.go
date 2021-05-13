@@ -1,9 +1,10 @@
-package fastlike_test
+package spec_test
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -15,17 +16,20 @@ import (
 	"fastlike.dev"
 )
 
-const wasmfile = "testdata/target/wasm32-wasi/debug/example.wasm"
+var wasmfile = flag.String("wasm", "testdata/rust/target/wasm32-wasi/debug/example.wasm", "wasm program to run spec tests against")
 
 func TestFastlike(t *testing.T) {
 	t.Parallel()
 
 	// Skip the test if the module doesn't exist
-	if _, perr := os.Stat(wasmfile); os.IsNotExist(perr) {
-		t.Skip("wasm test file does not exist. Try running `cargo build` in ./testdata")
+	if _, perr := os.Stat(*wasmfile); os.IsNotExist(perr) {
+		t.Logf("wasm test file '%s' does not exist.", *wasmfile)
+		t.Log("Note that paths are resolved relative to the specs/ directory, not where you ran go test from.")
+		t.Log("Either specify an absolute path, or cd into ./specs first.")
+		t.Skip()
 	}
 
-	f := fastlike.New(wasmfile)
+	f := fastlike.New(*wasmfile)
 
 	// Each test case will create its own instance and request/response pair to test against
 	t.Run("simple-response", func(st *testing.T) {
