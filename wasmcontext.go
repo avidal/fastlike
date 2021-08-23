@@ -90,6 +90,7 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
 	// we just use the same sorted order
 	linker.DefineFunc("fastly_http_req", "original_header_names_get", i.xqd_req_header_names_get)
+	linker.DefineFunc("fastly_http_req", "close", i.xqd_req_close)
 
 	// xqd_response.go
 	linker.DefineFunc("fastly_http_resp", "send_downstream", i.xqd_resp_send_downstream)
@@ -102,6 +103,7 @@ func (i *Instance) link(linker *wasmtime.Linker) {
 	linker.DefineFunc("fastly_http_resp", "header_remove", i.xqd_resp_header_remove)
 	linker.DefineFunc("fastly_http_resp", "header_values_get", i.xqd_resp_header_values_get)
 	linker.DefineFunc("fastly_http_resp", "header_values_set", i.xqd_resp_header_values_set)
+	linker.DefineFunc("fastly_http_resp", "close", i.xqd_resp_close)
 
 	// xqd_body.go
 	linker.DefineFunc("fastly_http_body", "new", i.xqd_body_new)
@@ -171,6 +173,7 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
 	// we just use the same sorted order
 	linker.DefineFunc("env", "xqd_req_original_header_names_get", i.xqd_req_header_names_get)
+	linker.DefineFunc("env", "xqd_req_close", i.xqd_req_close)
 
 	// xqd_response.go
 	linker.DefineFunc("env", "xqd_resp_new", i.xqd_resp_new)
@@ -182,6 +185,7 @@ func (i *Instance) linklegacy(linker *wasmtime.Linker) {
 	linker.DefineFunc("env", "xqd_resp_header_names_get", i.xqd_resp_header_names_get)
 	linker.DefineFunc("env", "xqd_resp_header_values_get", i.xqd_resp_header_values_get)
 	linker.DefineFunc("env", "xqd_resp_header_values_set", i.xqd_resp_header_values_set)
+	linker.DefineFunc("env", "xqd_resp_close", i.xqd_resp_close)
 
 	// xqd_body.go
 	linker.DefineFunc("env", "xqd_body_new", i.xqd_body_new)
