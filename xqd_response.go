@@ -160,3 +160,7 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 	return XqdStatusOK
 }
+
+func (i *Instance) xqd_resp_close(handle int32) {
+	i.responses.Get(int(handle)).Close = true
+}

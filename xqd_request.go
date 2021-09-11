@@ -373,3 +373,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	return XqdStatusOK
 }
+
+func (i *Instance) xqd_req_close(handle int32) {
+	i.requests.Get(int(handle)).Close = true
+}
