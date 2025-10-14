@@ -41,6 +41,9 @@ type Instance struct {
 	// ds_response represents the downstream response, where we're going to write the final output
 	ds_response http.ResponseWriter
 
+	// ds_context is the context from the downstream request, used for subrequests
+	ds_context context.Context
+
 	// backends is used to issue subrequests
 	backends       map[string]*Backend
 	defaultBackend func(name string) http.Handler
@@ -154,6 +157,7 @@ func (i *Instance) reset() {
 
 	i.ds_response = nil
 	i.ds_request = nil
+	i.ds_context = nil
 	i.wasm = nil
 	i.memory = nil
 }
@@ -195,6 +199,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	i.ds_request = r
 	i.ds_response = w
+	i.ds_context = r.Context()
 
 	// Start a goroutine which will wait for the context to cancel or wait until the wasm calls are
 	// complete

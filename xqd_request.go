@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -430,7 +431,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	i.abilog.Printf("req_send: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
-	req, err := http.NewRequest(r.Method, r.URL.String(), b)
+	req, err := http.NewRequestWithContext(i.ds_context, r.Method, r.URL.String(), b)
 	if err != nil {
 		return XqdErrHttpUserInvalid
 	}
@@ -520,9 +521,9 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	phid, pendingReq := i.pendingRequests.New()
 
 	// Launch goroutine to perform the request asynchronously
-	go func(req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest) {
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest) {
 		// Build the request
-		httpReq, err := http.NewRequest(req.Method, req.URL.String(), body)
+		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
 		if err != nil {
 			pr.Complete(nil, err)
 			return
@@ -559,7 +560,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(r.Request, b, backend, pendingReq)
+	}(i.ds_context, r.Request, b, backend, pendingReq)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -798,7 +799,7 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	i.abilog.Printf("req_send_v2: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
 	// Build the HTTP request
-	req, err := http.NewRequest(r.Method, r.URL.String(), b)
+	req, err := http.NewRequestWithContext(i.ds_context, r.Method, r.URL.String(), b)
 	if err != nil {
 		errorDetail := createErrorDetailFromError(err)
 		_ = i.writeSendErrorDetail(error_detail_out, errorDetail)
