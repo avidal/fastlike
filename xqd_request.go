@@ -120,29 +120,34 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 }
 
 func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
-	if i.requests.Get(int(handle)) == nil {
+	r := i.requests.Get(int(handle))
+	if r == nil {
 		i.abilog.Printf("req_version_get: invalid handle %d", handle)
 		return XqdErrInvalidHandle
 	}
 
-	i.abilog.Printf("req_version_get: handle=%d version=%d", handle, Http11)
-	i.memory.PutUint32(uint32(Http11), int64(version_out))
+	i.abilog.Printf("req_version_get: handle=%d version=%d", handle, r.version)
+	i.memory.PutUint32(uint32(r.version), int64(version_out))
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 	i.abilog.Printf("req_version_set: handle=%d version=%d", handle, version)
 
-	if i.requests.Get(int(handle)) == nil {
+	r := i.requests.Get(int(handle))
+	if r == nil {
 		i.abilog.Printf("req_version_set: invalid handle %d", handle)
 		return XqdErrInvalidHandle
 	}
 
-	if version != int32(Http11) {
+	// Validate that the version is one of the supported HTTP versions
+	if version != Http09 && version != Http10 && version != Http11 {
 		i.abilog.Printf("req_version_set: invalid version %d", version)
-		return XqdErrUnsupported
+		return XqdErrInvalidArgument
 	}
 
+	// Store the version in the request handle
+	r.version = version
 	return XqdStatusOK
 }
 
