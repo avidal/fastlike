@@ -1,5 +1,5 @@
 module fastlike.dev
 
-go 1.15
+go 1.23
 
-require github.com/bytecodealliance/wasmtime-go v0.26.1
+require github.com/bytecodealliance/wasmtime-go v1.0.0

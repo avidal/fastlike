@@ -21,9 +21,8 @@ type Instance struct {
 
 	// This is used to get a memory handle and call the entrypoint function
 	// Everything from here and below is reset on each incoming request
-	wasm      *wasmtime.Instance
-	interrupt *wasmtime.InterruptHandle
-	memory    *Memory
+	wasm   *wasmtime.Instance
+	memory *Memory
 
 	requests  *RequestHandles
 	responses *ResponseHandles
@@ -134,13 +133,13 @@ func (i *Instance) reset() {
 
 func (i *Instance) setup() {
 	var err error
-	i.wasm, err = i.wasmctx.linker.Instantiate(i.wasmctx.module)
+	i.wasm, err = i.wasmctx.linker.Instantiate(i.wasmctx.store, i.wasmctx.module)
 	check(err)
 
-	i.interrupt, err = i.wasmctx.store.InterruptHandle()
-	check(err)
+	// Set epoch deadline for interruption
+	i.wasmctx.store.SetEpochDeadline(1)
 
-	i.memory = &Memory{&wasmMemory{mem: i.wasm.GetExport("memory").Memory()}}
+	i.memory = &Memory{&wasmMemory{store: i.wasmctx.store, mem: i.wasm.GetExport(i.wasmctx.store, "memory").Memory()}}
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
@@ -178,7 +177,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			// If the context cancels before we write to the donech it's a timeout/deadline/client
 			// hung up and we should interrupt the wasm program.
-			i.interrupt.Interrupt()
+			i.wasmctx.engine.IncrementEpoch()
 		case <-donech:
 			// Otherwise, we're good and don't need to do anything else.
 		}
@@ -187,8 +186,8 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
 	// and sending a response downstream.
-	entry := i.wasm.GetExport("_start").Func()
-	_, err := entry.Call()
+	entry := i.wasm.GetExport(i.wasmctx.store, "_start").Func()
+	_, err := entry.Call(i.wasmctx.store)
 	donech <- struct{}{}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
