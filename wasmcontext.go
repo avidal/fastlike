@@ -222,6 +222,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_purge.go
 	_ = linker.DefineFunc(store, "fastly_purge", "purge_surrogate_key", i.xqd_purge_surrogate_key)
 	_ = linker.DefineFunc(store, "fastly_purge", "soft_purge_surrogate_key", i.xqd_soft_purge_surrogate_key)
+
+	// xqd_async_io.go
+	_ = linker.DefineFunc(store, "fastly_async_io", "select", i.xqd_async_io_select)
+	_ = linker.DefineFunc(store, "fastly_async_io", "is_ready", i.xqd_async_io_is_ready)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -329,4 +333,8 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 
 	// xqd_compute_runtime.go
 	_ = linker.DefineFunc(store, "env", "xqd_compute_runtime_get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)
+
+	// xqd_async_io.go
+	_ = linker.DefineFunc(store, "env", "xqd_async_io_select", i.xqd_async_io_select)
+	_ = linker.DefineFunc(store, "env", "xqd_async_io_is_ready", i.xqd_async_io_is_ready)
 }

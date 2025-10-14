@@ -31,11 +31,18 @@ type Instance struct {
 	pendingRequests *PendingRequestHandles
 
 	// KV Store handles for async operations
-	kvStores  *KVStoreHandles
-	kvLookups *KVStoreLookupHandles
-	kvInserts *KVStoreInsertHandles
-	kvDeletes *KVStoreDeleteHandles
-	kvLists   *KVStoreListHandles
+	kvStores              *KVStoreHandles
+	kvLookups             *KVStoreLookupHandles
+	kvInserts             *KVStoreInsertHandles
+	kvDeletes             *KVStoreDeleteHandles
+	kvLists               *KVStoreListHandles
+	kvStoreLookupHandles  *KVStoreLookupHandles
+	kvStoreInsertHandles  *KVStoreInsertHandles
+	kvStoreDeleteHandles  *KVStoreDeleteHandles
+	kvStoreListHandles    *KVStoreListHandles
+
+	// Async item handles for generic async I/O operations
+	asyncItems *AsyncItemHandles
 
 	// ds_request represents the downstream request, ie the one originated from the user agent
 	ds_request *http.Request
@@ -118,6 +125,10 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvInserts = &KVStoreInsertHandles{}
 	i.kvDeletes = &KVStoreDeleteHandles{}
 	i.kvLists = &KVStoreListHandles{}
+	i.kvStoreLookupHandles = &KVStoreLookupHandles{}
+	i.kvStoreInsertHandles = &KVStoreInsertHandles{}
+	i.kvStoreDeleteHandles = &KVStoreDeleteHandles{}
+	i.kvStoreListHandles = &KVStoreListHandles{}
 	i.secretStoreHandles = &SecretStoreHandles{}
 	i.secretHandles = &SecretHandles{}
 	i.cache = NewCache()
@@ -125,6 +136,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.cacheBusyHandles = &CacheBusyHandles{}
 	i.cacheReplaceHandles = &CacheReplaceHandles{}
 	i.aclHandles = &AclHandles{}
+	i.asyncItems = &AsyncItemHandles{}
 
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -200,12 +212,17 @@ func (i *Instance) reset() {
 	*i.kvInserts = KVStoreInsertHandles{}
 	*i.kvDeletes = KVStoreDeleteHandles{}
 	*i.kvLists = KVStoreListHandles{}
+	*i.kvStoreLookupHandles = KVStoreLookupHandles{}
+	*i.kvStoreInsertHandles = KVStoreInsertHandles{}
+	*i.kvStoreDeleteHandles = KVStoreDeleteHandles{}
+	*i.kvStoreListHandles = KVStoreListHandles{}
 	*i.secretStoreHandles = SecretStoreHandles{}
 	*i.secretHandles = SecretHandles{}
 	*i.cacheHandles = CacheHandles{}
 	*i.cacheBusyHandles = CacheBusyHandles{}
 	*i.cacheReplaceHandles = CacheReplaceHandles{}
 	*i.aclHandles = AclHandles{}
+	*i.asyncItems = AsyncItemHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil
