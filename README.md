@@ -29,14 +29,14 @@ $ go run ./cmd/fastlike -wasm my-compute-project/bin/main.wasm -backend <proxy a
 ```
 
 You don't need the fastly CLI to build the test program either, as long as you have rust installed
-and the wasm32-wasi target available:
+and the wasm32-wasip1 target available:
 
 ```
 # This example is using one of the guest implementations of the spec tests
-$ cargo target add wasm32-wasi # ensure we have the wasm32-wasi for the current toolchain
-# The wasm32-wasi target is configured as the default target via `specs/testdata/rust/.cargo/config`
+$ cargo target add wasm32-wasip1 # ensure we have the wasm32-wasip1 for the current toolchain
+# The wasm32-wasip1 target is configured as the default target via `specs/testdata/rust/.cargo/config`
 $ cd specs/testdata/rust; cargo build; cd ../../..
-$ go run ./cmd/fastlike -wasm ./specs/testdata/rust/target/wasm32-wasi/debug/example.wasm -backend <proxy address>
+$ go run ./cmd/fastlike -wasm ./specs/testdata/rust/target/wasm32-wasip1/debug/example.wasm -backend <proxy address>
 ```
 
 However, using the [fastly cli](https://github.com/fastly/cli) will help ensure your toolchains are
