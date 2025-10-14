@@ -21,7 +21,7 @@ func (i *Instance) getDictionaryHandle(name string) int {
 }
 
 func (i *Instance) getDictionary(handle int) LookupFunc {
-	if handle > len(i.dictionaries)-1 {
+	if handle < 0 || handle > len(i.dictionaries)-1 {
 		return nil
 	}
 

@@ -26,7 +26,7 @@ type RequestHandles struct {
 
 // Get returns the RequestHandle identified by id or nil if one does not exist.
 func (rhs *RequestHandles) Get(id int) *RequestHandle {
-	if id >= len(rhs.handles) {
+	if id < 0 || id >= len(rhs.handles) {
 		return nil
 	}
 
@@ -56,7 +56,7 @@ type ResponseHandles struct {
 
 // Get returns the ResponseHandle identified by id or nil if one does not exist.
 func (rhs *ResponseHandles) Get(id int) *ResponseHandle {
-	if id >= len(rhs.handles) {
+	if id < 0 || id >= len(rhs.handles) {
 		return nil
 	}
 
@@ -123,7 +123,7 @@ type BodyHandles struct {
 
 // Get returns the BodyHandle identified by id or nil if one does not exist
 func (bhs *BodyHandles) Get(id int) *BodyHandle {
-	if id >= len(bhs.handles) {
+	if id < 0 || id >= len(bhs.handles) {
 		return nil
 	}
 

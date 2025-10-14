@@ -27,7 +27,7 @@ func (i *Instance) getLoggerHandle(name string) int {
 }
 
 func (i *Instance) getLogger(handle int) io.Writer {
-	if handle > len(i.loggers)-1 {
+	if handle < 0 || handle > len(i.loggers)-1 {
 		return nil
 	}
 
@@ -76,7 +76,7 @@ type PrefixWriter struct {
 
 func (w *PrefixWriter) Write(data []byte) (n int, err error) {
 	l := len(data)
-	msg := make([]byte, len(w.prefix)+2+len(data))
+	msg := make([]byte, 0, len(w.prefix)+2+len(data))
 	msg = append(msg, []byte(w.prefix+": ")...)
 	msg = append(msg, data...)
 
