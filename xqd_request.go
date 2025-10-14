@@ -553,8 +553,16 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_req_close(handle int32) {
-	i.requests.Get(int(handle)).Close = true
+func (i *Instance) xqd_req_close(handle int32) int32 {
+	r := i.requests.Get(int(handle))
+	if r == nil {
+		i.abilog.Printf("req_close: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("req_close: handle=%d", handle)
+	r.Close = true
+	return XqdStatusOK
 }
 
 func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
