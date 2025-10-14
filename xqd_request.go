@@ -231,6 +231,68 @@ func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_siz
 	return XqdStatusOK
 }
 
+func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
+	var r = i.requests.Get(int(handle))
+	if r == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var name = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var value = make([]byte, value_size)
+	_, err = i.memory.ReadAt(value, int64(value_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var header = http.CanonicalHeaderKey(string(name))
+
+	i.abilog.Printf("req_header_insert: handle=%d header=%q value=%q", handle, header, string(value))
+
+	if r.Header == nil {
+		r.Header = http.Header{}
+	}
+
+	r.Header.Set(header, string(value))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
+	var r = i.requests.Get(int(handle))
+	if r == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var name = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var value = make([]byte, value_size)
+	_, err = i.memory.ReadAt(value, int64(value_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	var header = http.CanonicalHeaderKey(string(name))
+
+	i.abilog.Printf("req_header_append: handle=%d header=%q value=%q", handle, header, string(value))
+
+	if r.Header == nil {
+		r.Header = http.Header{}
+	}
+
+	r.Header.Add(header, string(value))
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	var r = i.requests.Get(int(handle))
 	if r == nil {
