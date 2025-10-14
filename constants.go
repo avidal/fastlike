@@ -32,3 +32,40 @@ const (
 	Http2  int32 = 3
 	Http3  int32 = 4
 )
+
+// SendErrorDetailTag represents different error types that can occur during send operations
+const (
+	SendErrorDetailUninitialized uint32 = iota
+	SendErrorDetailOk
+	SendErrorDetailDnsTimeout
+	SendErrorDetailDnsError
+	SendErrorDetailDestinationNotFound
+	SendErrorDetailDestinationUnavailable
+	SendErrorDetailDestinationIpUnroutable
+	SendErrorDetailConnectionRefused
+	SendErrorDetailConnectionTerminated
+	SendErrorDetailConnectionTimeout
+	SendErrorDetailConnectionLimitReached
+	SendErrorDetailTlsCertificateError
+	SendErrorDetailTlsConfigurationError
+	SendErrorDetailHttpIncompleteResponse
+	SendErrorDetailHttpResponseHeaderSectionTooLarge
+	SendErrorDetailHttpResponseBodyTooLarge
+	SendErrorDetailHttpResponseTimeout
+	SendErrorDetailHttpResponseStatusInvalid
+	SendErrorDetailHttpUpgradeFailed
+	SendErrorDetailHttpProtocolError
+	SendErrorDetailHttpRequestCacheKeyInvalid
+	SendErrorDetailHttpRequestUriInvalid
+	SendErrorDetailInternalError
+	SendErrorDetailTlsAlertReceived
+	SendErrorDetailTlsProtocolError
+)
+
+// SendErrorDetailMask represents which fields in the error detail are valid
+const (
+	SendErrorDetailMaskReserved       uint32 = 1 << 0
+	SendErrorDetailMaskDnsErrorRcode  uint32 = 1 << 1
+	SendErrorDetailMaskDnsErrorInfo   uint32 = 1 << 2
+	SendErrorDetailMaskTlsAlertId     uint32 = 1 << 3
+)
