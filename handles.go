@@ -156,3 +156,54 @@ func (bhs *BodyHandles) NewWriter(w io.Writer) (int, *BodyHandle) {
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles) - 1, bh
 }
+
+// PendingRequest represents an asynchronous HTTP request in flight
+type PendingRequest struct {
+	done     chan struct{}  // closed when request completes
+	response *http.Response // response when complete
+	err      error          // error if request failed
+}
+
+// IsReady checks if the pending request has completed (non-blocking)
+func (pr *PendingRequest) IsReady() bool {
+	select {
+	case <-pr.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// Wait blocks until the pending request completes and returns the response
+func (pr *PendingRequest) Wait() (*http.Response, error) {
+	<-pr.done
+	return pr.response, pr.err
+}
+
+// PendingRequestHandles is a slice of PendingRequest with methods to get and create
+type PendingRequestHandles struct {
+	handles []*PendingRequest
+}
+
+// Get returns the PendingRequest identified by id or nil if one does not exist
+func (prhs *PendingRequestHandles) Get(id int) *PendingRequest {
+	if id < 0 || id >= len(prhs.handles) {
+		return nil
+	}
+
+	return prhs.handles[id]
+}
+
+// New creates a new PendingRequest and returns its handle id and the handle itself
+func (prhs *PendingRequestHandles) New() (int, *PendingRequest) {
+	pr := &PendingRequest{done: make(chan struct{})}
+	prhs.handles = append(prhs.handles, pr)
+	return len(prhs.handles) - 1, pr
+}
+
+// Complete marks a pending request as completed with the given response or error
+func (pr *PendingRequest) Complete(resp *http.Response, err error) {
+	pr.response = resp
+	pr.err = err
+	close(pr.done)
+}

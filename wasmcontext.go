@@ -46,16 +46,11 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	linker.DefineFunc(store, "fastly_http_req", "pending_req_poll", i.wasm4("pending_req_poll"))
-	linker.DefineFunc(store, "fastly_http_req", "pending_req_select", i.wasm5("pending_req_select"))
-	linker.DefineFunc(store, "fastly_http_req", "pending_req_wait", i.wasm3("pending_req_wait"))
-
 	linker.DefineFunc(store, "fastly_http_req", "downstream_tls_cipher_openssl_name", i.wasm3("downstream_tls_cipher_openssl_name"))
 	linker.DefineFunc(store, "fastly_http_req", "downstream_tls_protocol", i.wasm3("downstream_tls_protocol"))
 	linker.DefineFunc(store, "fastly_http_req", "downstream_tls_client_hello", i.wasm3("downstream_tls_client_hello"))
 
 	linker.DefineFunc(store, "fastly_http_req", "header_insert", i.wasm5("header_insert"))
-	linker.DefineFunc(store, "fastly_http_req", "send_async", i.wasm5("send_async"))
 
 	linker.DefineFunc(store, "fastly_http_req", "original_header_count", i.wasm1("original_header_count"))
 
@@ -85,6 +80,15 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	linker.DefineFunc(store, "fastly_http_req", "header_values_get", i.xqd_req_header_values_get)
 	linker.DefineFunc(store, "fastly_http_req", "header_values_set", i.xqd_req_header_values_set)
 	linker.DefineFunc(store, "fastly_http_req", "send", i.xqd_req_send)
+	linker.DefineFunc(store, "fastly_http_req", "send_async", i.xqd_req_send_async)
+	linker.DefineFunc(store, "fastly_http_req", "send_async_streaming", i.xqd_req_send_async_streaming)
+	linker.DefineFunc(store, "fastly_http_req", "send_async_v2", i.xqd_req_send_async_v2)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_poll", i.xqd_pending_req_poll)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_poll_v2", i.xqd_pending_req_poll_v2)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_wait", i.xqd_pending_req_wait)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_wait_v2", i.xqd_pending_req_wait_v2)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_select", i.xqd_pending_req_select)
+	linker.DefineFunc(store, "fastly_http_req", "pending_req_select_v2", i.xqd_pending_req_select_v2)
 	linker.DefineFunc(store, "fastly_http_req", "cache_override_set", i.xqd_req_cache_override_set)
 	linker.DefineFunc(store, "fastly_http_req", "cache_override_v2_set", i.xqd_req_cache_override_v2_set)
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
@@ -126,16 +130,11 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	linker.DefineFunc(store, "env", "xqd_pending_req_poll", i.wasm4("xqd_pending_req_poll"))
-	linker.DefineFunc(store, "env", "xqd_pending_req_select", i.wasm5("xqd_pending_req_select"))
-	linker.DefineFunc(store, "env", "xqd_pending_req_wait", i.wasm3("xqd_pending_req_wait"))
-
 	linker.DefineFunc(store, "env", "xqd_req_downstream_tls_cipher_openssl_name", i.wasm3("xqd_req_downstream_tls_cipher_openssl_name"))
 	linker.DefineFunc(store, "env", "xqd_req_downstream_tls_protocol", i.wasm3("xqd_req_downstream_tls_protocol"))
 	linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_hello", i.wasm3("xqd_req_downstream_tls_client_hello"))
 
 	linker.DefineFunc(store, "env", "xqd_req_header_insert", i.wasm5("xqd_req_header_insert"))
-	linker.DefineFunc(store, "env", "xqd_req_send_async", i.wasm5("xqd_req_send_async"))
 
 	linker.DefineFunc(store, "env", "xqd_req_original_header_count", i.wasm1("xqd_req_original_header_count"))
 
@@ -168,6 +167,15 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	linker.DefineFunc(store, "env", "xqd_req_header_values_get", i.xqd_req_header_values_get)
 	linker.DefineFunc(store, "env", "xqd_req_header_values_set", i.xqd_req_header_values_set)
 	linker.DefineFunc(store, "env", "xqd_req_send", i.xqd_req_send)
+	linker.DefineFunc(store, "env", "xqd_req_send_async", i.xqd_req_send_async)
+	linker.DefineFunc(store, "env", "xqd_req_send_async_streaming", i.xqd_req_send_async_streaming)
+	linker.DefineFunc(store, "env", "xqd_req_send_async_v2", i.xqd_req_send_async_v2)
+	linker.DefineFunc(store, "env", "xqd_pending_req_poll", i.xqd_pending_req_poll)
+	linker.DefineFunc(store, "env", "xqd_pending_req_poll_v2", i.xqd_pending_req_poll_v2)
+	linker.DefineFunc(store, "env", "xqd_pending_req_wait", i.xqd_pending_req_wait)
+	linker.DefineFunc(store, "env", "xqd_pending_req_wait_v2", i.xqd_pending_req_wait_v2)
+	linker.DefineFunc(store, "env", "xqd_pending_req_select", i.xqd_pending_req_select)
+	linker.DefineFunc(store, "env", "xqd_pending_req_select_v2", i.xqd_pending_req_select_v2)
 	linker.DefineFunc(store, "env", "xqd_req_cache_override_set", i.xqd_req_cache_override_set)
 	linker.DefineFunc(store, "env", "xqd_req_cache_override_v2_set", i.xqd_req_cache_override_v2_set)
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so

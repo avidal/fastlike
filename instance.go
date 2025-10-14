@@ -24,9 +24,10 @@ type Instance struct {
 	wasm   *wasmtime.Instance
 	memory *Memory
 
-	requests  *RequestHandles
-	responses *ResponseHandles
-	bodies    *BodyHandles
+	requests        *RequestHandles
+	responses       *ResponseHandles
+	bodies          *BodyHandles
+	pendingRequests *PendingRequestHandles
 
 	// ds_request represents the downstream request, ie the one originated from the user agent
 	ds_request *http.Request
@@ -65,6 +66,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.requests = &RequestHandles{}
 	i.bodies = &BodyHandles{}
 	i.responses = &ResponseHandles{}
+	i.pendingRequests = &PendingRequestHandles{}
 
 	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -124,6 +126,7 @@ func (i *Instance) reset() {
 	*i.requests = RequestHandles{}
 	*i.responses = ResponseHandles{}
 	*i.bodies = BodyHandles{}
+	*i.pendingRequests = PendingRequestHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil

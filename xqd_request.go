@@ -377,3 +377,281 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 func (i *Instance) xqd_req_close(handle int32) {
 	i.requests.Get(int(handle)).Close = true
 }
+
+func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
+	// Validate request handle
+	var r = i.requests.Get(int(rhandle))
+	if r == nil {
+		i.abilog.Printf("req_send_async: invalid request handle=%d", rhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Validate body handle
+	var b = i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_async: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Read backend name
+	var buf = make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+	var backend = string(buf)
+
+	i.abilog.Printf("req_send_async: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
+
+	// Create a pending request handle
+	var phid, pendingReq = i.pendingRequests.New()
+
+	// Launch goroutine to perform the request asynchronously
+	go func(req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest) {
+		// Build the request
+		httpReq, err := http.NewRequest(req.Method, req.URL.String(), body)
+		if err != nil {
+			pr.Complete(nil, err)
+			return
+		}
+
+		httpReq.Header = req.Header.Clone()
+		if httpReq.Header == nil {
+			httpReq.Header = http.Header{}
+		}
+
+		// Add CDN-Loop header for loop detection
+		httpReq.Header.Add("cdn-loop", "fastlike")
+
+		// Set content-length if needed
+		if httpReq.Header.Get("content-length") == "" {
+			httpReq.Header.Add("content-length", fmt.Sprintf("%d", body.Size()))
+			httpReq.ContentLength = body.Size()
+		} else if httpReq.ContentLength <= 0 {
+			httpReq.ContentLength = body.Size()
+		}
+
+		// Get the backend handler
+		var handler http.Handler
+		if backendName == "geolocation" {
+			handler = geoHandler(i.geolookup)
+		} else {
+			handler = i.getBackend(backendName)
+		}
+
+		// Execute the request
+		wr := httptest.NewRecorder()
+		handler.ServeHTTP(wr, httpReq)
+		resp := wr.Result()
+
+		// Mark the pending request as complete
+		pr.Complete(resp, nil)
+	}(r.Request, b, backend, pendingReq)
+
+	// Write the pending request handle to guest memory
+	i.memory.PutUint32(uint32(phid), int64(ph_out))
+	i.abilog.Printf("req_send_async: pending handle=%d", phid)
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
+	// For now, streaming is the same as non-streaming since we buffer everything anyway
+	// In a more sophisticated implementation, this would enable true streaming
+	return i.xqd_req_send_async(rhandle, bhandle, backend_addr, backend_size, ph_out)
+}
+
+func (i *Instance) xqd_req_send_async_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, streaming int32, ph_out int32) int32 {
+	if streaming != 0 {
+		return i.xqd_req_send_async_streaming(rhandle, bhandle, backend_addr, backend_size, ph_out)
+	}
+	return i.xqd_req_send_async(rhandle, bhandle, backend_addr, backend_size, ph_out)
+}
+
+func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
+	// Get the pending request
+	var pr = i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("pending_req_poll: invalid pending handle=%d", phandle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("pending_req_poll: pending handle=%d", phandle)
+
+	// Check if ready (non-blocking)
+	if pr.IsReady() {
+		// Request is complete, get the response
+		resp, err := pr.Wait() // Won't block since IsReady returned true
+		if err != nil {
+			i.abilog.Printf("pending_req_poll: request failed, err=%s", err.Error())
+			i.memory.PutUint32(1, int64(is_done_out))
+			// Return invalid handles to signal error
+			i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
+			i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+			return XqdError
+		}
+
+		// Convert the response into (wh, bh) pair
+		var whid, wh = i.responses.New()
+		wh.Status = resp.Status
+		wh.StatusCode = resp.StatusCode
+		wh.Header = resp.Header.Clone()
+		wh.Body = resp.Body
+
+		var bhid, _ = i.bodies.NewReader(wh.Body)
+
+		i.abilog.Printf("pending_req_poll: response ready, handle=%d body=%d", whid, bhid)
+
+		// Mark as done and write handles
+		i.memory.PutUint32(1, int64(is_done_out))
+		i.memory.PutUint32(uint32(whid), int64(wh_out))
+		i.memory.PutUint32(uint32(bhid), int64(bh_out))
+		return XqdStatusOK
+	}
+
+	// Not done yet
+	i.abilog.Printf("pending_req_poll: not ready yet")
+	i.memory.PutUint32(0, int64(is_done_out))
+	i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
+	i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_pending_req_poll_v2(phandle int32, is_done_out int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+	// For now, ignore error_detail_out and just call the base version
+	// In the future, this could populate detailed error information
+	return i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
+}
+
+func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int32) int32 {
+	// Get the pending request
+	var pr = i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("pending_req_wait: invalid pending handle=%d", phandle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("pending_req_wait: pending handle=%d, blocking until complete", phandle)
+
+	// Block until the request completes
+	resp, err := pr.Wait()
+	if err != nil {
+		i.abilog.Printf("pending_req_wait: request failed, err=%s", err.Error())
+		// Return invalid handles to signal error
+		i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
+		i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+		return XqdError
+	}
+
+	// Convert the response into (wh, bh) pair
+	var whid, wh = i.responses.New()
+	wh.Status = resp.Status
+	wh.StatusCode = resp.StatusCode
+	wh.Header = resp.Header.Clone()
+	wh.Body = resp.Body
+
+	var bhid, _ = i.bodies.NewReader(wh.Body)
+
+	i.abilog.Printf("pending_req_wait: response complete, handle=%d body=%d", whid, bhid)
+
+	// Write handles
+	i.memory.PutUint32(uint32(whid), int64(wh_out))
+	i.memory.PutUint32(uint32(bhid), int64(bh_out))
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_pending_req_wait_v2(phandle int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+	// For now, ignore error_detail_out and just call the base version
+	// In the future, this could populate detailed error information
+	return i.xqd_pending_req_wait(phandle, wh_out, bh_out)
+}
+
+func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
+	if phandles_len == 0 {
+		i.abilog.Printf("pending_req_select: empty handle list")
+		return XqdErrInvalidArgument
+	}
+
+	i.abilog.Printf("pending_req_select: selecting from %d pending requests", phandles_len)
+
+	// Read the list of pending request handles from guest memory
+	handles := make([]int32, phandles_len)
+	for idx := int32(0); idx < phandles_len; idx++ {
+		handle := i.memory.Uint32(int64(phandles_addr + idx*4))
+		handles[idx] = int32(handle)
+	}
+
+	// Build a list of channels to select on
+	type selectCase struct {
+		index   int
+		channel <-chan struct{}
+		pr      *PendingRequest
+	}
+
+	cases := make([]selectCase, 0, len(handles))
+	for idx, handle := range handles {
+		pr := i.pendingRequests.Get(int(handle))
+		if pr == nil {
+			i.abilog.Printf("pending_req_select: invalid handle=%d at index=%d", handle, idx)
+			return XqdErrInvalidHandle
+		}
+		cases = append(cases, selectCase{
+			index:   idx,
+			channel: pr.done,
+			pr:      pr,
+		})
+	}
+
+	// Use reflection to build a dynamic select
+	// Go doesn't support dynamic select natively, so we need to use reflect.Select
+	// Or, we can use a simpler approach with goroutines
+
+	// Simple approach: spawn goroutines to monitor each channel
+	doneCh := make(chan int, len(cases))
+	for _, c := range cases {
+		go func(idx int, ch <-chan struct{}) {
+			<-ch
+			doneCh <- idx
+		}(c.index, c.channel)
+	}
+
+	// Wait for the first one to complete
+	doneIndex := <-doneCh
+	pr := cases[doneIndex].pr
+
+	i.abilog.Printf("pending_req_select: request at index %d completed first", doneIndex)
+
+	// Get the response
+	resp, err := pr.Wait()
+	if err != nil {
+		i.abilog.Printf("pending_req_select: request failed, err=%s", err.Error())
+		i.memory.PutUint32(uint32(doneIndex), int64(done_idx_out))
+		i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
+		i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+		return XqdError
+	}
+
+	// Convert the response into (wh, bh) pair
+	var whid, wh = i.responses.New()
+	wh.Status = resp.Status
+	wh.StatusCode = resp.StatusCode
+	wh.Header = resp.Header.Clone()
+	wh.Body = resp.Body
+
+	var bhid, _ = i.bodies.NewReader(wh.Body)
+
+	i.abilog.Printf("pending_req_select: response handle=%d body=%d", whid, bhid)
+
+	// Write the results
+	i.memory.PutUint32(uint32(doneIndex), int64(done_idx_out))
+	i.memory.PutUint32(uint32(whid), int64(wh_out))
+	i.memory.PutUint32(uint32(bhid), int64(bh_out))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+	// For now, ignore error_detail_out and just call the base version
+	// In the future, this could populate detailed error information
+	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+}
