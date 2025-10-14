@@ -54,6 +54,18 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_remove", i.wasm3("header_remove"))
+
+	_ = linker.DefineFunc(store, "fastly_http_cache", "close", i.wasm1("cache_close"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "is_request_cacheable", i.wasm3("cache_is_request_cacheable"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_key", i.wasm3("cache_get_suggested_cache_key"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_lookup", i.wasm3("cache_transaction_lookup"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert", i.wasm3("cache_transaction_insert"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert_and_stream_back", i.wasm6("cache_transaction_insert_and_stream_back"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_update", i.wasm3("cache_transaction_update"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_state", i.wasm1("cache_get_state"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_length", i.wasm1("cache_get_length"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_age_ns", i.wasm1("cache_get_age_ns"))
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_hits", i.wasm1("cache_get_hits"))
 	// End XQD Stubbing -}}}
 
 	// xqd.go
@@ -175,6 +187,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_interval", i.xqd_backend_get_tcp_keepalive_interval)
 	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_probes", i.xqd_backend_get_tcp_keepalive_probes)
 	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_time", i.xqd_backend_get_tcp_keepalive_time)
+
+	// xqd_compute_runtime.go
+	_ = linker.DefineFunc(store, "fastly_compute_runtime", "get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -264,4 +279,7 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_log.go
 	_ = linker.DefineFunc(store, "env", "xqd_log_endpoint_get", i.xqd_log_endpoint_get)
 	_ = linker.DefineFunc(store, "env", "xqd_log_write", i.xqd_log_write)
+
+	// xqd_compute_runtime.go
+	_ = linker.DefineFunc(store, "env", "xqd_compute_runtime_get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)
 }

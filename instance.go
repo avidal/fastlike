@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/bytecodealliance/wasmtime-go"
 )
@@ -81,6 +83,12 @@ type Instance struct {
 
 	log    *log.Logger
 	abilog *log.Logger
+
+	// CPU time tracking for compute runtime introspection
+	// activeCpuTimeUs tracks the accumulated CPU time in microseconds (not wall clock time)
+	activeCpuTimeUs atomic.Uint64
+	// executionStartTime is the time when execution started or resumed (zero when paused)
+	executionStartTime time.Time
 }
 
 // NewInstance returns an http.Handler that can handle a single request.
@@ -178,6 +186,10 @@ func (i *Instance) reset() {
 	i.ds_context = nil
 	i.wasm = nil
 	i.memory = nil
+
+	// Reset CPU time tracking
+	i.activeCpuTimeUs.Store(0)
+	i.executionStartTime = time.Time{}
 }
 
 func (i *Instance) setup() {
@@ -236,8 +248,16 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
 	// error. The program itself is responsible for getting a handle on the downstream request
 	// and sending a response downstream.
+
+	// Start tracking CPU time before entering guest code
+	i.startExecution()
+
 	entry := i.wasm.GetExport(i.wasmctx.store, "_start").Func()
 	_, err := entry.Call(i.wasmctx.store)
+
+	// Stop tracking CPU time after guest code completes
+	i.stopExecution()
+
 	donech <- struct{}{}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -246,4 +266,43 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(err.Error()))
 		return
 	}
+}
+
+// startExecution begins tracking CPU time for the guest execution.
+// This should be called before entering guest code (e.g., before calling _start).
+func (i *Instance) startExecution() {
+	i.executionStartTime = time.Now()
+}
+
+// pauseExecution pauses CPU time tracking and accumulates the elapsed time.
+// This should be called before blocking operations (e.g., HTTP requests to backends).
+// The caller must ensure resumeExecution() is called after the blocking operation.
+func (i *Instance) pauseExecution() {
+	// If not currently executing, nothing to pause
+	if i.executionStartTime.IsZero() {
+		return
+	}
+
+	// Calculate elapsed time since execution started/resumed
+	elapsed := time.Since(i.executionStartTime)
+	microseconds := elapsed.Microseconds()
+
+	// Add to accumulated time
+	i.activeCpuTimeUs.Add(uint64(microseconds))
+
+	// Mark as not executing by zeroing the start time
+	i.executionStartTime = time.Time{}
+}
+
+// resumeExecution resumes CPU time tracking after a blocking operation.
+// This should be called after blocking operations complete (e.g., after HTTP response received).
+func (i *Instance) resumeExecution() {
+	// Record the new start time for execution
+	i.executionStartTime = time.Now()
+}
+
+// stopExecution stops CPU time tracking and accumulates the final elapsed time.
+// This should be called after guest code completes (e.g., after _start returns).
+func (i *Instance) stopExecution() {
+	i.pauseExecution()
 }
