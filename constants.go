@@ -181,3 +181,17 @@ const (
 	ClientCertVerifyResultCertificateMissing uint32 = 5
 	ClientCertVerifyResultCertificateUnknown uint32 = 6
 )
+
+// ImageOptimizerTransformConfigOptions represents mask flags for image optimizer transform configuration
+const (
+	ImageOptimizerTransformConfigOptionsReserved     uint32 = 1 << 0
+	ImageOptimizerTransformConfigOptionsSdkClaimsOpt uint32 = 1 << 1
+)
+
+// ImageOptimizerErrorTag represents the status of an image optimizer operation
+const (
+	ImageOptimizerErrorTagUninitialized uint32 = 0
+	ImageOptimizerErrorTagOk            uint32 = 1
+	ImageOptimizerErrorTagError         uint32 = 2
+	ImageOptimizerErrorTagWarning       uint32 = 3
+)

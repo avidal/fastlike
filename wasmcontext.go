@@ -161,6 +161,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_device_detection.go
 	_ = linker.DefineFunc(store, "fastly_device_detection", "lookup", i.xqd_device_detection_lookup)
 
+	// xqd_image_optimizer.go
+	_ = linker.DefineFunc(store, "fastly_image_optimizer", "transform_image_optimizer_request", i.xqd_image_optimizer_transform_request)
+
 	// xqd_acl.go
 	_ = linker.DefineFunc(store, "fastly_acl", "open", i.xqd_acl_open)
 	_ = linker.DefineFunc(store, "fastly_acl", "lookup", i.xqd_acl_lookup)
@@ -347,6 +350,9 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_log.go
 	_ = linker.DefineFunc(store, "env", "xqd_log_endpoint_get", i.xqd_log_endpoint_get)
 	_ = linker.DefineFunc(store, "env", "xqd_log_write", i.xqd_log_write)
+
+	// xqd_image_optimizer.go
+	_ = linker.DefineFunc(store, "env", "xqd_image_optimizer_transform_request", i.xqd_image_optimizer_transform_request)
 
 	// xqd_acl.go
 	_ = linker.DefineFunc(store, "env", "xqd_acl_open", i.xqd_acl_open)

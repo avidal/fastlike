@@ -124,6 +124,16 @@ func WithDeviceDetection(fn DeviceLookupFunc) Option {
 	}
 }
 
+// WithImageOptimizer is an Option that provides image transformation functionality.
+// The function receives the origin request, body, backend name, and transformation config,
+// and returns a transformed image response.
+// By default, image optimization returns an error indicating it's not configured.
+func WithImageOptimizer(fn ImageOptimizerTransformFunc) Option {
+	return func(i *Instance) {
+		i.imageOptimizer = fn
+	}
+}
+
 // WithVerbosity controls how verbose the system level logs are.
 // A verbosity of 2 prints all calls from the wasm guest into the host methods
 // Currently, verbosity less than 2 does nothing
