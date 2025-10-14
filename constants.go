@@ -64,8 +64,8 @@ const (
 
 // SendErrorDetailMask represents which fields in the error detail are valid
 const (
-	SendErrorDetailMaskReserved       uint32 = 1 << 0
-	SendErrorDetailMaskDnsErrorRcode  uint32 = 1 << 1
-	SendErrorDetailMaskDnsErrorInfo   uint32 = 1 << 2
-	SendErrorDetailMaskTlsAlertId     uint32 = 1 << 3
+	SendErrorDetailMaskReserved      uint32 = 1 << 0
+	SendErrorDetailMaskDnsErrorRcode uint32 = 1 << 1
+	SendErrorDetailMaskDnsErrorInfo  uint32 = 1 << 2
+	SendErrorDetailMaskTlsAlertId    uint32 = 1 << 3
 )

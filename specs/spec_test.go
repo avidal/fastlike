@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +35,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("simple-response", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -51,7 +51,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("no-body", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -67,7 +67,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("append-body", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -83,7 +83,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("user-agent", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", io.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
 		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)), fastlike.WithUserAgentParser(func(_ string) fastlike.UserAgent {
 			return fastlike.UserAgent{
@@ -107,10 +107,10 @@ func TestFastlike(t *testing.T) {
 	t.Run("proxy", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTeapot)
-			w.Write([]byte("i am a teapot"))
+			_, _ = w.Write([]byte("i am a teapot"))
 		})))
 		i.ServeHTTP(w, r)
 
@@ -127,9 +127,9 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		// Assert that we can carry headers via subrequests
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
-			defer r.Body.Close()
+			defer func() { _ = r.Body.Close() }()
 			if r.Header.Get("test-header") != "test-value" {
 				st.Fail()
 			}
@@ -142,7 +142,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("panic!", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", io.NopCloser(bytes.NewBuffer(nil)))
 		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
 		i.ServeHTTP(w, r)
 
@@ -158,7 +158,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("geo", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/geo", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/geo", io.NopCloser(bytes.NewBuffer(nil)))
 
 		// In normal operation (ie, part of an http server handler), these requests will always
 		// have a remote addr. But not if you create them yourself.
@@ -170,10 +170,10 @@ func TestFastlike(t *testing.T) {
 			st.Fail()
 		}
 
-		var payload = struct {
+		payload := struct {
 			ASName string `json:"as_name"`
 		}{}
-		json.NewDecoder(w.Body).Decode(&payload)
+		_ = json.NewDecoder(w.Body).Decode(&payload)
 
 		if payload.ASName != "fastlike" {
 			st.Fail()
@@ -183,7 +183,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("logger", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/log", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/log", io.NopCloser(bytes.NewBuffer(nil)))
 
 		// In normal operation (ie, part of an http server handler), these requests will always
 		// have a remote addr. But not if you create them yourself.
@@ -211,7 +211,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("dictionary", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/dictionary/testdict/testkey", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/dictionary/testdict/testkey", io.NopCloser(bytes.NewBuffer(nil)))
 
 		// In normal operation (ie, part of an http server handler), these requests will always
 		// have a remote addr. But not if you create them yourself.
@@ -246,13 +246,13 @@ func TestFastlike(t *testing.T) {
 			st.Run("", func(stt *testing.T) {
 				stt.Parallel()
 				w := httptest.NewRecorder()
-				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
 
 				r.RemoteAddr = "127.0.0.1:9999"
 				i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 					<-time.After(500 * time.Millisecond)
 					w.WriteHeader(http.StatusTeapot)
-					w.Write([]byte("i am a teapot"))
+					_, _ = w.Write([]byte("i am a teapot"))
 				})))
 				i.ServeHTTP(w, r)
 
@@ -266,7 +266,7 @@ func TestFastlike(t *testing.T) {
 	t.Run("context-cancel", func(st *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
-		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", ioutil.NopCloser(bytes.NewBuffer(nil)))
+		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
 		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Millisecond)
 		defer cancel()
 
@@ -275,7 +275,7 @@ func TestFastlike(t *testing.T) {
 		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 			<-time.After(100 * time.Millisecond)
 			w.WriteHeader(http.StatusTeapot)
-			w.Write([]byte("i am a teapot"))
+			_, _ = w.Write([]byte("i am a teapot"))
 		})))
 		i.ServeHTTP(w, r)
 

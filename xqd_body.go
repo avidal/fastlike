@@ -6,7 +6,7 @@ import (
 )
 
 func (i *Instance) xqd_body_new(handle_out int32) int32 {
-	var bhid, _ = i.bodies.NewBuffer()
+	bhid, _ := i.bodies.NewBuffer()
 	i.abilog.Printf("body_new: handle=%d", bhid)
 	i.memory.PutUint32(uint32(bhid), int64(handle_out))
 	return XqdStatusOK
@@ -17,7 +17,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	// 1 (front)
 	i.abilog.Printf("body_write: handle=%d size=%d, body_end=%d", handle, size, body_end)
 
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
@@ -37,19 +37,19 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 }
 
 func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var buf = bytes.NewBuffer(make([]byte, 0, maxlen))
-	var ncopied, err = io.Copy(buf, io.LimitReader(body, int64(maxlen)))
+	buf := bytes.NewBuffer(make([]byte, 0, maxlen))
+	ncopied, err := io.Copy(buf, io.LimitReader(body, int64(maxlen)))
 	if err != nil {
 		i.abilog.Printf("body_read: error copying got=%s", err.Error())
 		return XqdError
 	}
 
-	var nwritten, err2 = i.memory.WriteAt(buf.Bytes(), int64(addr))
+	nwritten, err2 := i.memory.WriteAt(buf.Bytes(), int64(addr))
 	if err2 != nil {
 		i.abilog.Printf("body_read: error writing got=%s", err2.Error())
 		return XqdError
@@ -71,12 +71,12 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
 
-	var dst = i.bodies.Get(int(dst_handle))
+	dst := i.bodies.Get(int(dst_handle))
 	if dst == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var src = i.bodies.Get(int(src_handle))
+	src := i.bodies.Get(int(src_handle))
 	if src == nil {
 		return XqdErrInvalidHandle
 	}
@@ -89,7 +89,7 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 }
 
 func (i *Instance) xqd_body_close(handle int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
@@ -102,20 +102,20 @@ func (i *Instance) xqd_body_close(handle int32) int32 {
 }
 
 func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
 	// Read the trailer name
-	var name = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	name := make([]byte, name_size)
+	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
 	// Read the trailer value
-	var value = make([]byte, value_size)
+	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
@@ -137,12 +137,12 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("body_trailer_names_get: handle=%d cursor=%d", handle, cursor)
 
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var names = []string{}
+	names := []string{}
 	for n := range body.trailers {
 		names = append(names, n)
 	}
@@ -151,27 +151,27 @@ func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen i
 }
 
 func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
 	// Read the trailer name
-	var nameBuf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(nameBuf, int64(name_addr))
+	nameBuf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(nameBuf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
 	// Get the first value for this trailer name
-	var values = body.trailers.Values(string(nameBuf))
+	values := body.trailers.Values(string(nameBuf))
 	if len(values) == 0 {
 		i.memory.PutUint32(0, int64(nwritten_out))
 		return XqdStatusOK
 	}
 
 	// Get the first value
-	var value = []byte(values[0])
+	value := []byte(values[0])
 
 	// Check if buffer is large enough
 	if len(value)+1 > int(value_maxlen) {
@@ -194,20 +194,20 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 }
 
 func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
 	// Read the trailer name
-	var buf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
 	// Get all values for this trailer name
-	var values = body.trailers.Values(string(buf))
+	values := body.trailers.Values(string(buf))
 
 	i.abilog.Printf("body_trailer_values_get: handle=%d name=%q cursor=%d", handle, string(buf), cursor)
 
@@ -217,7 +217,7 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 func (i *Instance) xqd_body_abandon(handle int32) int32 {
 	i.abilog.Printf("body_abandon: handle=%d", handle)
 
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
@@ -232,7 +232,7 @@ func (i *Instance) xqd_body_abandon(handle int32) int32 {
 }
 
 func (i *Instance) xqd_body_known_length(handle int32, length_out int32) int32 {
-	var body = i.bodies.Get(int(handle))
+	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}

@@ -95,15 +95,15 @@ func (m *Memory) PutUint32(v uint32, offset int64) {
 }
 
 func (m *Memory) PutInt32(v int32, offset int64) {
-	var b = new(bytes.Buffer)
-	binary.Write(b, binary.LittleEndian, v)
-	m.WriteAt(b.Bytes(), offset)
+	b := new(bytes.Buffer)
+	_ = binary.Write(b, binary.LittleEndian, v)
+	_, _ = m.WriteAt(b.Bytes(), offset)
 }
 
 func (m *Memory) PutInt64(v int64, offset int64) {
-	var b = new(bytes.Buffer)
-	binary.Write(b, binary.LittleEndian, v)
-	m.WriteAt(b.Bytes(), offset)
+	b := new(bytes.Buffer)
+	_ = binary.Write(b, binary.LittleEndian, v)
+	_, _ = m.WriteAt(b.Bytes(), offset)
 }
 
 func (m *Memory) PutUint64(v uint64, offset int64) {

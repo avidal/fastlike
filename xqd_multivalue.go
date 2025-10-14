@@ -25,7 +25,7 @@ func xqd_multivalue(memory *Memory, data []string, addr int32, maxlen int32, cur
 	if len([]byte(data[cursor]))+1 > int(maxlen) {
 		return XqdErrBufferLength
 	}
-	var v = []byte(data[cursor])
+	v := []byte(data[cursor])
 	v = append(v, '\x00')
 
 	nwritten, err := memory.WriteAt(v, int64(addr))

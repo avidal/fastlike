@@ -3,7 +3,6 @@ package fastlike
 import (
 	"context"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -63,7 +62,7 @@ type Instance struct {
 
 // NewInstance returns an http.Handler that can handle a single request.
 func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
-	var i = new(Instance)
+	i := new(Instance)
 	i.compile(wasmbytes)
 
 	i.requests = &RequestHandles{}
@@ -71,8 +70,8 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.responses = &ResponseHandles{}
 	i.pendingRequests = &PendingRequestHandles{}
 
-	i.log = log.New(ioutil.Discard, "[fastlike] ", log.Lshortfile)
-	i.abilog = log.New(ioutil.Discard, "[fastlike abi] ", log.Lshortfile)
+	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
+	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
 
 	i.backends = map[string]http.Handler{}
 	i.loggers = []logger{}
@@ -109,17 +108,17 @@ func (i *Instance) reset() {
 	// once i is done, drop everything off of it
 	for _, r := range i.requests.handles {
 		if r.Body != nil {
-			r.Body.Close()
+			_ = r.Body.Close()
 		}
 	}
 	for _, w := range i.responses.handles {
 		if w.Body != nil {
-			w.Body.Close()
+			_ = w.Body.Close()
 		}
 	}
 	for _, b := range i.bodies.handles {
 		if b.closer != nil {
-			b.closer.Close()
+			_ = b.closer.Close()
 		}
 		if b.buf != nil {
 			b.buf = nil
@@ -154,12 +153,12 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.setup()
 	defer i.reset()
 
-	var loops, ok = r.Header[http.CanonicalHeaderKey("cdn-loop")]
+	loops, ok := r.Header[http.CanonicalHeaderKey("cdn-loop")]
 	if !ok {
 		loops = []string{""}
 	}
 
-	var _, yeslog = r.Header[http.CanonicalHeaderKey("fastlike-verbose")]
+	_, yeslog := r.Header[http.CanonicalHeaderKey("fastlike-verbose")]
 	if yeslog {
 		i.abilog.SetOutput(os.Stdout)
 	}
@@ -167,9 +166,9 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(strings.Join(loops, "\x00"), "fastlike") {
 		// immediately respond with a loop detection
 		w.WriteHeader(http.StatusLoopDetected)
-		w.Write([]byte("Loop detected! This request has already come through your fastly program."))
-		w.Write([]byte("\n"))
-		w.Write([]byte("You probably have a non-exhaustive backend handler?"))
+		_, _ = w.Write([]byte("Loop detected! This request has already come through your fastly program."))
+		_, _ = w.Write([]byte("\n"))
+		_, _ = w.Write([]byte("You probably have a non-exhaustive backend handler?"))
 		return
 	}
 
@@ -198,9 +197,9 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	donech <- struct{}{}
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Error running wasm program.\n"))
-		w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
-		w.Write([]byte(err.Error()))
+		_, _ = w.Write([]byte("Error running wasm program.\n"))
+		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
+		_, _ = w.Write([]byte(err.Error()))
 		return
 	}
 }
