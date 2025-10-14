@@ -122,7 +122,7 @@ and the wasm32-wasip1 target available:
 ```
 # This example is using one of the guest implementations of the spec tests
 $ rustup target add wasm32-wasip1 # ensure we have the wasm32-wasip1 for the current toolchain
-# The wasm32-wasip1 target is configured as the default target via `specs/testdata/rust/.cargo/config`
+# The wasm32-wasip1 target is configured as the default target via `specs/testdata/rust/.cargo/config.toml`
 $ cd specs/testdata/rust; cargo build; cd ../../..
 $ go run ./cmd/fastlike -wasm ./specs/testdata/rust/target/wasm32-wasip1/debug/example.wasm -backend <proxy address>
 ```
