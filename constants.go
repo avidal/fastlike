@@ -123,3 +123,8 @@ const (
 	CacheReplaceOptionsMaskService                 uint32 = 1 << 3
 	CacheReplaceOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 4
 )
+
+// ContentEncodings flags for auto-decompression
+const (
+	ContentEncodingsGzip uint32 = 1 << 0
+)

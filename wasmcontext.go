@@ -103,6 +103,7 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_compliance_region", i.xqd_req_downstream_compliance_region)
 	_ = linker.DefineFunc(store, "fastly_http_req", "on_behalf_of", i.xqd_req_on_behalf_of)
 	_ = linker.DefineFunc(store, "fastly_http_req", "framing_headers_mode_set", i.xqd_req_framing_headers_mode_set)
+	_ = linker.DefineFunc(store, "fastly_http_req", "auto_decompress_response_set", i.xqd_req_auto_decompress_response_set)
 
 	// xqd_response.go
 	_ = linker.DefineFunc(store, "fastly_http_resp", "send_downstream", i.xqd_resp_send_downstream)
@@ -279,6 +280,7 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_compliance_region", i.xqd_req_downstream_compliance_region)
 	_ = linker.DefineFunc(store, "env", "xqd_req_on_behalf_of", i.xqd_req_on_behalf_of)
 	_ = linker.DefineFunc(store, "env", "xqd_req_framing_headers_mode_set", i.xqd_req_framing_headers_mode_set)
+	_ = linker.DefineFunc(store, "env", "xqd_req_auto_decompress_response_set", i.xqd_req_auto_decompress_response_set)
 
 	// xqd_response.go
 	_ = linker.DefineFunc(store, "env", "xqd_resp_new", i.xqd_resp_new)

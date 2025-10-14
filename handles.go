@@ -10,6 +10,8 @@ import (
 // Notably, the request body is ignored and instead the guest will provide a BodyHandle to use
 type RequestHandle struct {
 	*http.Request
+	// autoDecompressEncodings is a bitfield indicating which encodings to auto-decompress
+	autoDecompressEncodings uint32
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
