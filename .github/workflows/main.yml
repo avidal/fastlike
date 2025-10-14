@@ -10,12 +10,11 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v2
+              uses: actions/checkout@v4
             - name: Setup Rust toolchain
-              uses: actions-rs/toolchain@v1
+              uses: dtolnay/rust-toolchain@stable
               with:
-                  toolchain: stable
-                  target: wasm32-wasip1
+                  targets: wasm32-wasip1
             - name: Build example wasm
               working-directory: specs/testdata/rust
               run: cargo build
