@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"bytes"
+	"crypto/tls"
 	"io"
 	"net/http"
 )
@@ -15,6 +16,8 @@ type RequestHandle struct {
 	// originalHeaders preserves the original header names and order from the downstream request
 	// (used by downstream_original_header_names and downstream_original_header_count)
 	originalHeaders []string
+	// tlsState contains the TLS connection state if the downstream request was over TLS
+	tlsState *tls.ConnectionState
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
