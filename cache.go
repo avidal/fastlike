@@ -359,23 +359,29 @@ func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
 }
 
 // PurgeSurrogateKey purges all cache entries with the given surrogate key
-func (c *Cache) PurgeSurrogateKey(key string) {
+// Returns the number of cache keys that were purged
+func (c *Cache) PurgeSurrogateKey(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if keys, ok := c.surrogateIndex[key]; ok {
+		count := len(keys)
 		for _, k := range keys {
 			delete(c.objects, k)
 		}
 		delete(c.surrogateIndex, key)
+		return count
 	}
+	return 0
 }
 
 // SoftPurgeSurrogateKey marks entries as stale without removing them
-func (c *Cache) SoftPurgeSurrogateKey(key string) {
+// Returns the number of cached objects that were marked stale
+func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	count := 0
 	if keys, ok := c.surrogateIndex[key]; ok {
 		for _, k := range keys {
 			if variants, ok := c.objects[k]; ok {
@@ -383,10 +389,12 @@ func (c *Cache) SoftPurgeSurrogateKey(key string) {
 					// Set to already expired
 					obj.InitialAgeNs = obj.MaxAgeNs + 1
 					obj.InsertTime = time.Now().Add(-time.Duration(obj.MaxAgeNs+1) * time.Nanosecond)
+					count++
 				}
 			}
 		}
 	}
+	return count
 }
 
 // GetAge returns the age of a cached object in nanoseconds
