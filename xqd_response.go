@@ -225,8 +225,16 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_resp_close(handle int32) {
-	i.responses.Get(int(handle)).Close = true
+func (i *Instance) xqd_resp_close(handle int32) int32 {
+	r := i.responses.Get(int(handle))
+	if r == nil {
+		i.abilog.Printf("resp_close: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("resp_close: handle=%d", handle)
+	r.Close = true
+	return XqdStatusOK
 }
 
 // xqd_resp_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set
