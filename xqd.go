@@ -19,6 +19,18 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 }
 
 func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) int32 {
+	// Check if memory is initialized
+	if i.memory == nil {
+		i.log.Printf("ERROR: xqd_req_body_downstream_get called with nil memory")
+		return XqdError
+	}
+
+	// Check if ds_request is initialized
+	if i.ds_request == nil {
+		i.log.Printf("ERROR: xqd_req_body_downstream_get called with nil ds_request")
+		return XqdError
+	}
+
 	// Convert the downstream request into a (request, body) handle pair
 	rhid, rh := i.requests.New()
 	rh.Request = i.ds_request.Clone(context.Background())

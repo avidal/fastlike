@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 
-	"github.com/bytecodealliance/wasmtime-go"
+	"github.com/bytecodealliance/wasmtime-go/v37"
 )
 
 // MemorySlice represents an underlying slice of memory from a wasm program.
