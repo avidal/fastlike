@@ -102,6 +102,11 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_req", "framing_headers_mode_set", i.xqd_req_framing_headers_mode_set)
 	_ = linker.DefineFunc(store, "fastly_http_req", "auto_decompress_response_set", i.xqd_req_auto_decompress_response_set)
 	_ = linker.DefineFunc(store, "fastly_http_req", "register_dynamic_backend", i.xqd_req_register_dynamic_backend)
+	// DEPRECATED: use fastly_http_downstream versions
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_client_h2_fingerprint", i.xqd_http_downstream_client_h2_fingerprint)
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_client_oh_fingerprint", i.xqd_http_downstream_client_oh_fingerprint)
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_tls_ja3_md5", i.xqd_http_downstream_tls_ja3_md5)
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_tls_ja4", i.xqd_http_downstream_tls_ja4)
 
 	// xqd_response.go
 	_ = linker.DefineFunc(store, "fastly_http_resp", "send_downstream", i.xqd_resp_send_downstream)
@@ -235,6 +240,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_client_hello", i.xqd_http_downstream_tls_client_hello)
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_raw_client_certificate", i.xqd_http_downstream_tls_raw_client_certificate)
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_client_cert_verify_result", i.xqd_http_downstream_tls_client_cert_verify_result)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_client_h2_fingerprint", i.xqd_http_downstream_client_h2_fingerprint)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_client_oh_fingerprint", i.xqd_http_downstream_client_oh_fingerprint)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_ja3_md5", i.xqd_http_downstream_tls_ja3_md5)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_ja4", i.xqd_http_downstream_tls_ja4)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -355,4 +364,8 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_hello", i.xqd_http_downstream_tls_client_hello)
 	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_raw_client_certificate", i.xqd_http_downstream_tls_raw_client_certificate)
 	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_cert_verify_result", i.xqd_http_downstream_tls_client_cert_verify_result)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_client_h2_fingerprint", i.xqd_http_downstream_client_h2_fingerprint)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_client_oh_fingerprint", i.xqd_http_downstream_client_oh_fingerprint)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_ja3_md5", i.xqd_http_downstream_tls_ja3_md5)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_ja4", i.xqd_http_downstream_tls_ja4)
 }

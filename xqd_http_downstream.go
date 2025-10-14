@@ -460,3 +460,107 @@ func (i *Instance) xqd_http_downstream_tls_client_cert_verify_result(req_handle 
 	i.abilog.Printf("http_downstream_tls_client_cert_verify_result: certificate verified")
 	return int32(ClientCertVerifyResultOk)
 }
+
+// xqd_http_downstream_client_h2_fingerprint returns the HTTP/2 fingerprint for the downstream connection.
+// Returns XqdErrNone if fingerprinting data is not available.
+// Note: HTTP/2 fingerprinting is not implemented in Go's http library, so this always returns not available.
+//
+// Signature: (handle: RequestHandle, h2fp_out: *mut u8, h2fp_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_client_h2_fingerprint(
+	req_handle int32,
+	h2fp_out int32,
+	h2fp_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_client_h2_fingerprint: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_client_h2_fingerprint: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// HTTP/2 fingerprinting requires deep inspection of HTTP/2 frames and settings
+	// Go's http library does not expose this level of detail
+	i.abilog.Printf("http_downstream_client_h2_fingerprint: HTTP/2 fingerprint not available (not implemented)")
+	i.memory.PutUint32(0, int64(nwritten_out))
+	return XqdErrNone
+}
+
+// xqd_http_downstream_client_oh_fingerprint returns the ordered headers fingerprint for the downstream connection.
+// Returns XqdErrNone if fingerprinting data is not available.
+// Note: This function returns not available as ordered headers fingerprinting is not implemented.
+//
+// Signature: (handle: RequestHandle, ohfp_out: *mut u8, ohfp_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_client_oh_fingerprint(
+	req_handle int32,
+	ohfp_out int32,
+	ohfp_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_client_oh_fingerprint: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_client_oh_fingerprint: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Ordered headers fingerprinting requires analyzing the exact order of HTTP headers
+	// While we capture original header order, generating a fingerprint requires specific algorithms
+	i.abilog.Printf("http_downstream_client_oh_fingerprint: ordered headers fingerprint not available (not implemented)")
+	i.memory.PutUint32(0, int64(nwritten_out))
+	return XqdErrNone
+}
+
+// xqd_http_downstream_tls_ja3_md5 returns the JA3 TLS fingerprint (MD5 hash) for the downstream connection.
+// Returns XqdErrNone if fingerprinting data is not available.
+// Note: JA3 fingerprinting requires access to raw TLS handshake data which Go's crypto/tls does not expose.
+//
+// Signature: (handle: RequestHandle, ja3_md5_out: *mut u8) -> Result<num_bytes, FastlyStatus>
+// The buffer must be at least 16 bytes (MD5 hash size)
+func (i *Instance) xqd_http_downstream_tls_ja3_md5(req_handle int32, ja3_md5_out int32) int32 {
+	i.abilog.Printf("http_downstream_tls_ja3_md5: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_ja3_md5: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// JA3 fingerprinting requires:
+	// - TLS version
+	// - Accepted ciphers
+	// - List of extensions
+	// - Elliptic curves
+	// - Elliptic curve formats
+	// Go's crypto/tls does not expose the raw Client Hello message needed to generate JA3
+	i.abilog.Printf("http_downstream_tls_ja3_md5: JA3 fingerprint not available (not implemented)")
+	return XqdErrNone
+}
+
+// xqd_http_downstream_tls_ja4 returns the JA4 TLS fingerprint for the downstream connection.
+// Returns XqdErrNone if fingerprinting data is not available.
+// Note: JA4 fingerprinting requires access to raw TLS handshake data which Go's crypto/tls does not expose.
+//
+// Signature: (handle: RequestHandle, ja4_out: *mut u8, ja4_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_ja4(
+	req_handle int32,
+	ja4_out int32,
+	ja4_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_ja4: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_ja4: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// JA4 is an updated version of JA3 with improved fingerprinting
+	// Like JA3, it requires raw TLS handshake data which Go's crypto/tls does not expose
+	i.abilog.Printf("http_downstream_tls_ja4: JA4 fingerprint not available (not implemented)")
+	i.memory.PutUint32(0, int64(nwritten_out))
+	return XqdErrNone
+}
