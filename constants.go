@@ -136,3 +136,31 @@ const (
 	AclErrorNoContent       uint32 = 2
 	AclErrorTooManyRequests uint32 = 3
 )
+
+// BackendConfigOptions represents mask flags for dynamic backend configuration
+const (
+	BackendConfigOptionsReserved            uint32 = 1 << 0
+	BackendConfigOptionsHostOverride        uint32 = 1 << 1
+	BackendConfigOptionsConnectTimeout      uint32 = 1 << 2
+	BackendConfigOptionsFirstByteTimeout    uint32 = 1 << 3
+	BackendConfigOptionsBetweenBytesTimeout uint32 = 1 << 4
+	BackendConfigOptionsUseSSL              uint32 = 1 << 5
+	BackendConfigOptionsSSLMinVersion       uint32 = 1 << 6
+	BackendConfigOptionsSSLMaxVersion       uint32 = 1 << 7
+	BackendConfigOptionsCertHostname        uint32 = 1 << 8
+	BackendConfigOptionsCACert              uint32 = 1 << 9
+	BackendConfigOptionsCiphers             uint32 = 1 << 10
+	BackendConfigOptionsSNIHostname         uint32 = 1 << 11
+	BackendConfigOptionsDontPool            uint32 = 1 << 12
+	BackendConfigOptionsClientCert          uint32 = 1 << 13
+	BackendConfigOptionsGRPC                uint32 = 1 << 14
+	BackendConfigOptionsKeepalive           uint32 = 1 << 15
+)
+
+// TLS version constants
+const (
+	TLSv10 uint32 = 0
+	TLSv11 uint32 = 1
+	TLSv12 uint32 = 2
+	TLSv13 uint32 = 3
+)
