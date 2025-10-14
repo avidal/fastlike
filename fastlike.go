@@ -2,8 +2,8 @@ package fastlike
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 )
@@ -22,13 +22,13 @@ type Fastlike struct {
 
 // New returns a new Fastlike ready to create new instances from
 func New(wasmfile string, instanceOpts ...Option) *Fastlike {
-	var f = &Fastlike{}
+	f := &Fastlike{}
 
 	// read in the file and store the bytes
-	wasmbytes, err := ioutil.ReadFile(wasmfile)
+	wasmbytes, err := os.ReadFile(wasmfile)
 	check(err)
 
-	var size = runtime.NumCPU()
+	size := runtime.NumCPU()
 
 	if size > 16 {
 		size = 16
@@ -49,7 +49,7 @@ func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 // ServeHTTP implements http.Handler for a Fastlike module. It's a convenience function over
 // `Instantiate()` followed by `.ServeHTTP` on the returned instance.
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var i = f.Instantiate()
+	i := f.Instantiate()
 
 	i.ServeHTTP(w, r)
 

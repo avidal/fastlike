@@ -7,7 +7,7 @@ import (
 )
 
 func (i *Instance) xqd_resp_new(handle_out int32) int32 {
-	var whid, _ = i.responses.New()
+	whid, _ := i.responses.New()
 	i.abilog.Printf("resp_new handle=%d\n", whid)
 	i.memory.PutUint32(uint32(whid), int64(handle_out))
 	return XqdStatusOK
@@ -65,12 +65,12 @@ func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) int32 {
 func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("resp_header_names_get: handle=%d cursor=%d", handle, cursor)
 
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var names = []string{}
+	names := []string{}
 	for n := range w.Header {
 		names = append(names, n)
 	}
@@ -82,13 +82,13 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 }
 
 func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_size int32) int32 {
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var name = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	name := make([]byte, name_size)
+	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
@@ -99,24 +99,24 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 }
 
 func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var name = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	name := make([]byte, name_size)
+	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var value = make([]byte, value_size)
+	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var header = http.CanonicalHeaderKey(string(name))
+	header := http.CanonicalHeaderKey(string(name))
 
 	i.abilog.Printf("resp_header_insert: handle=%d header=%q value=%q", handle, header, string(value))
 
@@ -130,24 +130,24 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 }
 
 func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var name = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	name := make([]byte, name_size)
+	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var value = make([]byte, value_size)
+	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var header = http.CanonicalHeaderKey(string(name))
+	header := http.CanonicalHeaderKey(string(name))
 
 	i.abilog.Printf("resp_header_append: handle=%d header=%q value=%q", handle, header, string(value))
 
@@ -161,19 +161,19 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 }
 
 func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var buf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var header = http.CanonicalHeaderKey(string(buf))
-	var values, ok = w.Header[header]
+	header := http.CanonicalHeaderKey(string(buf))
+	values, ok := w.Header[header]
 	if !ok {
 		values = []string{}
 	}
@@ -187,18 +187,18 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 }
 
 func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
-	var w = i.responses.Get(int(handle))
+	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var buf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var header = http.CanonicalHeaderKey(string(buf))
+	header := http.CanonicalHeaderKey(string(buf))
 
 	// read values_size bytes from values_addr for a list of \0 terminated values for the header
 	// but, read 1 less than that to avoid the trailing nul
@@ -208,7 +208,7 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 		return XqdError
 	}
 
-	var values = bytes.Split(buf, []byte("\x00"))
+	values := bytes.Split(buf, []byte("\x00"))
 
 	i.abilog.Printf("resp_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
 

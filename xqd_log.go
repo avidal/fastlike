@@ -7,13 +7,13 @@ import (
 )
 
 func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr int32) int32 {
-	var buf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var name = string(buf)
+	name := string(buf)
 
 	i.abilog.Printf("log_endpoint_get: name=%s\n", name)
 
@@ -31,7 +31,7 @@ func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr i
 func (i *Instance) xqd_log_write(handle int32, addr int32, size int32, nwritten_out int32) int32 {
 	i.abilog.Printf("log_write: handle=%d size=%d", handle, size)
 
-	var logger = i.getLogger(int(handle))
+	logger := i.getLogger(int(handle))
 	if logger == nil {
 		return XqdErrInvalidHandle
 	}

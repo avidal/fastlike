@@ -3,20 +3,13 @@ package fastlike
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"net/http"
 )
-
-type fastlyMeta struct{}
 
 // RequestHandle is an http.Request with extra metadata
 // Notably, the request body is ignored and instead the guest will provide a BodyHandle to use
 type RequestHandle struct {
 	*http.Request
-	fastlyMeta *fastlyMeta
-
-	// It is an error to try sending a request without an associated body handle
-	hasBody bool
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
@@ -44,9 +37,6 @@ func (rhs *RequestHandles) New() (int, *RequestHandle) {
 // Notably, the response body is ignored and instead the guest will provide a BodyHandle to use
 type ResponseHandle struct {
 	*http.Response
-
-	// It is an error to try sending a response without an associated body handle
-	hasBody bool
 }
 
 // ResponseHandles is a slice of ResponseHandle with functions to get and create
@@ -75,7 +65,6 @@ func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
 // properties will reference the original request or response respectively.
 // For new bodies, buf will hold the contents and either the reader or writer will wrap it.
 type BodyHandle struct {
-
 	// reader, writer, and closer are connected to the existing request/response body, if one exists
 	reader io.Reader
 	writer io.Writer
@@ -147,7 +136,7 @@ func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
 	bh := &BodyHandle{}
 	bh.reader = rdr
 	bh.closer = rdr
-	bh.writer = ioutil.Discard
+	bh.writer = io.Discard
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles) - 1, bh
 }

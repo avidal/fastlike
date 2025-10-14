@@ -1,13 +1,13 @@
 package fastlike
 
 func (i *Instance) xqd_dictionary_open(name_addr int32, name_size int32, addr int32) int32 {
-	var buf = make([]byte, name_size)
-	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var name = string(buf)
+	name := string(buf)
 
 	i.abilog.Printf("dictionary_open: name=%s\n", name)
 
@@ -20,23 +20,22 @@ func (i *Instance) xqd_dictionary_open(name_addr int32, name_size int32, addr in
 }
 
 func (i *Instance) xqd_dictionary_get(handle int32, key_addr int32, key_size int32, addr int32, size int32, nwritten_out int32) int32 {
-
-	var lookup = i.getDictionary(int(handle))
+	lookup := i.getDictionary(int(handle))
 	if lookup == nil {
 		return XqdErrInvalidHandle
 	}
 
-	var buf = make([]byte, key_size)
-	var _, err = i.memory.ReadAt(buf, int64(key_addr))
+	buf := make([]byte, key_size)
+	_, err := i.memory.ReadAt(buf, int64(key_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	var key = string(buf)
+	key := string(buf)
 
 	i.abilog.Printf("dictionary_get: handle=%d key=%s", handle, key)
 
-	var value = lookup(key)
+	value := lookup(key)
 
 	nwritten, err := i.memory.WriteAt([]byte(value), int64(addr))
 	if err != nil {

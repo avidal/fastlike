@@ -21,7 +21,7 @@ func (i *Instance) getBackend(name string) http.Handler {
 func defaultBackend(name string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
-		var msg = fmt.Sprintf(`Unknown backend '%s'. Did you configure your backends correctly?`, name)
-		w.Write([]byte(msg))
+		msg := fmt.Sprintf(`Unknown backend '%s'. Did you configure your backends correctly?`, name)
+		_, _ = w.Write([]byte(msg))
 	})
 }

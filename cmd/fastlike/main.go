@@ -14,33 +14,33 @@ import (
 )
 
 func main() {
-	var wasm = flag.String("wasm", "", "wasm program to execute")
-	var bind = flag.String("bind", "localhost:5000", "address to bind to")
-	var verbosity = flag.Int("v", 0, "verbosity level (0, 1, 2)")
+	wasm := flag.String("wasm", "", "wasm program to execute")
+	bind := flag.String("bind", "localhost:5000", "address to bind to")
+	verbosity := flag.Int("v", 0, "verbosity level (0, 1, 2)")
 
-	var backends = make(backendFlags)
+	backends := make(backendFlags)
 	flag.Var(&backends, "backend", "<name=address> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000)")
 	flag.Var(&backends, "b", "alias for -backend")
 
-	var dictionaries = make(dictionaryFlags)
+	dictionaries := make(dictionaryFlags)
 	flag.Var(&dictionaries, "dictionary", "<name=file.json> specifying dictionaries. The JSON file supplied must only contain string values.")
 	flag.Var(&dictionaries, "d", "alias for -dictionary")
 
 	flag.Parse()
 
 	if *wasm == "" {
-		fmt.Fprintf(flag.CommandLine.Output(), "-wasm argument is required\n")
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "-wasm argument is required\n")
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	if len(backends) == 0 {
-		fmt.Fprintf(flag.CommandLine.Output(), "at least one -backend is required\n")
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "at least one -backend is required\n")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	var opts = []fastlike.Option{}
+	opts := []fastlike.Option{}
 
 	for name, backend := range backends {
 		if name == "" {
@@ -79,6 +79,7 @@ func (f *backendFlags) String() string {
 	}
 	return strings.Join(rv, ", ")
 }
+
 func (f *backendFlags) Set(v string) error {
 	parts := strings.Split(v, "=")
 	name, addr := "", ""
@@ -122,6 +123,7 @@ func (f *dictionaryFlags) String() string {
 	}
 	return strings.Join(rv, ", ")
 }
+
 func (f *dictionaryFlags) Set(v string) error {
 	parts := strings.Split(v, "=")
 	if len(parts) != 2 {

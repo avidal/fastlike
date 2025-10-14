@@ -53,6 +53,6 @@ func geoHandler(fn func(ip net.IP) Geo) http.Handler {
 		geo := fn(addr)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(geo)
+		_ = json.NewEncoder(w).Encode(geo)
 	})
 }
