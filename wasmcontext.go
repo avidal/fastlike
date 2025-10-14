@@ -135,6 +135,25 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_config_store.go
 	_ = linker.DefineFunc(store, "fastly_config_store", "open", i.xqd_config_store_open)
 	_ = linker.DefineFunc(store, "fastly_config_store", "get", i.xqd_config_store_get)
+
+	// xqd_backend.go
+	_ = linker.DefineFunc(store, "fastly_backend", "exists", i.xqd_backend_exists)
+	_ = linker.DefineFunc(store, "fastly_backend", "is_healthy", i.xqd_backend_is_healthy)
+	_ = linker.DefineFunc(store, "fastly_backend", "is_dynamic", i.xqd_backend_is_dynamic)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_host", i.xqd_backend_get_host)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_override_host", i.xqd_backend_get_override_host)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_port", i.xqd_backend_get_port)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_connect_timeout_ms", i.xqd_backend_get_connect_timeout_ms)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_first_byte_timeout_ms", i.xqd_backend_get_first_byte_timeout_ms)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_between_bytes_timeout_ms", i.xqd_backend_get_between_bytes_timeout_ms)
+	_ = linker.DefineFunc(store, "fastly_backend", "is_ssl", i.xqd_backend_is_ssl)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_ssl_min_version", i.xqd_backend_get_ssl_min_version)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_ssl_max_version", i.xqd_backend_get_ssl_max_version)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_http_keepalive_time", i.xqd_backend_get_http_keepalive_time)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_enable", i.xqd_backend_get_tcp_keepalive_enable)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_interval", i.xqd_backend_get_tcp_keepalive_interval)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_probes", i.xqd_backend_get_tcp_keepalive_probes)
+	_ = linker.DefineFunc(store, "fastly_backend", "get_tcp_keepalive_time", i.xqd_backend_get_tcp_keepalive_time)
 }
 
 // linklegacy links in the abi methods using the legacy method names

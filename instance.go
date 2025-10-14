@@ -35,7 +35,7 @@ type Instance struct {
 	ds_response http.ResponseWriter
 
 	// backends is used to issue subrequests
-	backends       map[string]http.Handler
+	backends       map[string]*Backend
 	defaultBackend func(name string) http.Handler
 
 	// loggers is used to write log output from the wasm program
@@ -73,7 +73,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
 
-	i.backends = map[string]http.Handler{}
+	i.backends = map[string]*Backend{}
 	i.loggers = []logger{}
 	i.dictionaries = []dictionary{}
 	i.configStores = []configStore{}

@@ -69,3 +69,10 @@ const (
 	SendErrorDetailMaskDnsErrorInfo  uint32 = 1 << 2
 	SendErrorDetailMaskTlsAlertId    uint32 = 1 << 3
 )
+
+// Backend health status constants
+const (
+	BackendHealthUnknown   uint32 = 0
+	BackendHealthHealthy   uint32 = 1
+	BackendHealthUnhealthy uint32 = 2
+)

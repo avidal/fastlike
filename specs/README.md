@@ -37,7 +37,7 @@ As an example, the "official" rust guest is tested via:
 $ cd testdata/rust
 $ cargo build
 $ cd ../..
-$ go test . -wasm testdata/rust/target/wasm32-wasi/debug/example.wasm
+$ go test . -wasm testdata/rust/target/wasm32-wasip1/debug/example.wasm
 ```
 
 You could also build the spec runner once and reuse it:
