@@ -68,12 +68,16 @@ features not exposed through the command-line tool:
 - Config Stores: Modern alternative to dictionaries for key-value lookups
 - Secret Stores: Secure credential management with handle-based access
 - KV Stores: Object store API for key-value operations
+- ACL (Access Control Lists): IP-based access control with CIDR matching
 - Custom Loggers: Route guest logging to custom destinations
 - Geo Lookup: Custom geographic IP lookups
 - User Agent Parsing: Custom user agent parsing
 - Device Detection: Provide device detection data based on user agents
 - Compliance Regions: Set compliance regions for GDPR and data locality
 - Security Functions: Custom logic to determine if requests are secure
+- Cache API: HTTP caching support
+- Purge API: Cache invalidation
+- Backend Configuration: Full backend configuration with timeouts, SSL settings, and TCP keepalive
 
 Example usage:
 
@@ -81,10 +85,16 @@ Example usage:
 import "fastlike.dev"
 
 func main() {
+    // Parse ACL from JSON
+    aclData := []byte(`{"entries": [{"prefix": "192.168.1.0/24", "action": "ALLOW"}]}`)
+    acl, _ := fastlike.ParseACL(aclData)
+
     opts := []fastlike.Option{
         fastlike.WithBackend("api", apiHandler),
         fastlike.WithConfigStore("settings", settingsLookup),
         fastlike.WithSecretStore("credentials", secretsLookup),
+        fastlike.WithACL("allowed_ips", acl),
+        fastlike.WithComplianceRegion("us-eu"),
         fastlike.WithVerbosity(2),
     }
 
@@ -145,6 +155,7 @@ $ curl localhost:5000/backend
 
 Go, running Rust, calling Go, proxying to Python.
 
-## Go Module Information
+## Requirements
 
-The module requires Go 1.23 and uses `github.com/bytecodealliance/wasmtime-go v1.0.0` for WASM execution.
+- Go 1.23 or later
+- `github.com/bytecodealliance/wasmtime-go v1.0.0` for WebAssembly execution
