@@ -213,3 +213,40 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
+
+func (i *Instance) xqd_body_abandon(handle int32) int32 {
+	i.abilog.Printf("body_abandon: handle=%d", handle)
+
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Close and drop the body without finishing it properly
+	// This is used when streaming is incomplete or failed
+	if err := body.Close(); err != nil {
+		return XqdError
+	}
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_body_known_length(handle int32, length_out int32) int32 {
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Get the known length of the body
+	// If the length is not known (e.g., streaming body), return XqdErrNone
+	length := body.Size()
+	if length < 0 {
+		i.abilog.Printf("body_known_length: handle=%d length=unknown", handle)
+		return XqdErrNone
+	}
+
+	i.abilog.Printf("body_known_length: handle=%d length=%d", handle, length)
+	i.memory.PutUint64(uint64(length), int64(length_out))
+
+	return XqdStatusOK
+}
