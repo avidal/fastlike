@@ -17,6 +17,7 @@ func main() {
 	wasm := flag.String("wasm", "", "wasm program to execute")
 	bind := flag.String("bind", "localhost:5000", "address to bind to")
 	verbosity := flag.Int("v", 0, "verbosity level (0, 1, 2)")
+	reloadOnSIGHUP := flag.Bool("reload", false, "enable SIGHUP handler for hot-reloading wasm module")
 
 	backends := make(backendFlags)
 	flag.Var(&backends, "backend", "<name=address> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000)")
@@ -59,6 +60,11 @@ func main() {
 	opts = append(opts, fastlike.WithVerbosity(*verbosity))
 
 	fl := fastlike.New(*wasm, opts...)
+
+	if *reloadOnSIGHUP {
+		fl.EnableReloadOnSIGHUP()
+		fmt.Printf("SIGHUP reload enabled. Send SIGHUP signal to reload wasm module.\n")
+	}
 
 	fmt.Printf("Listening on %s\n", *bind)
 	if err := http.ListenAndServe(*bind, fl); err != nil {

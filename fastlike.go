@@ -2,10 +2,13 @@ package fastlike
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"sync"
+	"syscall"
 )
 
 // Fastlike is the entrypoint to the package, used to construct new instances ready to serve
@@ -14,15 +17,21 @@ import (
 // instances will be constructed on-demand and thrown away when the request is finished to avoid an
 // ever-increasing memory cost.
 type Fastlike struct {
-	instances chan *Instance
-
-	// instancefn is called when a new instance must be created from scratch
+	mu         sync.RWMutex
+	instances  chan *Instance
 	instancefn func(opts ...Option) *Instance
+
+	// wasmfile and instanceOpts are stored for reload purposes
+	wasmfile     string
+	instanceOpts []Option
 }
 
 // New returns a new Fastlike ready to create new instances from
 func New(wasmfile string, instanceOpts ...Option) *Fastlike {
-	f := &Fastlike{}
+	f := &Fastlike{
+		wasmfile:     wasmfile,
+		instanceOpts: instanceOpts,
+	}
 
 	// read in the file and store the bytes
 	wasmbytes, err := os.ReadFile(wasmfile)
@@ -53,16 +62,25 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	i.ServeHTTP(w, r)
 
+	f.mu.RLock()
+	instances := f.instances
+	f.mu.RUnlock()
+
 	select {
-	case f.instances <- i:
+	case instances <- i:
 	default:
 	}
 }
 
 func (f *Fastlike) Warmup(n int) {
-	if n > cap(f.instances) {
-		fmt.Printf("Warmup count %d is greater than max pool size %d. Clamping to max.\n", n, cap(f.instances))
-		n = cap(f.instances)
+	f.mu.RLock()
+	instances := f.instances
+	instancefn := f.instancefn
+	f.mu.RUnlock()
+
+	if n > cap(instances) {
+		fmt.Printf("Warmup count %d is greater than max pool size %d. Clamping to max.\n", n, cap(instances))
+		n = cap(instances)
 	}
 
 	var wg sync.WaitGroup
@@ -71,7 +89,7 @@ func (f *Fastlike) Warmup(n int) {
 		go func() {
 			defer wg.Done()
 			select {
-			case f.instances <- f.instancefn():
+			case instances <- instancefn():
 			default:
 			}
 		}()
@@ -79,19 +97,85 @@ func (f *Fastlike) Warmup(n int) {
 	wg.Wait()
 }
 
+// Reload gracefully reloads the wasm module and replaces the instance pool.
+// It reads the wasm file from disk, drains the current pool, and creates a new pool
+// with fresh instances. This is safe to call while requests are being served.
+// Returns an error if the wasm file cannot be read.
+func (f *Fastlike) Reload() error {
+	// Read the new wasm file
+	wasmbytes, err := os.ReadFile(f.wasmfile)
+	if err != nil {
+		return fmt.Errorf("failed to read wasm file during reload: %w", err)
+	}
+
+	// Acquire write lock to replace the pool
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Drain the old instances channel
+	oldInstances := f.instances
+	close(oldInstances)
+	for range oldInstances {
+		// Drain all instances (they will be garbage collected)
+	}
+
+	// Calculate pool size (same as in New)
+	size := runtime.NumCPU()
+	if size > 16 {
+		size = 16
+	} else if size < 0 {
+		size = 0
+	}
+
+	// Create new instances channel and instancefn
+	f.instances = make(chan *Instance, size)
+	f.instancefn = func(opts ...Option) *Instance {
+		// merge the original options with any supplied options
+		opts = append(f.instanceOpts, opts...)
+		return NewInstance(wasmbytes, opts...)
+	}
+
+	return nil
+}
+
+// EnableReloadOnSIGHUP sets up a signal handler that reloads the wasm module
+// when a SIGHUP signal is received. This is useful for hot-reloading during development
+// or when using tools like watchexec to monitor file changes.
+// The goroutine runs in the background until the program exits.
+func (f *Fastlike) EnableReloadOnSIGHUP() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGHUP)
+
+	go func() {
+		for range sigChan {
+			log.Printf("[fastlike] Received SIGHUP, reloading wasm module from %s", f.wasmfile)
+			if err := f.Reload(); err != nil {
+				log.Printf("[fastlike] Reload failed: %v", err)
+			} else {
+				log.Printf("[fastlike] Reload completed successfully")
+			}
+		}
+	}()
+}
+
 // Instantiate returns an Instance ready to serve requests. This may come from the instance pool if
 // one is available, but otherwise will be constructed fresh.
 // This *must* be called for each request, as the XQD runtime is designed around a single
 // request/response pair for each instance.
 func (f *Fastlike) Instantiate(opts ...Option) *Instance {
+	f.mu.RLock()
+	instances := f.instances
+	instancefn := f.instancefn
+	f.mu.RUnlock()
+
 	select {
-	case i := <-f.instances:
+	case i := <-instances:
 		for _, opt := range opts {
 			opt(i)
 		}
 		return i
 	default:
-		return f.instancefn(opts...)
+		return instancefn(opts...)
 	}
 }
 
