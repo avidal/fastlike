@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 )
 
@@ -11,10 +12,29 @@ import (
 type Option func(*Instance)
 
 // WithBackend registers an `http.Handler` identified by `name` used for subrequests targeting that
-// backend
+// backend. This creates a simple backend with default settings.
 func WithBackend(name string, h http.Handler) Option {
 	return func(i *Instance) {
-		i.addBackend(name, h)
+		// Parse a default URL from the backend name
+		u, err := url.Parse("http://" + name)
+		if err != nil {
+			// Fallback to a simple localhost URL
+			u, _ = url.Parse("http://localhost")
+		}
+
+		backend := &Backend{
+			Name:    name,
+			URL:     u,
+			Handler: h,
+		}
+		i.addBackend(name, backend)
+	}
+}
+
+// WithBackendConfig registers a fully configured Backend
+func WithBackendConfig(backend *Backend) Option {
+	return func(i *Instance) {
+		i.addBackend(backend.Name, backend)
 	}
 }
 

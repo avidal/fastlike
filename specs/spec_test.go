@@ -16,7 +16,7 @@ import (
 	"fastlike.dev"
 )
 
-var wasmfile = flag.String("wasm", "testdata/rust/target/wasm32-wasi/debug/example.wasm", "wasm program to run spec tests against")
+var wasmfile = flag.String("wasm", "testdata/rust/target/wasm32-wasip1/debug/example.wasm", "wasm program to run spec tests against")
 
 func TestFastlike(t *testing.T) {
 	t.Parallel()

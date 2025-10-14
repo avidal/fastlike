@@ -458,7 +458,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	if backend == "geolocation" {
 		handler = geoHandler(i.geolookup)
 	} else {
-		handler = i.getBackend(backend)
+		handler = i.getBackendHandler(backend)
 	}
 
 	// TODO: Is there a better way to get an *http.Response from an http.Handler?
@@ -549,7 +549,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		if backendName == "geolocation" {
 			handler = geoHandler(i.geolookup)
 		} else {
-			handler = i.getBackend(backendName)
+			handler = i.getBackendHandler(backendName)
 		}
 
 		// Execute the request
@@ -827,7 +827,7 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	if backend == "geolocation" {
 		handler = geoHandler(i.geolookup)
 	} else {
-		handler = i.getBackend(backend)
+		handler = i.getBackendHandler(backend)
 	}
 
 	// Execute the request
