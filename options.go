@@ -55,6 +55,13 @@ func WithDictionary(name string, fn LookupFunc) Option {
 	}
 }
 
+// WithConfigStore registers a new config store with a corresponding lookup function
+func WithConfigStore(name string, fn LookupFunc) Option {
+	return func(i *Instance) {
+		i.addConfigStore(name, fn)
+	}
+}
+
 // WithSecureFunc is an Option that determines if a request should be considered "secure" or not.
 // If it returns true, the request url has the "https" scheme and the "fastly-ssl" header set when
 // going into the wasm program.

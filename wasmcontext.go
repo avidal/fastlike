@@ -129,6 +129,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_dictionary.go
 	linker.DefineFunc(store, "fastly_dictionary", "open", i.xqd_dictionary_open)
 	linker.DefineFunc(store, "fastly_dictionary", "get", i.xqd_dictionary_get)
+
+	// xqd_config_store.go
+	linker.DefineFunc(store, "fastly_config_store", "open", i.xqd_config_store_open)
+	linker.DefineFunc(store, "fastly_config_store", "get", i.xqd_config_store_get)
 }
 
 // linklegacy links in the abi methods using the legacy method names
