@@ -89,7 +89,10 @@ func TestHttpCacheGetSuggestedCacheKey(t *testing.T) {
 
 	// Verify the key is 32 bytes and not all zeros
 	key := make([]byte, 32)
-	inst.memory.ReadAt(key, int64(keyPtr))
+	_, err := inst.memory.ReadAt(key, int64(keyPtr))
+	if err != nil {
+		t.Fatalf("failed to read cache key: %v", err)
+	}
 
 	allZeros := true
 	for _, b := range key {
@@ -181,8 +184,14 @@ func TestHttpCacheGetSuggestedCacheKeyDifferentUrls(t *testing.T) {
 	// Read both keys
 	key1 := make([]byte, 32)
 	key2 := make([]byte, 32)
-	inst.memory.ReadAt(key1, int64(key1Ptr))
-	inst.memory.ReadAt(key2, int64(key2Ptr))
+	_, err := inst.memory.ReadAt(key1, int64(key1Ptr))
+	if err != nil {
+		t.Fatalf("failed to read cache key1: %v", err)
+	}
+	_, err = inst.memory.ReadAt(key2, int64(key2Ptr))
+	if err != nil {
+		t.Fatalf("failed to read cache key2: %v", err)
+	}
 
 	// Verify they're different
 	same := true
