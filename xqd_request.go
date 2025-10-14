@@ -2,8 +2,10 @@ package fastlike
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -60,6 +62,61 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		Tag:  SendErrorDetailInternalError,
 		Mask: 0,
 	}
+}
+
+// applyAutoDecompression checks if the response should be auto-decompressed and does so
+// This modifies the response in-place if decompression is needed
+func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32) error {
+	// Check if gzip auto-decompression is enabled
+	if (autoDecompressEncodings & ContentEncodingsGzip) == 0 {
+		// Auto-decompression not enabled
+		return nil
+	}
+
+	// Check if the response has gzip or x-gzip encoding
+	encoding := resp.Header.Get("Content-Encoding")
+	if encoding != "gzip" && encoding != "x-gzip" {
+		// Not gzip encoded
+		return nil
+	}
+
+	// Read the compressed body
+	compressedBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	// Decompress the body
+	gzReader, err := gzip.NewReader(bytes.NewReader(compressedBody))
+	if err != nil {
+		// If we can't create a gzip reader, return the original compressed body
+		// but still remove the Content-Encoding header
+		resp.Body = io.NopCloser(bytes.NewReader(compressedBody))
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+		return err
+	}
+	defer gzReader.Close()
+
+	decompressedBody, err := io.ReadAll(gzReader)
+	if err != nil {
+		// If we can't decompress, return the original compressed body
+		// but still remove the Content-Encoding header
+		resp.Body = io.NopCloser(bytes.NewReader(compressedBody))
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+		return err
+	}
+
+	// Replace the response body with the decompressed version
+	resp.Body = io.NopCloser(bytes.NewReader(decompressedBody))
+
+	// Remove Content-Encoding and Content-Length headers as per the spec
+	resp.Header.Del("Content-Encoding")
+	resp.Header.Del("Content-Length")
+
+	return nil
 }
 
 func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
@@ -476,6 +533,9 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	w := wr.Result()
 
+	// Apply auto-decompression if enabled
+	_ = applyAutoDecompression(w, r.autoDecompressEncodings)
+
 	// Convert the response into an (rh, bh) pair, put them in the list, and write out the handles
 	whid, wh := i.responses.New()
 	wh.Status = w.Status
@@ -526,7 +586,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	phid, pendingReq := i.pendingRequests.New()
 
 	// Launch goroutine to perform the request asynchronously
-	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest) {
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32) {
 		// Build the request
 		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
 		if err != nil {
@@ -563,9 +623,12 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		handler.ServeHTTP(wr, httpReq)
 		resp := wr.Result()
 
+		// Apply auto-decompression if enabled
+		_ = applyAutoDecompression(resp, autoDecompress)
+
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, b, backend, pendingReq)
+	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -857,6 +920,9 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 
 	w := wr.Result()
 
+	// Apply auto-decompression if enabled
+	_ = applyAutoDecompression(w, r.autoDecompressEncodings)
+
 	// Convert the response into an (rh, bh) pair
 	whid, wh := i.responses.New()
 	wh.Status = w.Status
@@ -984,6 +1050,24 @@ func (i *Instance) xqd_req_framing_headers_mode_set(handle int32, mode int32) in
 		i.abilog.Printf("req_framing_headers_mode_set: manual mode not supported")
 		return XqdErrUnsupported
 	}
+
+	return XqdStatusOK
+}
+
+// xqd_req_auto_decompress_response_set controls automatic decompression of responses
+// This sets a bitfield indicating which Content-Encodings should be auto-decompressed
+func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings uint32) int32 {
+	// Validate request handle
+	r := i.requests.Get(int(handle))
+	if r == nil {
+		i.abilog.Printf("req_auto_decompress_response_set: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("req_auto_decompress_response_set: handle=%d encodings=%d", handle, encodings)
+
+	// Store the auto-decompress encodings in the request metadata
+	r.autoDecompressEncodings = encodings
 
 	return XqdStatusOK
 }
