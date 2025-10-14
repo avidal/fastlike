@@ -39,6 +39,11 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 		rh.originalHeaders = append(rh.originalHeaders, name)
 	}
 
+	// Capture TLS connection state if the request was over TLS
+	if i.ds_request.TLS != nil {
+		rh.tlsState = i.ds_request.TLS
+	}
+
 	// NOTE: Originally, we setup the body handle using `bodies.NewReader(rh.Body)`, but there is
 	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
 	// get the body. I don't know why. This "solves" the problem for fastlike, at least

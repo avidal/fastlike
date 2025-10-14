@@ -46,10 +46,6 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_tls_cipher_openssl_name", i.wasm3("downstream_tls_cipher_openssl_name"))
-	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_tls_protocol", i.wasm3("downstream_tls_protocol"))
-	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_tls_client_hello", i.wasm3("downstream_tls_client_hello"))
-
 	_ = linker.DefineFunc(store, "fastly_http_req", "original_header_count", i.wasm1("original_header_count"))
 
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
@@ -233,6 +229,12 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "next_request_abandon", i.xqd_http_downstream_next_request_abandon)
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_original_header_names", i.xqd_http_downstream_original_header_names)
 	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_original_header_count", i.xqd_http_downstream_original_header_count)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_cipher_openssl_name", i.xqd_http_downstream_tls_cipher_openssl_name)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_protocol", i.xqd_http_downstream_tls_protocol)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_client_servername", i.xqd_http_downstream_tls_client_servername)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_client_hello", i.xqd_http_downstream_tls_client_hello)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_raw_client_certificate", i.xqd_http_downstream_tls_raw_client_certificate)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_tls_client_cert_verify_result", i.xqd_http_downstream_tls_client_cert_verify_result)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -240,10 +242,6 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
-	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_cipher_openssl_name", i.wasm3("xqd_req_downstream_tls_cipher_openssl_name"))
-	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_protocol", i.wasm3("xqd_req_downstream_tls_protocol"))
-	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_hello", i.wasm3("xqd_req_downstream_tls_client_hello"))
-
 	_ = linker.DefineFunc(store, "env", "xqd_req_original_header_count", i.wasm1("xqd_req_original_header_count"))
 
 	_ = linker.DefineFunc(store, "env", "xqd_resp_header_value_get", i.wasm6("xqd_resp_header_value_get"))
@@ -351,4 +349,10 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_next_request_abandon", i.xqd_http_downstream_next_request_abandon)
 	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_original_header_names", i.xqd_http_downstream_original_header_names)
 	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_original_header_count", i.xqd_http_downstream_original_header_count)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_cipher_openssl_name", i.xqd_http_downstream_tls_cipher_openssl_name)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_protocol", i.xqd_http_downstream_tls_protocol)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_servername", i.xqd_http_downstream_tls_client_servername)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_hello", i.xqd_http_downstream_tls_client_hello)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_raw_client_certificate", i.xqd_http_downstream_tls_raw_client_certificate)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_tls_client_cert_verify_result", i.xqd_http_downstream_tls_client_cert_verify_result)
 }

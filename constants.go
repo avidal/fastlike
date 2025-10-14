@@ -164,3 +164,14 @@ const (
 	TLSv12 uint32 = 2
 	TLSv13 uint32 = 3
 )
+
+// ClientCertVerifyResult represents the result of client certificate verification
+const (
+	ClientCertVerifyResultOk                 uint32 = 0
+	ClientCertVerifyResultBadCertificate     uint32 = 1
+	ClientCertVerifyResultCertificateRevoked uint32 = 2
+	ClientCertVerifyResultCertificateExpired uint32 = 3
+	ClientCertVerifyResultUnknownCA          uint32 = 4
+	ClientCertVerifyResultCertificateMissing uint32 = 5
+	ClientCertVerifyResultCertificateUnknown uint32 = 6
+)

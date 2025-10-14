@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"crypto/tls"
 	"errors"
 	"time"
 )
@@ -196,4 +197,266 @@ func (i *Instance) xqd_http_downstream_original_header_count(req_handle int32, c
 
 	i.abilog.Printf("http_downstream_original_header_count: count=%d", count)
 	return XqdStatusOK
+}
+
+// xqd_http_downstream_tls_cipher_openssl_name returns the OpenSSL cipher name for the downstream TLS connection.
+// Returns XqdErrNone if TLS metadata is not available (e.g., request was not over TLS).
+//
+// Signature: (handle: RequestHandle, cipher_out: *mut u8, cipher_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_cipher_openssl_name(
+	req_handle int32,
+	cipher_out int32,
+	cipher_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_cipher_openssl_name: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_cipher_openssl_name: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Check if TLS state is available
+	if req.tlsState == nil {
+		i.abilog.Printf("http_downstream_tls_cipher_openssl_name: TLS metadata not available")
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Get the cipher suite name
+	cipherName := tls.CipherSuiteName(req.tlsState.CipherSuite)
+
+	// Check buffer size
+	if int32(len(cipherName)) > cipher_max_len {
+		i.memory.PutUint32(uint32(len(cipherName)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write cipher name to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(cipherName), int64(cipher_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_tls_cipher_openssl_name: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_tls_cipher_openssl_name: cipher=%s", cipherName)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_tls_protocol returns the TLS protocol version for the downstream connection.
+// Returns XqdErrNone if TLS metadata is not available.
+//
+// Signature: (handle: RequestHandle, protocol_out: *mut u8, protocol_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_protocol(
+	req_handle int32,
+	protocol_out int32,
+	protocol_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_protocol: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_protocol: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Check if TLS state is available
+	if req.tlsState == nil {
+		i.abilog.Printf("http_downstream_tls_protocol: TLS metadata not available")
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Map TLS version to string
+	var protocolName string
+	switch req.tlsState.Version {
+	case tls.VersionTLS10:
+		protocolName = "TLSv1.0"
+	case tls.VersionTLS11:
+		protocolName = "TLSv1.1"
+	case tls.VersionTLS12:
+		protocolName = "TLSv1.2"
+	case tls.VersionTLS13:
+		protocolName = "TLSv1.3"
+	default:
+		protocolName = "unknown"
+	}
+
+	// Check buffer size
+	if int32(len(protocolName)) > protocol_max_len {
+		i.memory.PutUint32(uint32(len(protocolName)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write protocol name to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(protocolName), int64(protocol_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_tls_protocol: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_tls_protocol: protocol=%s", protocolName)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_tls_client_servername returns the SNI (Server Name Indication) from the TLS connection.
+// Returns XqdErrNone if TLS metadata is not available.
+//
+// Signature: (handle: RequestHandle, sni_out: *mut u8, sni_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_client_servername(
+	req_handle int32,
+	sni_out int32,
+	sni_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_client_servername: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_client_servername: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Check if TLS state is available
+	if req.tlsState == nil {
+		i.abilog.Printf("http_downstream_tls_client_servername: TLS metadata not available")
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Get the SNI server name
+	serverName := req.tlsState.ServerName
+
+	// Check buffer size
+	if int32(len(serverName)) > sni_max_len {
+		i.memory.PutUint32(uint32(len(serverName)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write server name to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(serverName), int64(sni_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_tls_client_servername: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_tls_client_servername: sni=%s", serverName)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_tls_client_hello returns the raw TLS Client Hello message.
+// Returns XqdErrNone if TLS metadata is not available.
+// Note: Go's crypto/tls does not expose the raw Client Hello, so this always returns not available.
+//
+// Signature: (handle: RequestHandle, chello_out: *mut u8, chello_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_client_hello(
+	req_handle int32,
+	chello_out int32,
+	chello_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_client_hello: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_client_hello: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Go's crypto/tls does not expose the raw Client Hello message
+	// Always return not available
+	i.abilog.Printf("http_downstream_tls_client_hello: Client Hello not available (not supported in Go)")
+	i.memory.PutUint32(0, int64(nwritten_out))
+	return XqdErrNone
+}
+
+// xqd_http_downstream_tls_raw_client_certificate returns the raw client certificate (DER-encoded).
+// Returns XqdErrNone if TLS metadata is not available or no client certificate was provided.
+//
+// Signature: (handle: RequestHandle, cert_out: *mut u8, cert_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_raw_client_certificate(
+	req_handle int32,
+	cert_out int32,
+	cert_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_tls_raw_client_certificate: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_raw_client_certificate: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Check if TLS state is available
+	if req.tlsState == nil {
+		i.abilog.Printf("http_downstream_tls_raw_client_certificate: TLS metadata not available")
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Check if client certificates are available
+	if len(req.tlsState.PeerCertificates) == 0 {
+		i.abilog.Printf("http_downstream_tls_raw_client_certificate: No client certificate provided")
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Get the first (leaf) certificate in DER format
+	certDER := req.tlsState.PeerCertificates[0].Raw
+
+	// Check buffer size
+	if int32(len(certDER)) > cert_max_len {
+		i.memory.PutUint32(uint32(len(certDER)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write certificate to guest memory
+	nwritten, err := i.memory.WriteAt(certDER, int64(cert_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_tls_raw_client_certificate: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_tls_raw_client_certificate: wrote %d bytes", nwritten)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_tls_client_cert_verify_result returns the result of client certificate verification.
+// Returns XqdErrNone if TLS metadata is not available or no client certificate was provided.
+//
+// Signature: (handle: RequestHandle) -> Result<ClientCertVerifyResult, FastlyStatus>
+func (i *Instance) xqd_http_downstream_tls_client_cert_verify_result(req_handle int32) int32 {
+	i.abilog.Printf("http_downstream_tls_client_cert_verify_result: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Check if TLS state is available
+	if req.tlsState == nil {
+		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: TLS metadata not available")
+		return XqdErrNone
+	}
+
+	// Check if client certificates are available
+	if len(req.tlsState.PeerCertificates) == 0 {
+		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: No client certificate provided")
+		// Return CertificateMissing if no certificate was provided
+		return int32(ClientCertVerifyResultCertificateMissing)
+	}
+
+	// In Go's TLS, if we reach here, the certificate was verified successfully
+	// (unless VerifyConnection or VerifyPeerCertificate callbacks were used)
+	// For simplicity, we return Ok if certificates are present and the connection succeeded
+	i.abilog.Printf("http_downstream_tls_client_cert_verify_result: certificate verified")
+	return int32(ClientCertVerifyResultOk)
 }
