@@ -119,3 +119,23 @@ func (m *Memory) WriteAt(p []byte, offset int64) (int, error) {
 	n := copy(m.Data()[offset:], p)
 	return n, nil
 }
+
+// ReadUint32 reads a uint32 from the given offset
+func (m *Memory) ReadUint32(offset int32) uint32 {
+	return m.Uint32(int64(offset))
+}
+
+// ReadUint64 reads a uint64 from the given offset
+func (m *Memory) ReadUint64(offset int32) uint64 {
+	return m.Uint64(int64(offset))
+}
+
+// WriteUint32 writes a uint32 to the given offset
+func (m *Memory) WriteUint32(offset int32, value uint32) {
+	m.PutUint32(value, int64(offset))
+}
+
+// WriteUint64 writes a uint64 to the given offset
+func (m *Memory) WriteUint64(offset int32, value uint64) {
+	m.PutUint64(value, int64(offset))
+}

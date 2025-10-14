@@ -28,6 +28,13 @@ type Instance struct {
 	bodies          *BodyHandles
 	pendingRequests *PendingRequestHandles
 
+	// KV Store handles for async operations
+	kvStores  *KVStoreHandles
+	kvLookups *KVStoreLookupHandles
+	kvInserts *KVStoreInsertHandles
+	kvDeletes *KVStoreDeleteHandles
+	kvLists   *KVStoreListHandles
+
 	// ds_request represents the downstream request, ie the one originated from the user agent
 	ds_request *http.Request
 
@@ -47,6 +54,9 @@ type Instance struct {
 
 	// configStores are used to look up string values using string keys (similar to dictionaries)
 	configStores []configStore
+
+	// kvStoreRegistry maps store names to KVStore instances
+	kvStoreRegistry map[string]*KVStore
 
 	// geolookup is a function that accepts a net.IP and returns a Geo
 	geolookup func(net.IP) Geo
@@ -69,6 +79,11 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.bodies = &BodyHandles{}
 	i.responses = &ResponseHandles{}
 	i.pendingRequests = &PendingRequestHandles{}
+	i.kvStores = &KVStoreHandles{}
+	i.kvLookups = &KVStoreLookupHandles{}
+	i.kvInserts = &KVStoreInsertHandles{}
+	i.kvDeletes = &KVStoreDeleteHandles{}
+	i.kvLists = &KVStoreListHandles{}
 
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -77,6 +92,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.loggers = []logger{}
 	i.dictionaries = []dictionary{}
 	i.configStores = []configStore{}
+	i.kvStoreRegistry = map[string]*KVStore{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend
@@ -130,6 +146,11 @@ func (i *Instance) reset() {
 	*i.responses = ResponseHandles{}
 	*i.bodies = BodyHandles{}
 	*i.pendingRequests = PendingRequestHandles{}
+	*i.kvStores = KVStoreHandles{}
+	*i.kvLookups = KVStoreLookupHandles{}
+	*i.kvInserts = KVStoreInsertHandles{}
+	*i.kvDeletes = KVStoreDeleteHandles{}
+	*i.kvLists = KVStoreListHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil
