@@ -25,6 +25,8 @@ func (i *Instance) compile(wasmbytes []byte) {
 	wasicfg := wasmtime.NewWasiConfig()
 	wasicfg.InheritStdout()
 	wasicfg.InheritStderr()
+	// Set command-line arguments (argv[0] is traditionally the program name)
+	wasicfg.SetArgv([]string{"fastlike"})
 
 	store.SetWasi(wasicfg)
 
@@ -253,6 +255,17 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_cache", "get_stale_while_revalidate_ns", i.xqd_cache_get_stale_while_revalidate_ns)
 	_ = linker.DefineFunc(store, "fastly_cache", "get_age_ns", i.xqd_cache_get_age_ns)
 	_ = linker.DefineFunc(store, "fastly_cache", "get_hits", i.xqd_cache_get_hits)
+	// Cache replace API (stubs - not implemented, returns XqdErrUnsupported like Viceroy)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace", i.xqd_cache_replace)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_insert", i.xqd_cache_replace_insert)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_age_ns", i.xqd_cache_replace_get_age_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_body", i.xqd_cache_replace_get_body)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_hits", i.xqd_cache_replace_get_hits)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_length", i.xqd_cache_replace_get_length)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_max_age_ns", i.xqd_cache_replace_get_max_age_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_stale_while_revalidate_ns", i.xqd_cache_replace_get_stale_while_revalidate_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_state", i.xqd_cache_replace_get_state)
+	_ = linker.DefineFunc(store, "fastly_cache", "replace_get_user_metadata", i.xqd_cache_replace_get_user_metadata)
 
 	// xqd_purge.go
 	_ = linker.DefineFunc(store, "fastly_purge", "purge_surrogate_key", i.xqd_purge_surrogate_key)
