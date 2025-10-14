@@ -82,8 +82,8 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 }
 
 func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_size int32) int32 {
-	var r = i.requests.Get(int(handle))
-	if r == nil {
+	var w = i.responses.Get(int(handle))
+	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -93,7 +93,7 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 		return XqdError
 	}
 
-	r.Header.Del(string(name))
+	w.Header.Del(string(name))
 
 	return XqdStatusOK
 }
