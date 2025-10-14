@@ -158,6 +158,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_device_detection.go
 	_ = linker.DefineFunc(store, "fastly_device_detection", "lookup", i.xqd_device_detection_lookup)
 
+	// xqd_acl.go
+	_ = linker.DefineFunc(store, "fastly_acl", "open", i.xqd_acl_open)
+	_ = linker.DefineFunc(store, "fastly_acl", "lookup", i.xqd_acl_lookup)
+
 	// xqd_kv_store.go
 	_ = linker.DefineFunc(store, "fastly_kv_store", "open", i.xqd_kv_store_open)
 	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup", i.xqd_kv_store_lookup)
@@ -315,6 +319,10 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_log.go
 	_ = linker.DefineFunc(store, "env", "xqd_log_endpoint_get", i.xqd_log_endpoint_get)
 	_ = linker.DefineFunc(store, "env", "xqd_log_write", i.xqd_log_write)
+
+	// xqd_acl.go
+	_ = linker.DefineFunc(store, "env", "xqd_acl_open", i.xqd_acl_open)
+	_ = linker.DefineFunc(store, "env", "xqd_acl_lookup", i.xqd_acl_lookup)
 
 	// xqd_compute_runtime.go
 	_ = linker.DefineFunc(store, "env", "xqd_compute_runtime_get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)

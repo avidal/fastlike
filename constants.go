@@ -128,3 +128,11 @@ const (
 const (
 	ContentEncodingsGzip uint32 = 1 << 0
 )
+
+// AclError represents ACL lookup errors
+const (
+	AclErrorUninitialized   uint32 = 0
+	AclErrorOk              uint32 = 1
+	AclErrorNoContent       uint32 = 2
+	AclErrorTooManyRequests uint32 = 3
+)

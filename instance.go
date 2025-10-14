@@ -70,6 +70,10 @@ type Instance struct {
 	secretStoreHandles *SecretStoreHandles
 	secretHandles      *SecretHandles
 
+	// acls are used to perform IP address lookups against access control lists
+	acls       map[string]*Acl
+	aclHandles *AclHandles
+
 	// Cache handles
 	cache               *Cache
 	cacheHandles        *CacheHandles
@@ -120,6 +124,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.cacheHandles = &CacheHandles{}
 	i.cacheBusyHandles = &CacheBusyHandles{}
 	i.cacheReplaceHandles = &CacheReplaceHandles{}
+	i.aclHandles = &AclHandles{}
 
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -130,6 +135,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.configStores = []configStore{}
 	i.kvStoreRegistry = map[string]*KVStore{}
 	i.secretStores = []secretStore{}
+	i.acls = map[string]*Acl{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend
@@ -199,6 +205,7 @@ func (i *Instance) reset() {
 	*i.cacheHandles = CacheHandles{}
 	*i.cacheBusyHandles = CacheBusyHandles{}
 	*i.cacheReplaceHandles = CacheReplaceHandles{}
+	*i.aclHandles = AclHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil

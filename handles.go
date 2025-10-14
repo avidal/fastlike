@@ -335,3 +335,29 @@ func (crhs *CacheReplaceHandles) New(entry *CacheEntry, options *CacheReplaceOpt
 	crhs.handles = append(crhs.handles, crh)
 	return len(crhs.handles) - 1
 }
+
+// AclHandle represents a reference to an ACL (Access Control List)
+type AclHandle struct {
+	name string
+	acl  *Acl
+}
+
+// AclHandles is a slice of AclHandle with methods to get and create
+type AclHandles struct {
+	handles []*AclHandle
+}
+
+// Get returns the AclHandle identified by id or nil if one does not exist
+func (ahs *AclHandles) Get(id int) *AclHandle {
+	if id < 0 || id >= len(ahs.handles) {
+		return nil
+	}
+	return ahs.handles[id]
+}
+
+// New creates a new AclHandle and returns its handle id
+func (ahs *AclHandles) New(name string, acl *Acl) int {
+	ah := &AclHandle{name: name, acl: acl}
+	ahs.handles = append(ahs.handles, ah)
+	return len(ahs.handles) - 1
+}
