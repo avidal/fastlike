@@ -61,6 +61,13 @@ type Instance struct {
 	// kvStoreRegistry maps store names to KVStore instances
 	kvStoreRegistry map[string]*KVStore
 
+	// secretStores are used to look up secret values using string keys
+	secretStores []secretStore
+
+	// Secret store handles
+	secretStoreHandles *SecretStoreHandles
+	secretHandles      *SecretHandles
+
 	// geolookup is a function that accepts a net.IP and returns a Geo
 	geolookup func(net.IP) Geo
 
@@ -87,6 +94,8 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvInserts = &KVStoreInsertHandles{}
 	i.kvDeletes = &KVStoreDeleteHandles{}
 	i.kvLists = &KVStoreListHandles{}
+	i.secretStoreHandles = &SecretStoreHandles{}
+	i.secretHandles = &SecretHandles{}
 
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -96,6 +105,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.dictionaries = []dictionary{}
 	i.configStores = []configStore{}
 	i.kvStoreRegistry = map[string]*KVStore{}
+	i.secretStores = []secretStore{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend
@@ -154,6 +164,8 @@ func (i *Instance) reset() {
 	*i.kvInserts = KVStoreInsertHandles{}
 	*i.kvDeletes = KVStoreDeleteHandles{}
 	*i.kvLists = KVStoreListHandles{}
+	*i.secretStoreHandles = SecretStoreHandles{}
+	*i.secretHandles = SecretHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil
