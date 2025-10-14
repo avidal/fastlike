@@ -467,7 +467,12 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	// requests in the embedding application, and it's very easy to adapt an http.Handler to an
 	// http.RoundTripper if they want it to go offsite.
 	wr := httptest.NewRecorder()
+
+	// Pause CPU time tracking during the blocking HTTP request
+	i.pauseExecution()
 	handler.ServeHTTP(wr, req)
+	// Resume CPU time tracking after the request completes
+	i.resumeExecution()
 
 	w := wr.Result()
 
@@ -647,8 +652,13 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 
 	i.abilog.Printf("pending_req_wait: pending handle=%d, blocking until complete", phandle)
 
+	// Pause CPU time tracking while waiting for the async request
+	i.pauseExecution()
 	// Block until the request completes
 	resp, err := pr.Wait()
+	// Resume CPU time tracking after the wait completes
+	i.resumeExecution()
+
 	if err != nil {
 		i.abilog.Printf("pending_req_wait: request failed, err=%s", err.Error())
 		// Return invalid handles to signal error
@@ -729,8 +739,13 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 		}(c.index, c.channel)
 	}
 
+	// Pause CPU time tracking while waiting for the first request to complete
+	i.pauseExecution()
 	// Wait for the first one to complete
 	doneIndex := <-doneCh
+	// Resume CPU time tracking after a request completes
+	i.resumeExecution()
+
 	pr := cases[doneIndex].pr
 
 	i.abilog.Printf("pending_req_select: request at index %d completed first", doneIndex)
@@ -833,7 +848,12 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 
 	// Execute the request
 	wr := httptest.NewRecorder()
+
+	// Pause CPU time tracking during the blocking HTTP request
+	i.pauseExecution()
 	handler.ServeHTTP(wr, req)
+	// Resume CPU time tracking after the request completes
+	i.resumeExecution()
 
 	w := wr.Result()
 
