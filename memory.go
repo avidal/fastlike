@@ -37,6 +37,7 @@ func (m ByteMemory) Cap() int {
 
 // wasmMemory is a MemorySlice implementation that wraps a wasmtime.Memory
 type wasmMemory struct {
+	store *wasmtime.Store
 	mem   *wasmtime.Memory
 	slice []byte
 }
@@ -52,11 +53,11 @@ func (m *wasmMemory) Cap() int {
 func (m *wasmMemory) Data() []byte {
 	// If we have a pre-built slice and that slice capacity is the same as the current data size,
 	// return it. Otherwise, rebuild the slice.
-	if m.slice != nil && cap(m.slice) == int(m.mem.DataSize()) {
+	if m.slice != nil && cap(m.slice) == int(m.mem.Size(m.store)) {
 		return m.slice
 	}
 
-	m.slice = m.mem.UnsafeData()
+	m.slice = m.mem.UnsafeData(m.store)
 	return m.slice
 }
 
