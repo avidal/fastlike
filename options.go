@@ -90,6 +90,13 @@ func WithKVStore(name string) Option {
 	}
 }
 
+// WithSecretStore registers a new secret store with a corresponding lookup function
+func WithSecretStore(name string, fn SecretLookupFunc) Option {
+	return func(i *Instance) {
+		i.addSecretStore(name, fn)
+	}
+}
+
 // WithSecureFunc is an Option that determines if a request should be considered "secure" or not.
 // If it returns true, the request url has the "https" scheme and the "fastly-ssl" header set when
 // going into the wasm program.

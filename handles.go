@@ -199,3 +199,58 @@ func (pr *PendingRequest) Complete(resp *http.Response, err error) {
 	pr.err = err
 	close(pr.done)
 }
+
+// Secret represents a secret value that can be retrieved from a SecretStore
+type Secret struct {
+	plaintext []byte
+}
+
+// Plaintext returns the plaintext bytes of the secret
+func (s *Secret) Plaintext() []byte {
+	return s.plaintext
+}
+
+// SecretHandles is a slice of Secret with methods to get and create
+type SecretHandles struct {
+	handles []*Secret
+}
+
+// Get returns the Secret identified by id or nil if one does not exist
+func (shs *SecretHandles) Get(id int) *Secret {
+	if id < 0 || id >= len(shs.handles) {
+		return nil
+	}
+	return shs.handles[id]
+}
+
+// New creates a new Secret from plaintext bytes and returns its handle id
+func (shs *SecretHandles) New(plaintext []byte) int {
+	s := &Secret{plaintext: plaintext}
+	shs.handles = append(shs.handles, s)
+	return len(shs.handles) - 1
+}
+
+// SecretStoreHandle represents a reference to a secret store
+type SecretStoreHandle struct {
+	name string
+}
+
+// SecretStoreHandles is a slice of SecretStoreHandle with methods to get and create
+type SecretStoreHandles struct {
+	handles []*SecretStoreHandle
+}
+
+// Get returns the SecretStoreHandle identified by id or nil if one does not exist
+func (sshs *SecretStoreHandles) Get(id int) *SecretStoreHandle {
+	if id < 0 || id >= len(sshs.handles) {
+		return nil
+	}
+	return sshs.handles[id]
+}
+
+// New creates a new SecretStoreHandle and returns its handle id
+func (sshs *SecretStoreHandles) New(name string) int {
+	ssh := &SecretStoreHandle{name: name}
+	sshs.handles = append(sshs.handles, ssh)
+	return len(sshs.handles) - 1
+}
