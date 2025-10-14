@@ -87,6 +87,9 @@ type BodyHandle struct {
 
 	// length is the number of bytes in the body
 	length int64
+
+	// trailers are HTTP trailers that come after the body in chunked encoding
+	trailers http.Header
 }
 
 // Close implements io.Closer for a BodyHandle

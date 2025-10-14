@@ -100,3 +100,116 @@ func (i *Instance) xqd_body_close(handle int32) int32 {
 
 	return XqdStatusOK
 }
+
+func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Read the trailer name
+	var name = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(name, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	// Read the trailer value
+	var value = make([]byte, value_size)
+	_, err = i.memory.ReadAt(value, int64(value_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	// Initialize the trailer map if it doesn't exist
+	if body.trailers == nil {
+		body.trailers = make(map[string][]string)
+	}
+
+	// Append the trailer (using Add which appends to existing values)
+	body.trailers.Add(string(name), string(value))
+
+	i.abilog.Printf("body_trailer_append: handle=%d name=%q value=%q", handle, string(name), string(value))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
+	i.abilog.Printf("body_trailer_names_get: handle=%d cursor=%d", handle, cursor)
+
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	var names = []string{}
+	for n := range body.trailers {
+		names = append(names, n)
+	}
+
+	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
+}
+
+func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Read the trailer name
+	var nameBuf = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(nameBuf, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	// Get the first value for this trailer name
+	var values = body.trailers.Values(string(nameBuf))
+	if len(values) == 0 {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdStatusOK
+	}
+
+	// Get the first value
+	var value = []byte(values[0])
+
+	// Check if buffer is large enough
+	if len(value)+1 > int(value_maxlen) {
+		return XqdErrBufferLength
+	}
+
+	// Append null terminator
+	value = append(value, '\x00')
+
+	// Write to memory
+	nwritten, err := i.memory.WriteAt(value, int64(value_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	i.abilog.Printf("body_trailer_value_get: handle=%d name=%q value=%q", handle, string(nameBuf), values[0])
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
+	var body = i.bodies.Get(int(handle))
+	if body == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Read the trailer name
+	var buf = make([]byte, name_size)
+	var _, err = i.memory.ReadAt(buf, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	// Get all values for this trailer name
+	var values = body.trailers.Values(string(buf))
+
+	i.abilog.Printf("body_trailer_values_get: handle=%d name=%q cursor=%d", handle, string(buf), cursor)
+
+	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
+}

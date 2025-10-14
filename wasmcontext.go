@@ -115,6 +115,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	linker.DefineFunc(store, "fastly_http_body", "read", i.xqd_body_read)
 	linker.DefineFunc(store, "fastly_http_body", "append", i.xqd_body_append)
 	linker.DefineFunc(store, "fastly_http_body", "close", i.xqd_body_close)
+	linker.DefineFunc(store, "fastly_http_body", "trailer_append", i.xqd_body_trailer_append)
+	linker.DefineFunc(store, "fastly_http_body", "trailer_names_get", i.xqd_body_trailer_names_get)
+	linker.DefineFunc(store, "fastly_http_body", "trailer_value_get", i.xqd_body_trailer_value_get)
+	linker.DefineFunc(store, "fastly_http_body", "trailer_values_get", i.xqd_body_trailer_values_get)
 
 	// xqd_log.go
 	linker.DefineFunc(store, "fastly_log", "endpoint_get", i.xqd_log_endpoint_get)
@@ -200,6 +204,10 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	linker.DefineFunc(store, "env", "xqd_body_write", i.xqd_body_write)
 	linker.DefineFunc(store, "env", "xqd_body_read", i.xqd_body_read)
 	linker.DefineFunc(store, "env", "xqd_body_append", i.xqd_body_append)
+	linker.DefineFunc(store, "env", "xqd_body_trailer_append", i.xqd_body_trailer_append)
+	linker.DefineFunc(store, "env", "xqd_body_trailer_names_get", i.xqd_body_trailer_names_get)
+	linker.DefineFunc(store, "env", "xqd_body_trailer_value_get", i.xqd_body_trailer_value_get)
+	linker.DefineFunc(store, "env", "xqd_body_trailer_values_get", i.xqd_body_trailer_values_get)
 
 	// xqd_log.go
 	linker.DefineFunc(store, "env", "xqd_log_endpoint_get", i.xqd_log_endpoint_get)
