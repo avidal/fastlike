@@ -137,6 +137,12 @@ const (
 	AclErrorTooManyRequests uint32 = 3
 )
 
+// PurgeOptions mask flags
+const (
+	PurgeOptionsSoftPurge uint32 = 1 << 0 // Perform soft purge instead of hard purge
+	PurgeOptionsRetBuf    uint32 = 1 << 1 // Return JSON purge response in buffer
+)
+
 // BackendConfigOptions represents mask flags for dynamic backend configuration
 const (
 	BackendConfigOptionsReserved            uint32 = 1 << 0

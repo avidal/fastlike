@@ -222,7 +222,6 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 
 	// xqd_purge.go
 	_ = linker.DefineFunc(store, "fastly_purge", "purge_surrogate_key", i.xqd_purge_surrogate_key)
-	_ = linker.DefineFunc(store, "fastly_purge", "soft_purge_surrogate_key", i.xqd_soft_purge_surrogate_key)
 
 	// xqd_async_io.go
 	_ = linker.DefineFunc(store, "fastly_async_io", "select", i.xqd_async_io_select)
