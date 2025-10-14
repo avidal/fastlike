@@ -6,7 +6,7 @@ import (
 
 // xqd_async_io_select waits for one of multiple async operations to complete
 // Returns the index of the first ready item, or u32::MAX (0xFFFFFFFF) on timeout
-func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, timeout_ms uint32, ready_idx_out int32) int32 {
+func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, timeout_ms int32, ready_idx_out int32) int32 {
 	i.abilog.Printf("async_io_select: handles_len=%d timeout_ms=%d", handles_len, timeout_ms)
 
 	// Special case: empty list with zero timeout is invalid
@@ -20,7 +20,7 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 		i.abilog.Printf("async_io_select: empty list, waiting for timeout")
 		// Pause CPU time tracking while waiting
 		i.pauseExecution()
-		time.Sleep(time.Duration(timeout_ms) * time.Millisecond)
+		time.Sleep(time.Duration(uint32(timeout_ms)) * time.Millisecond)
 		i.resumeExecution()
 		// Return u32::MAX to indicate timeout
 		i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
@@ -102,7 +102,7 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 			i.abilog.Printf("async_io_select: handle at index %d completed", doneIndex)
 			i.memory.PutUint32(uint32(doneIndex), int64(ready_idx_out))
 			return XqdStatusOK
-		case <-time.After(time.Duration(timeout_ms) * time.Millisecond):
+		case <-time.After(time.Duration(uint32(timeout_ms)) * time.Millisecond):
 			i.abilog.Printf("async_io_select: timeout expired")
 			i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
 			return XqdStatusOK
@@ -112,7 +112,7 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 
 // xqd_async_io_is_ready checks if an async operation is ready (non-blocking)
 // Returns 1 if ready, 0 if not
-func (i *Instance) xqd_async_io_is_ready(handle uint32, is_ready_out int32) int32 {
+func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32 {
 	i.abilog.Printf("async_io_is_ready: handle=%d", handle)
 
 	asyncItem := i.asyncItems.Get(int(handle))
