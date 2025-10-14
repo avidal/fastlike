@@ -1071,3 +1071,199 @@ func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings 
 
 	return XqdStatusOK
 }
+
+// xqd_req_register_dynamic_backend registers a backend dynamically at runtime
+// This function reads the backend configuration from guest memory and creates a new backend
+func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name_prefix_size int32, target_addr int32, target_size int32, backend_config_mask uint32, backend_config_addr int32) int32 {
+	i.abilog.Printf("req_register_dynamic_backend: name_prefix_addr=%d target_addr=%d mask=%d", name_prefix_addr, target_addr, backend_config_mask)
+
+	// Check for reserved bit - if set, return error
+	if (backend_config_mask & BackendConfigOptionsReserved) != 0 {
+		i.abilog.Printf("req_register_dynamic_backend: reserved bit is set")
+		return XqdErrInvalidArgument
+	}
+
+	// Read the backend name prefix
+	namePrefix := make([]byte, name_prefix_size)
+	_, err := i.memory.ReadAt(namePrefix, int64(name_prefix_addr))
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: failed to read name prefix")
+		return XqdError
+	}
+
+	// Read the target URL
+	targetBuf := make([]byte, target_size)
+	_, err = i.memory.ReadAt(targetBuf, int64(target_addr))
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: failed to read target")
+		return XqdError
+	}
+
+	targetURL := string(targetBuf)
+	backendName := string(namePrefix)
+
+	i.abilog.Printf("req_register_dynamic_backend: name=%q target=%q", backendName, targetURL)
+
+	// Check if backend already exists
+	if i.backendExists(backendName) {
+		i.abilog.Printf("req_register_dynamic_backend: backend %q already exists", backendName)
+		return XqdErrInvalidArgument
+	}
+
+	// Read the dynamic backend config struct from memory
+	var config DynamicBackendConfig
+
+	// Read the entire struct (it's laid out contiguously in memory)
+	// The struct is 96 bytes = 4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4
+	configBuf := make([]byte, 96)
+	_, err = i.memory.ReadAt(configBuf, int64(backend_config_addr))
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: failed to read backend config")
+		return XqdError
+	}
+
+	// Parse the struct fields manually (little-endian)
+	offset := 0
+	config.HostOverride = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.HostOverrideLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.ConnectTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.FirstByteTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.BetweenBytesTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.SSLMinVersion = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.SSLMaxVersion = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.CertHostname = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.CertHostnameLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.CACert = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.CACertLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.Ciphers = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.CiphersLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.SNIHostname = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.SNIHostnameLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.ClientCertificate = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
+	offset += 4
+	config.ClientCertificateLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.ClientKey = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.HTTPKeepaliveTimeMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.TCPKeepaliveEnable = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.TCPKeepaliveIntervalSecs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.TCPKeepaliveProbes = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	offset += 4
+	config.TCPKeepaliveTimeSecs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+
+	// Parse the target URL
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: failed to parse target URL %q: %v", targetURL, err)
+		return XqdErrInvalidArgument
+	}
+
+	// Create a new Backend struct
+	backend := &Backend{
+		Name:      backendName,
+		URL:       u,
+		IsDynamic: true,
+		Handler:   nil, // Will use defaultBackend or create a handler
+	}
+
+	// Apply configuration options based on the mask
+	if (backend_config_mask & BackendConfigOptionsHostOverride) != 0 {
+		if config.HostOverrideLen > 0 && config.HostOverrideLen <= 1024 {
+			hostOverrideBuf := make([]byte, config.HostOverrideLen)
+			_, err := i.memory.ReadAt(hostOverrideBuf, int64(config.HostOverride))
+			if err == nil {
+				backend.OverrideHost = string(hostOverrideBuf)
+				i.abilog.Printf("req_register_dynamic_backend: override_host=%q", backend.OverrideHost)
+			}
+		}
+	}
+
+	if (backend_config_mask & BackendConfigOptionsConnectTimeout) != 0 {
+		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
+	}
+
+	if (backend_config_mask & BackendConfigOptionsFirstByteTimeout) != 0 {
+		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
+	}
+
+	if (backend_config_mask & BackendConfigOptionsBetweenBytesTimeout) != 0 {
+		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
+	}
+
+	if (backend_config_mask & BackendConfigOptionsUseSSL) != 0 {
+		backend.UseSSL = true
+	}
+
+	if (backend_config_mask & BackendConfigOptionsSSLMinVersion) != 0 {
+		backend.SSLMinVersion = config.SSLMinVersion
+	}
+
+	if (backend_config_mask & BackendConfigOptionsSSLMaxVersion) != 0 {
+		backend.SSLMaxVersion = config.SSLMaxVersion
+	}
+
+	if (backend_config_mask & BackendConfigOptionsKeepalive) != 0 {
+		backend.HTTPKeepaliveTimeMs = config.HTTPKeepaliveTimeMs
+		backend.TCPKeepaliveEnable = config.TCPKeepaliveEnable != 0
+		backend.TCPKeepaliveTimeMs = config.TCPKeepaliveTimeSecs * 1000
+		backend.TCPKeepaliveIntervalMs = config.TCPKeepaliveIntervalSecs * 1000
+		backend.TCPKeepaliveProbes = config.TCPKeepaliveProbes
+	}
+
+	// Create a simple http.Handler for the backend
+	// For local testing, we use http.DefaultTransport to make actual HTTP requests
+	backend.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Update the request URL to point to the backend
+		r.URL.Scheme = backend.URL.Scheme
+		r.URL.Host = backend.URL.Host
+
+		// Apply host override if configured
+		if backend.OverrideHost != "" {
+			r.Host = backend.OverrideHost
+			r.Header.Set("Host", backend.OverrideHost)
+		}
+
+		// Use http.DefaultTransport to make the actual request
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(fmt.Sprintf("Backend request failed: %v", err)))
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy the response
+		for k, v := range resp.Header {
+			for _, vv := range v {
+				w.Header().Add(k, vv)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})
+
+	// Register the backend
+	i.addBackend(backendName, backend)
+
+	i.abilog.Printf("req_register_dynamic_backend: successfully registered backend %q", backendName)
+	return XqdStatusOK
+}
