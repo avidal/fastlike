@@ -1,4 +1,4 @@
-![fastlike logo](.media/logo.png){width=200}
+![fastlike logo](.media/logo.png)
 
 # fastlike
 
