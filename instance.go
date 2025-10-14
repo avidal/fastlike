@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytecodealliance/wasmtime-go"
+	"github.com/bytecodealliance/wasmtime-go/v37"
 )
 
 // Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it
@@ -23,6 +23,7 @@ type Instance struct {
 	// This is used to get a memory handle and call the entrypoint function
 	// Everything from here and below is reset on each incoming request
 	wasm   *wasmtime.Instance
+	store  *wasmtime.Store // Per-request store
 	memory *Memory
 
 	requests        *RequestHandles
@@ -147,7 +148,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.aclHandles = &AclHandles{}
 	i.asyncItems = &AsyncItemHandles{}
 
-	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
+	i.log = log.New(os.Stdout, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
 
 	i.backends = map[string]*Backend{}
@@ -243,6 +244,7 @@ func (i *Instance) reset() {
 	i.ds_request = nil
 	i.ds_context = nil
 	i.wasm = nil
+	i.store = nil
 	i.memory = nil
 
 	// Reset CPU time tracking
@@ -251,14 +253,54 @@ func (i *Instance) reset() {
 }
 
 func (i *Instance) setup() {
-	var err error
-	i.wasm, err = i.wasmctx.linker.Instantiate(i.wasmctx.store, i.wasmctx.module)
-	check(err)
+	// Ensure critical fields are initialized
+	if i.wasmctx == nil || i.wasmctx.engine == nil || i.wasmctx.module == nil {
+		panic("wasmctx not properly initialized")
+	}
+
+	// Create a fresh store for this request
+	// Each wasm instance needs its own store to avoid state conflicts
+	i.store = wasmtime.NewStore(i.wasmctx.engine)
+
+	// Set up WASI configuration for this store
+	wasicfg := wasmtime.NewWasiConfig()
+	wasicfg.InheritStdout()
+	wasicfg.InheritStderr()
+	wasicfg.SetArgv([]string{"fastlike"})
+	i.store.SetWasi(wasicfg)
 
 	// Set epoch deadline for interruption
-	i.wasmctx.store.SetEpochDeadline(1)
+	// Note: Temporarily disabled to debug nil pointer issue
+	// i.store.SetEpochDeadline(10000)
 
-	i.memory = &Memory{&wasmMemory{store: i.wasmctx.store, mem: i.wasm.GetExport(i.wasmctx.store, "memory").Memory()}}
+	// Initialize memory early with a placeholder so functions don't crash
+	// This will be replaced with the real memory after instantiation
+	i.memory = &Memory{nil}
+
+	// Create a new linker for this store and link all host functions
+	linker := wasmtime.NewLinker(i.wasmctx.engine)
+	check(linker.DefineWasi())
+	i.link(i.store, linker)
+	i.linklegacy(i.store, linker)
+
+	// Instantiate the module with the fresh store
+	var err error
+	i.wasm, err = linker.Instantiate(i.store, i.wasmctx.module)
+	if err != nil {
+		i.log.Printf("Failed to instantiate module: %v", err)
+		panic(err)
+	}
+
+	// Get memory export
+	memExport := i.wasm.GetExport(i.store, "memory")
+	if memExport == nil {
+		panic("memory export not found in wasm module")
+	}
+	memObj := memExport.Memory()
+	if memObj == nil {
+		panic("memory export is not a memory object")
+	}
+	i.memory = &Memory{&wasmMemory{store: i.store, mem: memObj}}
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
@@ -297,7 +339,8 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			// If the context cancels before we write to the donech it's a timeout/deadline/client
 			// hung up and we should interrupt the wasm program.
-			i.wasmctx.engine.IncrementEpoch()
+			// Temporarily disabled epoch interruption to debug nil pointer issue
+			// i.wasmctx.engine.IncrementEpoch()
 		case <-donech:
 			// Otherwise, we're good and don't need to do anything else.
 		}
@@ -310,8 +353,61 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Start tracking CPU time before entering guest code
 	i.startExecution()
 
-	entry := i.wasm.GetExport(i.wasmctx.store, "_start").Func()
-	_, err := entry.Call(i.wasmctx.store)
+	// Get the "_start" export
+	if i.wasm == nil {
+		panic("i.wasm is nil")
+	}
+	if i.store == nil {
+		panic("i.store is nil")
+	}
+
+	startExport := i.wasm.GetExport(i.store, "_start")
+	if startExport == nil {
+		// Log all available exports for debugging
+		i.log.Printf("ERROR: '_start' export not found in wasm module")
+
+		// Try common alternative entry points
+		alternativeNames := []string{"main", "_main", "start"}
+		for _, name := range alternativeNames {
+			if export := i.wasm.GetExport(i.store, name); export != nil {
+				i.log.Printf("Found alternative export: %s", name)
+				startExport = export
+				break
+			}
+		}
+
+		if startExport == nil {
+			panic("no suitable entry point found in wasm module")
+		}
+	}
+
+	entry := startExport.Func()
+	if entry == nil {
+		panic("'_start' export is not a function")
+	}
+
+	i.log.Printf("About to call entry function, store: %v, entry: %v", i.store != nil, entry != nil)
+
+	// Additional checks
+	if i.store == nil {
+		panic("store is nil before calling entry")
+	}
+	if entry == nil {
+		panic("entry is nil")
+	}
+
+	// Wrap the call in a defer/recover to get more information about the panic
+	defer func() {
+		if r := recover(); r != nil {
+			i.log.Printf("Panic during entry.Call: %v", r)
+			// Re-panic to preserve original behavior
+			panic(r)
+		}
+	}()
+
+	// Try to identify the exact issue
+	i.log.Printf("Calling entry.Call with store=%p", i.store)
+	_, err := entry.Call(i.store)
 
 	// Stop tracking CPU time after guest code completes
 	i.stopExecution()
