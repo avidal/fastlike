@@ -98,6 +98,11 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// we just use the same sorted order
 	_ = linker.DefineFunc(store, "fastly_http_req", "original_header_names_get", i.xqd_req_header_names_get)
 	_ = linker.DefineFunc(store, "fastly_http_req", "close", i.xqd_req_close)
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_client_ddos_detected", i.xqd_req_downstream_client_ddos_detected)
+	_ = linker.DefineFunc(store, "fastly_http_req", "fastly_key_is_valid", i.xqd_req_fastly_key_is_valid)
+	_ = linker.DefineFunc(store, "fastly_http_req", "downstream_compliance_region", i.xqd_req_downstream_compliance_region)
+	_ = linker.DefineFunc(store, "fastly_http_req", "on_behalf_of", i.xqd_req_on_behalf_of)
+	_ = linker.DefineFunc(store, "fastly_http_req", "framing_headers_mode_set", i.xqd_req_framing_headers_mode_set)
 
 	// xqd_response.go
 	_ = linker.DefineFunc(store, "fastly_http_resp", "send_downstream", i.xqd_resp_send_downstream)
@@ -113,6 +118,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_values_get", i.xqd_resp_header_values_get)
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_values_set", i.xqd_resp_header_values_set)
 	_ = linker.DefineFunc(store, "fastly_http_resp", "close", i.xqd_resp_close)
+	_ = linker.DefineFunc(store, "fastly_http_resp", "framing_headers_mode_set", i.xqd_resp_framing_headers_mode_set)
+	_ = linker.DefineFunc(store, "fastly_http_resp", "http_keepalive_mode_set", i.xqd_resp_http_keepalive_mode_set)
+	_ = linker.DefineFunc(store, "fastly_http_resp", "get_addr_dest_ip", i.xqd_resp_get_addr_dest_ip)
+	_ = linker.DefineFunc(store, "fastly_http_resp", "get_addr_dest_port", i.xqd_resp_get_addr_dest_port)
 
 	// xqd_body.go
 	_ = linker.DefineFunc(store, "fastly_http_body", "new", i.xqd_body_new)
@@ -265,6 +274,11 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// we just use the same sorted order
 	_ = linker.DefineFunc(store, "env", "xqd_req_original_header_names_get", i.xqd_req_header_names_get)
 	_ = linker.DefineFunc(store, "env", "xqd_req_close", i.xqd_req_close)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_client_ddos_detected", i.xqd_req_downstream_client_ddos_detected)
+	_ = linker.DefineFunc(store, "env", "xqd_req_fastly_key_is_valid", i.xqd_req_fastly_key_is_valid)
+	_ = linker.DefineFunc(store, "env", "xqd_req_downstream_compliance_region", i.xqd_req_downstream_compliance_region)
+	_ = linker.DefineFunc(store, "env", "xqd_req_on_behalf_of", i.xqd_req_on_behalf_of)
+	_ = linker.DefineFunc(store, "env", "xqd_req_framing_headers_mode_set", i.xqd_req_framing_headers_mode_set)
 
 	// xqd_response.go
 	_ = linker.DefineFunc(store, "env", "xqd_resp_new", i.xqd_resp_new)
@@ -279,6 +293,10 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "env", "xqd_resp_header_values_get", i.xqd_resp_header_values_get)
 	_ = linker.DefineFunc(store, "env", "xqd_resp_header_values_set", i.xqd_resp_header_values_set)
 	_ = linker.DefineFunc(store, "env", "xqd_resp_close", i.xqd_resp_close)
+	_ = linker.DefineFunc(store, "env", "xqd_resp_framing_headers_mode_set", i.xqd_resp_framing_headers_mode_set)
+	_ = linker.DefineFunc(store, "env", "xqd_resp_http_keepalive_mode_set", i.xqd_resp_http_keepalive_mode_set)
+	_ = linker.DefineFunc(store, "env", "xqd_resp_get_addr_dest_ip", i.xqd_resp_get_addr_dest_ip)
+	_ = linker.DefineFunc(store, "env", "xqd_resp_get_addr_dest_port", i.xqd_resp_get_addr_dest_port)
 
 	// xqd_body.go
 	_ = linker.DefineFunc(store, "env", "xqd_body_new", i.xqd_body_new)

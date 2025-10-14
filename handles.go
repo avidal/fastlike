@@ -37,6 +37,8 @@ func (rhs *RequestHandles) New() (int, *RequestHandle) {
 // Notably, the response body is ignored and instead the guest will provide a BodyHandle to use
 type ResponseHandle struct {
 	*http.Response
+	// RemoteAddr is the remote address of the backend that handled the request
+	RemoteAddr string
 }
 
 // ResponseHandles is a slice of ResponseHandle with functions to get and create

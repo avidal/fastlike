@@ -2,6 +2,8 @@ package fastlike
 
 import (
 	"bytes"
+	"fmt"
+	"net"
 	"net/http"
 	"sort"
 )
@@ -225,4 +227,135 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 func (i *Instance) xqd_resp_close(handle int32) {
 	i.responses.Get(int(handle)).Close = true
+}
+
+// xqd_resp_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set
+// Only supports automatic mode
+func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) int32 {
+	// Validate response handle
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		i.abilog.Printf("resp_framing_headers_mode_set: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("resp_framing_headers_mode_set: handle=%d mode=%d", handle, mode)
+
+	// Mode 0 = Automatic (supported)
+	// Mode 1 = ManuallyFromHeaders (not supported)
+	if mode != 0 {
+		i.abilog.Printf("resp_framing_headers_mode_set: manual mode not supported")
+		return XqdErrUnsupported
+	}
+
+	return XqdStatusOK
+}
+
+// xqd_resp_http_keepalive_mode_set controls connection reuse mode
+// Only supports automatic mode
+func (i *Instance) xqd_resp_http_keepalive_mode_set(handle int32, mode int32) int32 {
+	// Validate response handle
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		i.abilog.Printf("resp_http_keepalive_mode_set: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("resp_http_keepalive_mode_set: handle=%d mode=%d", handle, mode)
+
+	// Mode 0 = Automatic (supported)
+	// Mode 1 = NoKeepalive (not supported)
+	if mode != 0 {
+		i.abilog.Printf("resp_http_keepalive_mode_set: no-keepalive mode not supported")
+		return XqdErrUnsupported
+	}
+
+	return XqdStatusOK
+}
+
+// xqd_resp_get_addr_dest_ip returns the destination IP address for the backend request
+func (i *Instance) xqd_resp_get_addr_dest_ip(handle int32, addr_octets_out int32, nwritten_out int32) int32 {
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		i.abilog.Printf("resp_get_addr_dest_ip: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("resp_get_addr_dest_ip: handle=%d", handle)
+
+	// Get the remote address from response metadata
+	if w.RemoteAddr == "" {
+		i.abilog.Printf("resp_get_addr_dest_ip: no remote address available")
+		return XqdErrNone
+	}
+
+	// Parse the remote address
+	host, _, err := net.SplitHostPort(w.RemoteAddr)
+	if err != nil {
+		i.abilog.Printf("resp_get_addr_dest_ip: failed to parse remote address: %v", err)
+		return XqdErrNone
+	}
+
+	// Parse the IP address
+	ip := net.ParseIP(host)
+	if ip == nil {
+		i.abilog.Printf("resp_get_addr_dest_ip: failed to parse IP address: %s", host)
+		return XqdErrNone
+	}
+
+	// Convert to 16-byte representation (IPv4 will be in IPv4-mapped IPv6 format)
+	var octets []byte
+	if ip.To4() != nil {
+		// IPv4 address - return 4 bytes
+		octets = ip.To4()
+	} else {
+		// IPv6 address - return 16 bytes
+		octets = ip.To16()
+	}
+
+	// Write octets to guest memory (buffer must be at least 16 bytes)
+	nwritten, err := i.memory.WriteAt(octets, int64(addr_octets_out))
+	if err != nil {
+		return XqdError
+	}
+
+	// Write the number of bytes written
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
+// xqd_resp_get_addr_dest_port returns the destination port for the backend request
+func (i *Instance) xqd_resp_get_addr_dest_port(handle int32, port_out int32) int32 {
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		i.abilog.Printf("resp_get_addr_dest_port: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("resp_get_addr_dest_port: handle=%d", handle)
+
+	// Get the remote address from response metadata
+	if w.RemoteAddr == "" {
+		i.abilog.Printf("resp_get_addr_dest_port: no remote address available")
+		return XqdErrNone
+	}
+
+	// Parse the remote address
+	_, portStr, err := net.SplitHostPort(w.RemoteAddr)
+	if err != nil {
+		i.abilog.Printf("resp_get_addr_dest_port: failed to parse remote address: %v", err)
+		return XqdErrNone
+	}
+
+	// Convert port string to integer
+	var port int
+	_, err = fmt.Sscanf(portStr, "%d", &port)
+	if err != nil {
+		i.abilog.Printf("resp_get_addr_dest_port: failed to parse port: %v", err)
+		return XqdErrNone
+	}
+
+	// Write the port (as u16)
+	i.memory.PutUint16(uint16(port), int64(port_out))
+	return XqdStatusOK
 }

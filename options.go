@@ -137,3 +137,12 @@ func WithVerbosity(v int) Option {
 		}
 	}
 }
+
+// WithComplianceRegion sets the compliance region for the request
+// The compliance region is a string identifier like "none", "us-eu", "us", etc.
+// This is used for GDPR and data locality requirements
+func WithComplianceRegion(region string) Option {
+	return func(i *Instance) {
+		i.complianceRegion = region
+	}
+}
