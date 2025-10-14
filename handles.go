@@ -254,3 +254,80 @@ func (sshs *SecretStoreHandles) New(name string) int {
 	sshs.handles = append(sshs.handles, ssh)
 	return len(sshs.handles) - 1
 }
+
+// CacheHandle represents a cache lookup result (could be found, not found, or must-insert)
+type CacheHandle struct {
+	Transaction *CacheTransaction // reference to the transaction
+	ReadOffset  int64             // current read offset for streaming
+}
+
+// CacheHandles is a slice of CacheHandle with methods to get and create
+type CacheHandles struct {
+	handles []*CacheHandle
+}
+
+// Get returns the CacheHandle identified by id or nil if one does not exist
+func (chs *CacheHandles) Get(id int) *CacheHandle {
+	if id < 0 || id >= len(chs.handles) {
+		return nil
+	}
+	return chs.handles[id]
+}
+
+// New creates a new CacheHandle and returns its handle id
+func (chs *CacheHandles) New(tx *CacheTransaction) int {
+	ch := &CacheHandle{Transaction: tx}
+	chs.handles = append(chs.handles, ch)
+	return len(chs.handles) - 1
+}
+
+// CacheBusyHandle represents a pending async cache lookup
+type CacheBusyHandle struct {
+	Transaction *CacheTransaction
+}
+
+// CacheBusyHandles is a slice of CacheBusyHandle with methods to get and create
+type CacheBusyHandles struct {
+	handles []*CacheBusyHandle
+}
+
+// Get returns the CacheBusyHandle identified by id or nil if one does not exist
+func (cbhs *CacheBusyHandles) Get(id int) *CacheBusyHandle {
+	if id < 0 || id >= len(cbhs.handles) {
+		return nil
+	}
+	return cbhs.handles[id]
+}
+
+// New creates a new CacheBusyHandle and returns its handle id
+func (cbhs *CacheBusyHandles) New(tx *CacheTransaction) int {
+	cbh := &CacheBusyHandle{Transaction: tx}
+	cbhs.handles = append(cbhs.handles, cbh)
+	return len(cbhs.handles) - 1
+}
+
+// CacheReplaceHandle represents a cache replace operation
+type CacheReplaceHandle struct {
+	Entry   *CacheEntry
+	Options *CacheReplaceOptions
+}
+
+// CacheReplaceHandles is a slice of CacheReplaceHandle with methods to get and create
+type CacheReplaceHandles struct {
+	handles []*CacheReplaceHandle
+}
+
+// Get returns the CacheReplaceHandle identified by id or nil if one does not exist
+func (crhs *CacheReplaceHandles) Get(id int) *CacheReplaceHandle {
+	if id < 0 || id >= len(crhs.handles) {
+		return nil
+	}
+	return crhs.handles[id]
+}
+
+// New creates a new CacheReplaceHandle and returns its handle id
+func (crhs *CacheReplaceHandles) New(entry *CacheEntry, options *CacheReplaceOptions) int {
+	crh := &CacheReplaceHandle{Entry: entry, Options: options}
+	crhs.handles = append(crhs.handles, crh)
+	return len(crhs.handles) - 1
+}

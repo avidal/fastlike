@@ -76,3 +76,50 @@ const (
 	BackendHealthHealthy   uint32 = 1
 	BackendHealthUnhealthy uint32 = 2
 )
+
+// Cache lookup state flags
+const (
+	CacheLookupStateFound             uint32 = 1 << 0
+	CacheLookupStateUsable            uint32 = 1 << 1
+	CacheLookupStateStale             uint32 = 1 << 2
+	CacheLookupStateMustInsertOrUpdate uint32 = 1 << 3
+)
+
+// Cache lookup options mask
+const (
+	CacheLookupOptionsMaskReserved              uint32 = 1 << 0
+	CacheLookupOptionsMaskRequestHeaders        uint32 = 1 << 1
+	CacheLookupOptionsMaskService               uint32 = 1 << 2
+	CacheLookupOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 3
+)
+
+// Cache write options mask
+const (
+	CacheWriteOptionsMaskReserved               uint32 = 1 << 0
+	CacheWriteOptionsMaskRequestHeaders         uint32 = 1 << 1
+	CacheWriteOptionsMaskVaryRule               uint32 = 1 << 2
+	CacheWriteOptionsMaskInitialAgeNs           uint32 = 1 << 3
+	CacheWriteOptionsMaskStaleWhileRevalidateNs uint32 = 1 << 4
+	CacheWriteOptionsMaskSurrogateKeys          uint32 = 1 << 5
+	CacheWriteOptionsMaskLength                 uint32 = 1 << 6
+	CacheWriteOptionsMaskUserMetadata           uint32 = 1 << 7
+	CacheWriteOptionsMaskSensitiveData          uint32 = 1 << 8
+	CacheWriteOptionsMaskEdgeMaxAgeNs           uint32 = 1 << 9
+	CacheWriteOptionsMaskService                uint32 = 1 << 10
+)
+
+// Cache get body options mask
+const (
+	CacheGetBodyOptionsMaskReserved uint32 = 1 << 0
+	CacheGetBodyOptionsMaskFrom     uint32 = 1 << 1
+	CacheGetBodyOptionsMaskTo       uint32 = 1 << 2
+)
+
+// Cache replace options mask
+const (
+	CacheReplaceOptionsMaskReserved              uint32 = 1 << 0
+	CacheReplaceOptionsMaskRequestHeaders        uint32 = 1 << 1
+	CacheReplaceOptionsMaskReplaceStrategy       uint32 = 1 << 2
+	CacheReplaceOptionsMaskService               uint32 = 1 << 3
+	CacheReplaceOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 4
+)

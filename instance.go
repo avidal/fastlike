@@ -70,6 +70,12 @@ type Instance struct {
 	secretStoreHandles *SecretStoreHandles
 	secretHandles      *SecretHandles
 
+	// Cache handles
+	cache              *Cache
+	cacheHandles       *CacheHandles
+	cacheBusyHandles   *CacheBusyHandles
+	cacheReplaceHandles *CacheReplaceHandles
+
 	// geolookup is a function that accepts a net.IP and returns a Geo
 	geolookup func(net.IP) Geo
 
@@ -107,6 +113,10 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvLists = &KVStoreListHandles{}
 	i.secretStoreHandles = &SecretStoreHandles{}
 	i.secretHandles = &SecretHandles{}
+	i.cache = NewCache()
+	i.cacheHandles = &CacheHandles{}
+	i.cacheBusyHandles = &CacheBusyHandles{}
+	i.cacheReplaceHandles = &CacheReplaceHandles{}
 
 	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
@@ -180,6 +190,9 @@ func (i *Instance) reset() {
 	*i.kvLists = KVStoreListHandles{}
 	*i.secretStoreHandles = SecretStoreHandles{}
 	*i.secretHandles = SecretHandles{}
+	*i.cacheHandles = CacheHandles{}
+	*i.cacheBusyHandles = CacheBusyHandles{}
+	*i.cacheReplaceHandles = CacheReplaceHandles{}
 
 	i.ds_response = nil
 	i.ds_request = nil
