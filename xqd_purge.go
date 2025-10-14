@@ -8,8 +8,8 @@ import (
 
 // PurgeOptions represents the options struct for purge operations
 type PurgeOptions struct {
-	RetBufPtr          int32
-	RetBufLen          uint32
+	RetBufPtr         int32
+	RetBufLen         uint32
 	RetBufNwrittenOut int32
 }
 

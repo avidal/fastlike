@@ -155,3 +155,27 @@ func WithACL(name string, acl *Acl) Option {
 		i.addACL(name, acl)
 	}
 }
+
+// WithRateCounter registers a new rate counter for Edge Rate Limiting.
+// Rate counters track request counts over time windows to calculate rates.
+// If counter is nil, a new rate counter is created.
+func WithRateCounter(name string, counter *RateCounter) Option {
+	return func(i *Instance) {
+		if counter == nil {
+			counter = NewRateCounter()
+		}
+		i.addRateCounter(name, counter)
+	}
+}
+
+// WithPenaltyBox registers a new penalty box for Edge Rate Limiting.
+// Penalty boxes track entries that have exceeded rate limits.
+// If box is nil, a new penalty box is created.
+func WithPenaltyBox(name string, box *PenaltyBox) Option {
+	return func(i *Instance) {
+		if box == nil {
+			box = NewPenaltyBox()
+		}
+		i.addPenaltyBox(name, box)
+	}
+}
