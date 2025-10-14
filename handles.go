@@ -361,3 +361,49 @@ func (ahs *AclHandles) New(name string, acl *Acl) int {
 	ahs.handles = append(ahs.handles, ah)
 	return len(ahs.handles) - 1
 }
+
+// AsyncItemHandle represents a unified handle for async I/O operations
+// It can wrap different types of async handles (bodies, pending requests, KV operations, cache operations)
+type AsyncItemHandle struct {
+	// Type indicates what kind of async item this is
+	Type AsyncItemType
+
+	// HandleID is the original handle ID for the wrapped item
+	HandleID int
+}
+
+// AsyncItemType indicates the type of async item
+type AsyncItemType int
+
+const (
+	AsyncItemTypeBody AsyncItemType = iota
+	AsyncItemTypePendingRequest
+	AsyncItemTypeKVLookup
+	AsyncItemTypeKVInsert
+	AsyncItemTypeKVDelete
+	AsyncItemTypeKVList
+	AsyncItemTypeCacheBusy
+)
+
+// AsyncItemHandles manages async item handles
+type AsyncItemHandles struct {
+	handles []*AsyncItemHandle
+}
+
+// Get returns the AsyncItemHandle identified by id or nil if one does not exist
+func (aihs *AsyncItemHandles) Get(id int) *AsyncItemHandle {
+	if id < 0 || id >= len(aihs.handles) {
+		return nil
+	}
+	return aihs.handles[id]
+}
+
+// New creates a new AsyncItemHandle and returns its handle id
+func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
+	aih := &AsyncItemHandle{
+		Type:     itemType,
+		HandleID: handleID,
+	}
+	aihs.handles = append(aihs.handles, aih)
+	return len(aihs.handles) - 1
+}
