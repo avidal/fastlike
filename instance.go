@@ -100,6 +100,9 @@ type Instance struct {
 	// deviceDetection is a function that accepts a user agent string and returns device detection data as JSON
 	deviceDetection DeviceLookupFunc
 
+	// imageOptimizer is a function that transforms images according to provided configuration
+	imageOptimizer ImageOptimizerTransformFunc
+
 	// secureFn is used to determine if a request should be considered secure
 	secureFn func(*http.Request) bool
 
@@ -173,6 +176,9 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 
 	// By default, device detection returns no data
 	i.deviceDetection = defaultDeviceDetection
+
+	// By default, image optimizer returns an error
+	i.imageOptimizer = defaultImageOptimizer
 
 	// By default, requests are "secure" if they have TLS info
 	i.secureFn = func(r *http.Request) bool {
