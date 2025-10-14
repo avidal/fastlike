@@ -146,3 +146,12 @@ func WithComplianceRegion(region string) Option {
 		i.complianceRegion = region
 	}
 }
+
+// WithACL registers a new ACL (Access Control List) with the given name.
+// The ACL data should be in Fastly's JSON format with entries containing
+// IP prefix/mask and actions (ALLOW/BLOCK).
+func WithACL(name string, acl *Acl) Option {
+	return func(i *Instance) {
+		i.addACL(name, acl)
+	}
+}
