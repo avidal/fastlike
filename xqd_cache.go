@@ -712,3 +712,105 @@ func (r *cacheBodyReader) Read(p []byte) (int, error) {
 	r.offset += int64(n)
 	return n, err
 }
+
+// Cache replace API - These functions are stubs that return XqdErrUnsupported
+// to match Viceroy's behavior (which returns Error::NotAvailable)
+
+// xqd_cache_replace performs a cache replace operation
+func (i *Instance) xqd_cache_replace(
+	cache_key int32,
+	cache_key_len int32,
+	options_mask uint32,
+	options int32,
+	replace_handle_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_insert inserts during a replace operation
+func (i *Instance) xqd_cache_replace_insert(
+	replace_handle int32,
+	options_mask uint32,
+	options int32,
+	body_handle_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_insert - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_age_ns gets the age of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_age_ns(
+	replace_handle int32,
+	duration_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_age_ns - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_body gets the body of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_body(
+	replace_handle int32,
+	options_mask uint32,
+	options int32,
+	body_handle_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_body - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_hits gets the hit count of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_hits(
+	replace_handle int32,
+	hits_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_hits - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_length gets the length of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_length(
+	replace_handle int32,
+	length_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_length - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_max_age_ns gets the max age of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_max_age_ns(
+	replace_handle int32,
+	duration_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_max_age_ns - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_stale_while_revalidate_ns gets the SWR of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_stale_while_revalidate_ns(
+	replace_handle int32,
+	duration_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_stale_while_revalidate_ns - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_state gets the state of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_state(
+	replace_handle int32,
+	state_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_state - not implemented")
+	return XqdErrUnsupported
+}
+
+// xqd_cache_replace_get_user_metadata gets the user metadata of the existing object during replace
+func (i *Instance) xqd_cache_replace_get_user_metadata(
+	replace_handle int32,
+	user_metadata_out_ptr int32,
+	user_metadata_out_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Println("xqd_cache_replace_get_user_metadata - not implemented")
+	return XqdErrUnsupported
+}
