@@ -29,17 +29,18 @@ type Instance struct {
 	responses       *ResponseHandles
 	bodies          *BodyHandles
 	pendingRequests *PendingRequestHandles
+	requestPromises *RequestPromiseHandles
 
 	// KV Store handles for async operations
-	kvStores              *KVStoreHandles
-	kvLookups             *KVStoreLookupHandles
-	kvInserts             *KVStoreInsertHandles
-	kvDeletes             *KVStoreDeleteHandles
-	kvLists               *KVStoreListHandles
-	kvStoreLookupHandles  *KVStoreLookupHandles
-	kvStoreInsertHandles  *KVStoreInsertHandles
-	kvStoreDeleteHandles  *KVStoreDeleteHandles
-	kvStoreListHandles    *KVStoreListHandles
+	kvStores             *KVStoreHandles
+	kvLookups            *KVStoreLookupHandles
+	kvInserts            *KVStoreInsertHandles
+	kvDeletes            *KVStoreDeleteHandles
+	kvLists              *KVStoreListHandles
+	kvStoreLookupHandles *KVStoreLookupHandles
+	kvStoreInsertHandles *KVStoreInsertHandles
+	kvStoreDeleteHandles *KVStoreDeleteHandles
+	kvStoreListHandles   *KVStoreListHandles
 
 	// Async item handles for generic async I/O operations
 	asyncItems *AsyncItemHandles
@@ -120,6 +121,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.bodies = &BodyHandles{}
 	i.responses = &ResponseHandles{}
 	i.pendingRequests = &PendingRequestHandles{}
+	i.requestPromises = &RequestPromiseHandles{}
 	i.kvStores = &KVStoreHandles{}
 	i.kvLookups = &KVStoreLookupHandles{}
 	i.kvInserts = &KVStoreInsertHandles{}
@@ -207,6 +209,7 @@ func (i *Instance) reset() {
 	*i.responses = ResponseHandles{}
 	*i.bodies = BodyHandles{}
 	*i.pendingRequests = PendingRequestHandles{}
+	*i.requestPromises = RequestPromiseHandles{}
 	*i.kvStores = KVStoreHandles{}
 	*i.kvLookups = KVStoreLookupHandles{}
 	*i.kvInserts = KVStoreInsertHandles{}

@@ -33,6 +33,12 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 		rh.URL.Scheme = "http"
 	}
 
+	// Capture original header names in their original order for downstream_original_header_names
+	rh.originalHeaders = make([]string, 0, len(i.ds_request.Header))
+	for name := range i.ds_request.Header {
+		rh.originalHeaders = append(rh.originalHeaders, name)
+	}
+
 	// NOTE: Originally, we setup the body handle using `bodies.NewReader(rh.Body)`, but there is
 	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
 	// get the body. I don't know why. This "solves" the problem for fastlike, at least
