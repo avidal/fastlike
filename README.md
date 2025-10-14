@@ -21,6 +21,7 @@ $ go run ./cmd/fastlike -wasm <wasmfile> -backend <proxy address>
 - `-v` - Verbosity level (0, 1, 2)
 - `-backend` or `-b` - Backend addresses (use empty name for catch-all backend)
 - `-dictionary` or `-d` - Dictionary files for key-value lookups (JSON format with string values)
+- `-reload` - Enable SIGHUP handler for hot-reloading the WASM module
 
 ### Multiple Backends
 
@@ -46,6 +47,53 @@ The dictionary file should contain a JSON object with string keys and values:
   "key2": "value2"
 }
 ```
+
+### Hot Reloading
+
+Enable hot-reloading with the `-reload` flag, then send a SIGHUP signal to reload the WASM module
+without restarting the server:
+
+```
+$ go run ./cmd/fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+# In another terminal:
+$ pkill -SIGHUP fastlike
+```
+
+## Using as a Go Library
+
+While the `cmd/fastlike` example provides a command-line proxy, fastlike is designed to be embedded
+in your own Go applications via its `http.Handler` interface. This gives you access to additional
+features not exposed through the command-line tool:
+
+- Config Stores: Modern alternative to dictionaries for key-value lookups
+- Secret Stores: Secure credential management with handle-based access
+- KV Stores: Object store API for key-value operations
+- Custom Loggers: Route guest logging to custom destinations
+- Geo Lookup: Custom geographic IP lookups
+- User Agent Parsing: Custom user agent parsing
+- Device Detection: Provide device detection data based on user agents
+- Compliance Regions: Set compliance regions for GDPR and data locality
+- Security Functions: Custom logic to determine if requests are secure
+
+Example usage:
+
+```go
+import "fastlike.dev"
+
+func main() {
+    opts := []fastlike.Option{
+        fastlike.WithBackend("api", apiHandler),
+        fastlike.WithConfigStore("settings", settingsLookup),
+        fastlike.WithSecretStore("credentials", secretsLookup),
+        fastlike.WithVerbosity(2),
+    }
+
+    fl := fastlike.New("path/to/program.wasm", opts...)
+    http.ListenAndServe(":8080", fl)
+}
+```
+
+See the [options.go](options.go) file for the complete list of available configuration options.
 
 ## Getting WASM Programs
 
