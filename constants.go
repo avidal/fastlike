@@ -13,6 +13,9 @@ const (
 	XqdErrHttpParse       int32 = 7
 	XqdErrHttpUserInvalid int32 = 8
 	XqdErrHttpIncomplete  int32 = 9
+	XqdErrNone            int32 = 10
+	XqdErrAgain           int32 = 11
+	XqdErrLimitExceeded   int32 = 12
 )
 
 // HandleInvalid is returned to guests when they attempt to obtain a handle that doesn't exist. For
