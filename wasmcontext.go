@@ -136,6 +136,18 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_config_store", "open", i.xqd_config_store_open)
 	_ = linker.DefineFunc(store, "fastly_config_store", "get", i.xqd_config_store_get)
 
+	// xqd_kv_store.go
+	_ = linker.DefineFunc(store, "fastly_kv_store", "open", i.xqd_kv_store_open)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup", i.xqd_kv_store_lookup)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup_wait", i.xqd_kv_store_lookup_wait)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup_wait_v2", i.xqd_kv_store_lookup_wait_v2)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "insert", i.xqd_kv_store_insert)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "insert_wait", i.xqd_kv_store_insert_wait)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "delete", i.xqd_kv_store_delete)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "delete_wait", i.xqd_kv_store_delete_wait)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "list", i.xqd_kv_store_list)
+	_ = linker.DefineFunc(store, "fastly_kv_store", "list_wait", i.xqd_kv_store_list_wait)
+
 	// xqd_backend.go
 	_ = linker.DefineFunc(store, "fastly_backend", "exists", i.xqd_backend_exists)
 	_ = linker.DefineFunc(store, "fastly_backend", "is_healthy", i.xqd_backend_is_healthy)
