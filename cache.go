@@ -49,9 +49,7 @@ type CacheTransaction struct {
 	RequestHeaders []byte
 	VaryRule       string
 	Options        *CacheLookupOptions
-	mu             sync.Mutex
 	ready          chan struct{} // closed when lookup completes
-	done           bool
 }
 
 // CacheLookupOptions holds options for cache lookup

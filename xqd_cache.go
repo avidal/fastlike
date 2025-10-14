@@ -21,7 +21,7 @@ func (i *Instance) xqd_cache_lookup(
 	i.abilog.Println("xqd_cache_lookup")
 
 	keyBuf := make([]byte, cache_key_len)
-	i.memory.ReadAt(keyBuf, int64(cache_key))
+	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
 	key := keyBuf
 
 	lookupOpts := &CacheLookupOptions{}
@@ -69,7 +69,7 @@ func (i *Instance) xqd_cache_insert(
 	i.abilog.Println("xqd_cache_insert")
 
 	keyBuf := make([]byte, cache_key_len)
-	i.memory.ReadAt(keyBuf, int64(cache_key))
+	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
 	key := keyBuf
 	writeOpts := i.readCacheWriteOptions(options_mask, options)
 
@@ -101,7 +101,7 @@ func (i *Instance) xqd_cache_transaction_lookup(
 	i.abilog.Println("xqd_cache_transaction_lookup")
 
 	keyBuf := make([]byte, cache_key_len)
-	i.memory.ReadAt(keyBuf, int64(cache_key))
+	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
 	key := keyBuf
 
 	lookupOpts := &CacheLookupOptions{}
@@ -139,7 +139,7 @@ func (i *Instance) xqd_cache_transaction_lookup_async(
 	i.abilog.Println("xqd_cache_transaction_lookup_async")
 
 	keyBuf := make([]byte, cache_key_len)
-	i.memory.ReadAt(keyBuf, int64(cache_key))
+	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
 	key := keyBuf
 
 	lookupOpts := &CacheLookupOptions{}
@@ -399,7 +399,7 @@ func (i *Instance) xqd_cache_get_user_metadata(
 		return XqdErrBufferLength
 	}
 
-	i.memory.WriteAt(metadata, int64(user_metadata_out_ptr))
+	_, _ = i.memory.WriteAt(metadata, int64(user_metadata_out_ptr))
 	i.memory.WriteUint32(nwritten_out, uint32(len(metadata)))
 
 	return XqdStatusOK
@@ -595,7 +595,7 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWr
 		varyLen := int32(i.memory.Uint32(int64(optionsPtr + offset + 4)))
 		if varyLen > 0 {
 			varyBuf := make([]byte, varyLen)
-			i.memory.ReadAt(varyBuf, int64(varyPtr))
+			_, _ = i.memory.ReadAt(varyBuf, int64(varyPtr))
 			opts.VaryRule = string(varyBuf)
 		}
 	}
@@ -621,7 +621,7 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWr
 		keysLen := int32(i.memory.Uint32(int64(optionsPtr + offset + 4)))
 		if keysLen > 0 {
 			keysBuf := make([]byte, keysLen)
-			i.memory.ReadAt(keysBuf, int64(keysPtr))
+			_, _ = i.memory.ReadAt(keysBuf, int64(keysPtr))
 			keysStr := string(keysBuf)
 			// Split by spaces
 			opts.SurrogateKeys = splitSurrogateKeys(keysStr)
@@ -642,7 +642,7 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWr
 		mdLen := int32(i.memory.Uint32(int64(optionsPtr + offset + 4)))
 		if mdLen > 0 {
 			mdBuf := make([]byte, mdLen)
-			i.memory.ReadAt(mdBuf, int64(mdPtr))
+			_, _ = i.memory.ReadAt(mdBuf, int64(mdPtr))
 			opts.UserMetadata = mdBuf
 		}
 	}
@@ -696,7 +696,7 @@ func (w *cacheBodyWriter) Write(p []byte) (int, error) {
 	}
 	// Also write to original buffer for tracking
 	if w.originalBody != nil {
-		w.originalBody.Write(p)
+		_, _ = w.originalBody.Write(p)
 	}
 	return n, nil
 }

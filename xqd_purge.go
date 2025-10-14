@@ -8,7 +8,7 @@ func (i *Instance) xqd_purge_surrogate_key(
 	i.abilog.Println("xqd_purge_surrogate_key")
 
 	keyBuf := make([]byte, surrogate_key_len)
-	i.memory.ReadAt(keyBuf, int64(surrogate_key_ptr))
+	_, _ = i.memory.ReadAt(keyBuf, int64(surrogate_key_ptr))
 	key := string(keyBuf)
 
 	i.cache.PurgeSurrogateKey(key)
@@ -24,7 +24,7 @@ func (i *Instance) xqd_soft_purge_surrogate_key(
 	i.abilog.Println("xqd_soft_purge_surrogate_key")
 
 	keyBuf := make([]byte, surrogate_key_len)
-	i.memory.ReadAt(keyBuf, int64(surrogate_key_ptr))
+	_, _ = i.memory.ReadAt(keyBuf, int64(surrogate_key_ptr))
 	key := string(keyBuf)
 
 	i.cache.SoftPurgeSurrogateKey(key)
