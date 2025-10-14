@@ -1064,7 +1064,7 @@ func (i *Instance) xqd_req_framing_headers_mode_set(handle int32, mode int32) in
 
 // xqd_req_auto_decompress_response_set controls automatic decompression of responses
 // This sets a bitfield indicating which Content-Encodings should be auto-decompressed
-func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings uint32) int32 {
+func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings int32) int32 {
 	// Validate request handle
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -1075,18 +1075,18 @@ func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings 
 	i.abilog.Printf("req_auto_decompress_response_set: handle=%d encodings=%d", handle, encodings)
 
 	// Store the auto-decompress encodings in the request metadata
-	r.autoDecompressEncodings = encodings
+	r.autoDecompressEncodings = uint32(encodings)
 
 	return XqdStatusOK
 }
 
 // xqd_req_register_dynamic_backend registers a backend dynamically at runtime
 // This function reads the backend configuration from guest memory and creates a new backend
-func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name_prefix_size int32, target_addr int32, target_size int32, backend_config_mask uint32, backend_config_addr int32) int32 {
+func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name_prefix_size int32, target_addr int32, target_size int32, backend_config_mask int32, backend_config_addr int32) int32 {
 	i.abilog.Printf("req_register_dynamic_backend: name_prefix_addr=%d target_addr=%d mask=%d", name_prefix_addr, target_addr, backend_config_mask)
 
 	// Check for reserved bit - if set, return error
-	if (backend_config_mask & BackendConfigOptionsReserved) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsReserved) != 0 {
 		i.abilog.Printf("req_register_dynamic_backend: reserved bit is set")
 		return XqdErrInvalidArgument
 	}
@@ -1194,7 +1194,7 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 	}
 
 	// Apply configuration options based on the mask
-	if (backend_config_mask & BackendConfigOptionsHostOverride) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsHostOverride) != 0 {
 		if config.HostOverrideLen > 0 && config.HostOverrideLen <= 1024 {
 			hostOverrideBuf := make([]byte, config.HostOverrideLen)
 			_, err := i.memory.ReadAt(hostOverrideBuf, int64(config.HostOverride))
@@ -1205,31 +1205,31 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 		}
 	}
 
-	if (backend_config_mask & BackendConfigOptionsConnectTimeout) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsConnectTimeout) != 0 {
 		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
 	}
 
-	if (backend_config_mask & BackendConfigOptionsFirstByteTimeout) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsFirstByteTimeout) != 0 {
 		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
 	}
 
-	if (backend_config_mask & BackendConfigOptionsBetweenBytesTimeout) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsBetweenBytesTimeout) != 0 {
 		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
 	}
 
-	if (backend_config_mask & BackendConfigOptionsUseSSL) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsUseSSL) != 0 {
 		backend.UseSSL = true
 	}
 
-	if (backend_config_mask & BackendConfigOptionsSSLMinVersion) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsSSLMinVersion) != 0 {
 		backend.SSLMinVersion = config.SSLMinVersion
 	}
 
-	if (backend_config_mask & BackendConfigOptionsSSLMaxVersion) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsSSLMaxVersion) != 0 {
 		backend.SSLMaxVersion = config.SSLMaxVersion
 	}
 
-	if (backend_config_mask & BackendConfigOptionsKeepalive) != 0 {
+	if (uint32(backend_config_mask) & BackendConfigOptionsKeepalive) != 0 {
 		backend.HTTPKeepaliveTimeMs = config.HTTPKeepaliveTimeMs
 		backend.TCPKeepaliveEnable = config.TCPKeepaliveEnable != 0
 		backend.TCPKeepaliveTimeMs = config.TCPKeepaliveTimeSecs * 1000
