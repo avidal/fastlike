@@ -82,6 +82,10 @@ type Instance struct {
 	acls       map[string]*Acl
 	aclHandles *AclHandles
 
+	// Edge Rate Limiting
+	rateCounters []rateCounterEntry
+	penaltyBoxes []penaltyBoxEntry
+
 	// Cache handles
 	cache               *Cache
 	cacheHandles        *CacheHandles
@@ -150,6 +154,8 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvStoreRegistry = map[string]*KVStore{}
 	i.secretStores = []secretStore{}
 	i.acls = map[string]*Acl{}
+	i.rateCounters = []rateCounterEntry{}
+	i.penaltyBoxes = []penaltyBoxEntry{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend

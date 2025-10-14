@@ -165,6 +165,14 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_acl", "open", i.xqd_acl_open)
 	_ = linker.DefineFunc(store, "fastly_acl", "lookup", i.xqd_acl_lookup)
 
+	// xqd_erl.go
+	_ = linker.DefineFunc(store, "fastly_erl", "check_rate", i.xqd_erl_check_rate)
+	_ = linker.DefineFunc(store, "fastly_erl", "ratecounter_increment", i.xqd_erl_ratecounter_increment)
+	_ = linker.DefineFunc(store, "fastly_erl", "ratecounter_lookup_rate", i.xqd_erl_ratecounter_lookup_rate)
+	_ = linker.DefineFunc(store, "fastly_erl", "ratecounter_lookup_count", i.xqd_erl_ratecounter_lookup_count)
+	_ = linker.DefineFunc(store, "fastly_erl", "penaltybox_add", i.xqd_erl_penaltybox_add)
+	_ = linker.DefineFunc(store, "fastly_erl", "penaltybox_has", i.xqd_erl_penaltybox_has)
+
 	// xqd_kv_store.go
 	_ = linker.DefineFunc(store, "fastly_kv_store", "open", i.xqd_kv_store_open)
 	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup", i.xqd_kv_store_lookup)
@@ -343,6 +351,14 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_acl.go
 	_ = linker.DefineFunc(store, "env", "xqd_acl_open", i.xqd_acl_open)
 	_ = linker.DefineFunc(store, "env", "xqd_acl_lookup", i.xqd_acl_lookup)
+
+	// xqd_erl.go
+	_ = linker.DefineFunc(store, "env", "xqd_erl_check_rate", i.xqd_erl_check_rate)
+	_ = linker.DefineFunc(store, "env", "xqd_erl_ratecounter_increment", i.xqd_erl_ratecounter_increment)
+	_ = linker.DefineFunc(store, "env", "xqd_erl_ratecounter_lookup_rate", i.xqd_erl_ratecounter_lookup_rate)
+	_ = linker.DefineFunc(store, "env", "xqd_erl_ratecounter_lookup_count", i.xqd_erl_ratecounter_lookup_count)
+	_ = linker.DefineFunc(store, "env", "xqd_erl_penaltybox_add", i.xqd_erl_penaltybox_add)
+	_ = linker.DefineFunc(store, "env", "xqd_erl_penaltybox_has", i.xqd_erl_penaltybox_has)
 
 	// xqd_compute_runtime.go
 	_ = linker.DefineFunc(store, "env", "xqd_compute_runtime_get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)
