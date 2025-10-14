@@ -26,6 +26,7 @@ type CachedObject struct {
 	HitCount               uint64
 	WriteComplete          bool
 	WriteCond              *sync.Cond // for streaming concurrent reads
+	SensitiveData          bool       // whether data is sensitive (PCI, etc)
 }
 
 // CacheState represents the state flags for a cache lookup
@@ -282,6 +283,7 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 		HitCount:       0,
 		WriteComplete:  false,
 		WriteCond:      sync.NewCond(&sync.Mutex{}),
+		SensitiveData:  options.SensitiveData,
 	}
 
 	if options.InitialAgeNs != nil {

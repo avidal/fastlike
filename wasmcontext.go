@@ -51,10 +51,33 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_remove", i.wasm3("header_remove"))
 
+	// End XQD Stubbing -}}}
+
 	// xqd_http_cache.go
 	_ = linker.DefineFunc(store, "fastly_http_cache", "is_request_cacheable", i.xqd_http_cache_is_request_cacheable)
 	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_key", i.xqd_http_cache_get_suggested_cache_key)
-	// End XQD Stubbing -}}}
+	_ = linker.DefineFunc(store, "fastly_http_cache", "lookup", i.xqd_http_cache_lookup)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_lookup", i.xqd_http_cache_transaction_lookup)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert", i.xqd_http_cache_transaction_insert)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert_and_stream_back", i.xqd_http_cache_transaction_insert_and_stream_back)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_update", i.xqd_http_cache_transaction_update)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_update_and_return_fresh", i.xqd_http_cache_transaction_update_and_return_fresh)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_record_not_cacheable", i.xqd_http_cache_transaction_record_not_cacheable)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_abandon", i.xqd_http_cache_transaction_abandon)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "close", i.xqd_http_cache_close)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_backend_request", i.xqd_http_cache_get_suggested_backend_request)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_options", i.xqd_http_cache_get_suggested_cache_options)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "prepare_response_for_storage", i.xqd_http_cache_prepare_response_for_storage)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_found_response", i.xqd_http_cache_get_found_response)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_state", i.xqd_http_cache_get_state)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_length", i.xqd_http_cache_get_length)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_max_age_ns", i.xqd_http_cache_get_max_age_ns)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_stale_while_revalidate_ns", i.xqd_http_cache_get_stale_while_revalidate_ns)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_age_ns", i.xqd_http_cache_get_age_ns)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_hits", i.xqd_http_cache_get_hits)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_sensitive_data", i.xqd_http_cache_get_sensitive_data)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_surrogate_keys", i.xqd_http_cache_get_surrogate_keys)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_vary_rule", i.xqd_http_cache_get_vary_rule)
 
 	// xqd.go
 	_ = linker.DefineFunc(store, "fastly_abi", "init", i.xqd_init)
