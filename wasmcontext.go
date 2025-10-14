@@ -55,8 +55,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_remove", i.wasm3("header_remove"))
 
-	_ = linker.DefineFunc(store, "fastly_http_cache", "is_request_cacheable", i.wasm3("cache_is_request_cacheable"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_key", i.wasm3("cache_get_suggested_cache_key"))
+	// xqd_http_cache.go
+	_ = linker.DefineFunc(store, "fastly_http_cache", "is_request_cacheable", i.xqd_http_cache_is_request_cacheable)
+	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_key", i.xqd_http_cache_get_suggested_cache_key)
 	// End XQD Stubbing -}}}
 
 	// xqd.go
