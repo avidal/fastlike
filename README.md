@@ -1,3 +1,5 @@
+![fastlike logo](.media/logo.png){width=200}
+
 # fastlike
 
 fastlike is a Go implementation of the Fastly Compute@Edge XQD ABI using `wasmtime` and exposes
