@@ -71,9 +71,9 @@ type Instance struct {
 	secretHandles      *SecretHandles
 
 	// Cache handles
-	cache              *Cache
-	cacheHandles       *CacheHandles
-	cacheBusyHandles   *CacheBusyHandles
+	cache               *Cache
+	cacheHandles        *CacheHandles
+	cacheBusyHandles    *CacheBusyHandles
 	cacheReplaceHandles *CacheReplaceHandles
 
 	// geolookup is a function that accepts a net.IP and returns a Geo
@@ -86,6 +86,9 @@ type Instance struct {
 
 	// secureFn is used to determine if a request should be considered secure
 	secureFn func(*http.Request) bool
+
+	// complianceRegion is the compliance region for the request (e.g., "none", "us-eu", "us")
+	complianceRegion string
 
 	log    *log.Logger
 	abilog *log.Logger
@@ -149,6 +152,9 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.secureFn = func(r *http.Request) bool {
 		return r.TLS != nil
 	}
+
+	// By default, compliance region is "none"
+	i.complianceRegion = "none"
 
 	for _, o := range opts {
 		o(i)

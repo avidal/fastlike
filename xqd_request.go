@@ -889,3 +889,101 @@ func (i *Instance) xqd_req_send_v3(rhandle int32, bhandle int32, backend_addr, b
 	i.abilog.Printf("req_send_v3: delegating to send_v2")
 	return i.xqd_req_send_v2(rhandle, bhandle, backend_addr, backend_size, error_detail_out, wh_out, bh_out)
 }
+
+// xqd_req_downstream_client_ddos_detected checks if the client is flagged for DDoS
+// Always returns 0 (false) for local testing
+func (i *Instance) xqd_req_downstream_client_ddos_detected(is_ddos_out int32) int32 {
+	i.abilog.Printf("req_downstream_client_ddos_detected")
+
+	// Always return false (0) for local testing
+	// In production Fastly environment, this would check actual DDoS detection flags
+	i.memory.PutUint32(0, int64(is_ddos_out))
+	return XqdStatusOK
+}
+
+// xqd_req_fastly_key_is_valid checks if the request has a valid Fastly purge key
+// Always returns 0 (false) since we don't have keys to validate
+func (i *Instance) xqd_req_fastly_key_is_valid(is_valid_out int32) int32 {
+	i.abilog.Printf("req_fastly_key_is_valid")
+
+	// Always return false (0) since there are no keys to compare against
+	i.memory.PutUint32(0, int64(is_valid_out))
+	return XqdStatusOK
+}
+
+// xqd_req_downstream_compliance_region returns the compliance region for the downstream request
+func (i *Instance) xqd_req_downstream_compliance_region(addr int32, maxlen int32, nwritten_out int32) int32 {
+	i.abilog.Printf("req_downstream_compliance_region")
+
+	// Get the compliance region (configured via WithComplianceRegion option)
+	region := i.complianceRegion
+
+	// Check if the buffer is large enough
+	if int32(len(region)) > maxlen {
+		// Write the required length
+		i.memory.PutUint32(uint32(len(region)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write the region string to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(region), int64(addr))
+	if err != nil {
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
+// xqd_req_on_behalf_of sets the service ID for cache operations (multi-tenant caching)
+// In local testing, we just store the service name but don't actually use it
+func (i *Instance) xqd_req_on_behalf_of(handle int32, service_addr int32, service_size int32) int32 {
+	// Validate request handle
+	r := i.requests.Get(int(handle))
+	if r == nil {
+		i.abilog.Printf("req_on_behalf_of: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	// Read service name from guest memory
+	buf := make([]byte, service_size)
+	_, err := i.memory.ReadAt(buf, int64(service_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	serviceName := string(buf)
+	i.abilog.Printf("req_on_behalf_of: handle=%d service=%q", handle, serviceName)
+
+	// Store the service name in request metadata
+	// In a full implementation, this would affect cache key generation
+	// For now, we just track it for logging purposes
+	if r.Header == nil {
+		r.Header = http.Header{}
+	}
+	r.Header.Set("X-Fastlike-On-Behalf-Of", serviceName)
+
+	return XqdStatusOK
+}
+
+// xqd_req_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set
+// Only supports automatic mode
+func (i *Instance) xqd_req_framing_headers_mode_set(handle int32, mode int32) int32 {
+	// Validate request handle
+	r := i.requests.Get(int(handle))
+	if r == nil {
+		i.abilog.Printf("req_framing_headers_mode_set: invalid handle %d", handle)
+		return XqdErrInvalidHandle
+	}
+
+	i.abilog.Printf("req_framing_headers_mode_set: handle=%d mode=%d", handle, mode)
+
+	// Mode 0 = Automatic (supported)
+	// Mode 1 = ManuallyFromHeaders (not supported)
+	if mode != 0 {
+		i.abilog.Printf("req_framing_headers_mode_set: manual mode not supported")
+		return XqdErrUnsupported
+	}
+
+	return XqdStatusOK
+}

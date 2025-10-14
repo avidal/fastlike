@@ -12,27 +12,27 @@ import (
 
 // CachedObject represents a cached entry with metadata and body
 type CachedObject struct {
-	Body                    *bytes.Buffer
-	MaxAgeNs                uint64
-	InitialAgeNs            uint64
-	StaleWhileRevalidateNs  uint64
-	EdgeMaxAgeNs            uint64
-	VaryRule                string
-	SurrogateKeys           []string
-	UserMetadata            []byte
-	Length                  *uint64 // nil if unknown
-	RequestHeaders          []byte  // serialized headers used for vary
-	InsertTime              time.Time
-	HitCount                uint64
-	WriteComplete           bool
-	WriteCond               *sync.Cond // for streaming concurrent reads
+	Body                   *bytes.Buffer
+	MaxAgeNs               uint64
+	InitialAgeNs           uint64
+	StaleWhileRevalidateNs uint64
+	EdgeMaxAgeNs           uint64
+	VaryRule               string
+	SurrogateKeys          []string
+	UserMetadata           []byte
+	Length                 *uint64 // nil if unknown
+	RequestHeaders         []byte  // serialized headers used for vary
+	InsertTime             time.Time
+	HitCount               uint64
+	WriteComplete          bool
+	WriteCond              *sync.Cond // for streaming concurrent reads
 }
 
 // CacheState represents the state flags for a cache lookup
 type CacheState struct {
-	Found             bool
-	Usable            bool
-	Stale             bool
+	Found              bool
+	Usable             bool
+	Stale              bool
 	MustInsertOrUpdate bool
 }
 
@@ -78,7 +78,7 @@ type CacheWriteOptions struct {
 type CacheReplaceStrategy uint32
 
 const (
-	CacheReplaceImmediate         CacheReplaceStrategy = 1
+	CacheReplaceImmediate          CacheReplaceStrategy = 1
 	CacheReplaceImmediateForceMiss CacheReplaceStrategy = 2
 	CacheReplaceWait               CacheReplaceStrategy = 3
 )
@@ -92,10 +92,10 @@ type CacheReplaceOptions struct {
 
 // Cache is an in-memory cache with request collapsing support
 type Cache struct {
-	mu               sync.RWMutex
-	objects          map[string][]*CachedObject // key -> variants (for vary support)
-	transactions     map[string]*CacheTransaction // key -> pending transaction
-	surrogateIndex   map[string][]string // surrogate_key -> cache_keys
+	mu             sync.RWMutex
+	objects        map[string][]*CachedObject   // key -> variants (for vary support)
+	transactions   map[string]*CacheTransaction // key -> pending transaction
+	surrogateIndex map[string][]string          // surrogate_key -> cache_keys
 }
 
 // NewCache creates a new cache instance
@@ -171,9 +171,9 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	if obj == nil {
 		return &CacheEntry{
 			State: CacheState{
-				Found:             false,
-				Usable:            false,
-				Stale:             false,
+				Found:              false,
+				Usable:             false,
+				Stale:              false,
 				MustInsertOrUpdate: false,
 			},
 		}
@@ -190,9 +190,9 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	return &CacheEntry{
 		Object: obj,
 		State: CacheState{
-			Found:             true,
-			Usable:            isUsable,
-			Stale:             isStale,
+			Found:              true,
+			Usable:             isUsable,
+			Stale:              isStale,
 			MustInsertOrUpdate: false,
 		},
 	}
@@ -230,9 +230,9 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *Cach
 	if obj == nil {
 		tx.Entry = &CacheEntry{
 			State: CacheState{
-				Found:             false,
-				Usable:            false,
-				Stale:             false,
+				Found:              false,
+				Usable:             false,
+				Stale:              false,
 				MustInsertOrUpdate: true,
 			},
 		}
@@ -249,9 +249,9 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *Cach
 		tx.Entry = &CacheEntry{
 			Object: obj,
 			State: CacheState{
-				Found:             true,
-				Usable:            isUsable,
-				Stale:             isStale,
+				Found:              true,
+				Usable:             isUsable,
+				Stale:              isStale,
 				MustInsertOrUpdate: mustUpdate,
 			},
 		}
@@ -273,17 +273,17 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 	defer c.mu.Unlock()
 
 	obj := &CachedObject{
-		Body:                   &bytes.Buffer{},
-		MaxAgeNs:               options.MaxAgeNs,
-		VaryRule:               options.VaryRule,
-		SurrogateKeys:          options.SurrogateKeys,
-		UserMetadata:           options.UserMetadata,
-		Length:                 options.Length,
-		RequestHeaders:         options.RequestHeaders,
-		InsertTime:             time.Now(),
-		HitCount:               0,
-		WriteComplete:          false,
-		WriteCond:              sync.NewCond(&sync.Mutex{}),
+		Body:           &bytes.Buffer{},
+		MaxAgeNs:       options.MaxAgeNs,
+		VaryRule:       options.VaryRule,
+		SurrogateKeys:  options.SurrogateKeys,
+		UserMetadata:   options.UserMetadata,
+		Length:         options.Length,
+		RequestHeaders: options.RequestHeaders,
+		InsertTime:     time.Now(),
+		HitCount:       0,
+		WriteComplete:  false,
+		WriteCond:      sync.NewCond(&sync.Mutex{}),
 	}
 
 	if options.InitialAgeNs != nil {

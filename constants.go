@@ -79,17 +79,17 @@ const (
 
 // Cache lookup state flags
 const (
-	CacheLookupStateFound             uint32 = 1 << 0
-	CacheLookupStateUsable            uint32 = 1 << 1
-	CacheLookupStateStale             uint32 = 1 << 2
+	CacheLookupStateFound              uint32 = 1 << 0
+	CacheLookupStateUsable             uint32 = 1 << 1
+	CacheLookupStateStale              uint32 = 1 << 2
 	CacheLookupStateMustInsertOrUpdate uint32 = 1 << 3
 )
 
 // Cache lookup options mask
 const (
-	CacheLookupOptionsMaskReserved              uint32 = 1 << 0
-	CacheLookupOptionsMaskRequestHeaders        uint32 = 1 << 1
-	CacheLookupOptionsMaskService               uint32 = 1 << 2
+	CacheLookupOptionsMaskReserved                uint32 = 1 << 0
+	CacheLookupOptionsMaskRequestHeaders          uint32 = 1 << 1
+	CacheLookupOptionsMaskService                 uint32 = 1 << 2
 	CacheLookupOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 3
 )
 
@@ -117,9 +117,9 @@ const (
 
 // Cache replace options mask
 const (
-	CacheReplaceOptionsMaskReserved              uint32 = 1 << 0
-	CacheReplaceOptionsMaskRequestHeaders        uint32 = 1 << 1
-	CacheReplaceOptionsMaskReplaceStrategy       uint32 = 1 << 2
-	CacheReplaceOptionsMaskService               uint32 = 1 << 3
+	CacheReplaceOptionsMaskReserved                uint32 = 1 << 0
+	CacheReplaceOptionsMaskRequestHeaders          uint32 = 1 << 1
+	CacheReplaceOptionsMaskReplaceStrategy         uint32 = 1 << 2
+	CacheReplaceOptionsMaskService                 uint32 = 1 << 3
 	CacheReplaceOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 4
 )
