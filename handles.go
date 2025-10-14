@@ -18,6 +18,8 @@ type RequestHandle struct {
 	originalHeaders []string
 	// tlsState contains the TLS connection state if the downstream request was over TLS
 	tlsState *tls.ConnectionState
+	// version stores the HTTP version (Http09, Http10, or Http11), defaults to Http11
+	version int32
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
@@ -36,7 +38,10 @@ func (rhs *RequestHandles) Get(id int) *RequestHandle {
 
 // New creates a new RequestHandle and returns its handle id and the handle itself.
 func (rhs *RequestHandles) New() (int, *RequestHandle) {
-	rh := &RequestHandle{Request: &http.Request{}}
+	rh := &RequestHandle{
+		Request: &http.Request{},
+		version: 2, // Http11 = 2
+	}
 	rhs.handles = append(rhs.handles, rh)
 	return len(rhs.handles) - 1, rh
 }
