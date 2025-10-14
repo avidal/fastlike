@@ -142,6 +142,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_secret_store", "plaintext", i.xqd_secret_store_plaintext)
 	_ = linker.DefineFunc(store, "fastly_secret_store", "from_bytes", i.xqd_secret_store_from_bytes)
 
+	// xqd_device_detection.go
+	_ = linker.DefineFunc(store, "fastly_device_detection", "lookup", i.xqd_device_detection_lookup)
+
 	// xqd_kv_store.go
 	_ = linker.DefineFunc(store, "fastly_kv_store", "open", i.xqd_kv_store_open)
 	_ = linker.DefineFunc(store, "fastly_kv_store", "lookup", i.xqd_kv_store_lookup)

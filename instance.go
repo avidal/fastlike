@@ -73,6 +73,9 @@ type Instance struct {
 
 	uaparser UserAgentParser
 
+	// deviceDetection is a function that accepts a user agent string and returns device detection data as JSON
+	deviceDetection DeviceLookupFunc
+
 	// secureFn is used to determine if a request should be considered secure
 	secureFn func(*http.Request) bool
 
@@ -120,6 +123,9 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.uaparser = func(_ string) UserAgent {
 		return UserAgent{}
 	}
+
+	// By default, device detection returns no data
+	i.deviceDetection = defaultDeviceDetection
 
 	// By default, requests are "secure" if they have TLS info
 	i.secureFn = func(r *http.Request) bool {

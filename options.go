@@ -115,6 +115,15 @@ func WithUserAgentParser(fn UserAgentParser) Option {
 	}
 }
 
+// WithDeviceDetection is an Option that provides device detection data for user agents.
+// The function takes a user agent string and returns device detection data as a JSON string.
+// If no data is available for a given user agent, the function should return an empty string.
+func WithDeviceDetection(fn DeviceLookupFunc) Option {
+	return func(i *Instance) {
+		i.deviceDetection = fn
+	}
+}
+
 // WithVerbosity controls how verbose the system level logs are.
 // A verbosity of 2 prints all calls from the wasm guest into the host methods
 // Currently, verbosity less than 2 does nothing
