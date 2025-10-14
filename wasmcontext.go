@@ -55,17 +55,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_value_get", i.wasm6("header_value_get"))
 	_ = linker.DefineFunc(store, "fastly_http_resp", "header_remove", i.wasm3("header_remove"))
 
-	_ = linker.DefineFunc(store, "fastly_http_cache", "close", i.wasm1("cache_close"))
 	_ = linker.DefineFunc(store, "fastly_http_cache", "is_request_cacheable", i.wasm3("cache_is_request_cacheable"))
 	_ = linker.DefineFunc(store, "fastly_http_cache", "get_suggested_cache_key", i.wasm3("cache_get_suggested_cache_key"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_lookup", i.wasm3("cache_transaction_lookup"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert", i.wasm3("cache_transaction_insert"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_insert_and_stream_back", i.wasm6("cache_transaction_insert_and_stream_back"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "transaction_update", i.wasm3("cache_transaction_update"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "get_state", i.wasm1("cache_get_state"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "get_length", i.wasm1("cache_get_length"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "get_age_ns", i.wasm1("cache_get_age_ns"))
-	_ = linker.DefineFunc(store, "fastly_http_cache", "get_hits", i.wasm1("cache_get_hits"))
 	// End XQD Stubbing -}}}
 
 	// xqd.go
@@ -190,6 +181,31 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 
 	// xqd_compute_runtime.go
 	_ = linker.DefineFunc(store, "fastly_compute_runtime", "get_vcpu_ms", i.xqd_compute_runtime_get_vcpu_ms)
+
+	// xqd_cache.go
+	_ = linker.DefineFunc(store, "fastly_cache", "lookup", i.xqd_cache_lookup)
+	_ = linker.DefineFunc(store, "fastly_cache", "insert", i.xqd_cache_insert)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_lookup", i.xqd_cache_transaction_lookup)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_lookup_async", i.xqd_cache_transaction_lookup_async)
+	_ = linker.DefineFunc(store, "fastly_cache", "cache_busy_handle_wait", i.xqd_cache_busy_handle_wait)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_insert", i.xqd_cache_transaction_insert)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_insert_and_stream_back", i.xqd_cache_transaction_insert_and_stream_back)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_update", i.xqd_cache_transaction_update)
+	_ = linker.DefineFunc(store, "fastly_cache", "transaction_cancel", i.xqd_cache_transaction_cancel)
+	_ = linker.DefineFunc(store, "fastly_cache", "close_busy", i.xqd_cache_close_busy)
+	_ = linker.DefineFunc(store, "fastly_cache", "close", i.xqd_cache_close)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_state", i.xqd_cache_get_state)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_user_metadata", i.xqd_cache_get_user_metadata)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_body", i.xqd_cache_get_body)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_length", i.xqd_cache_get_length)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_max_age_ns", i.xqd_cache_get_max_age_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_stale_while_revalidate_ns", i.xqd_cache_get_stale_while_revalidate_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_age_ns", i.xqd_cache_get_age_ns)
+	_ = linker.DefineFunc(store, "fastly_cache", "get_hits", i.xqd_cache_get_hits)
+
+	// xqd_purge.go
+	_ = linker.DefineFunc(store, "fastly_purge", "purge_surrogate_key", i.xqd_purge_surrogate_key)
+	_ = linker.DefineFunc(store, "fastly_purge", "soft_purge_surrogate_key", i.xqd_soft_purge_surrogate_key)
 }
 
 // linklegacy links in the abi methods using the legacy method names
