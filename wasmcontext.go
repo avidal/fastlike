@@ -226,6 +226,13 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_async_io.go
 	_ = linker.DefineFunc(store, "fastly_async_io", "select", i.xqd_async_io_select)
 	_ = linker.DefineFunc(store, "fastly_async_io", "is_ready", i.xqd_async_io_is_ready)
+
+	// xqd_http_downstream.go
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "next_request", i.xqd_http_downstream_next_request)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "next_request_wait", i.xqd_http_downstream_next_request_wait)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "next_request_abandon", i.xqd_http_downstream_next_request_abandon)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_original_header_names", i.xqd_http_downstream_original_header_names)
+	_ = linker.DefineFunc(store, "fastly_http_downstream", "downstream_original_header_count", i.xqd_http_downstream_original_header_count)
 }
 
 // linklegacy links in the abi methods using the legacy method names
@@ -337,4 +344,11 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// xqd_async_io.go
 	_ = linker.DefineFunc(store, "env", "xqd_async_io_select", i.xqd_async_io_select)
 	_ = linker.DefineFunc(store, "env", "xqd_async_io_is_ready", i.xqd_async_io_is_ready)
+
+	// xqd_http_downstream.go
+	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_next_request", i.xqd_http_downstream_next_request)
+	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_next_request_wait", i.xqd_http_downstream_next_request_wait)
+	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_next_request_abandon", i.xqd_http_downstream_next_request_abandon)
+	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_original_header_names", i.xqd_http_downstream_original_header_names)
+	_ = linker.DefineFunc(store, "env", "xqd_http_downstream_original_header_count", i.xqd_http_downstream_original_header_count)
 }

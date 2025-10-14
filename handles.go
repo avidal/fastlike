@@ -12,6 +12,9 @@ type RequestHandle struct {
 	*http.Request
 	// autoDecompressEncodings is a bitfield indicating which encodings to auto-decompress
 	autoDecompressEncodings uint32
+	// originalHeaders preserves the original header names and order from the downstream request
+	// (used by downstream_original_header_names and downstream_original_header_count)
+	originalHeaders []string
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
@@ -383,6 +386,7 @@ const (
 	AsyncItemTypeKVDelete
 	AsyncItemTypeKVList
 	AsyncItemTypeCacheBusy
+	AsyncItemTypeRequestPromise
 )
 
 // AsyncItemHandles manages async item handles
@@ -406,4 +410,56 @@ func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
 	}
 	aihs.handles = append(aihs.handles, aih)
 	return len(aihs.handles) - 1
+}
+
+// RequestPromise represents a promise for receiving an additional downstream request
+// In production Fastly environments, this allows session reuse where one execution can handle
+// multiple requests. In local testing, this will never actually receive a request.
+type RequestPromise struct {
+	done chan struct{} // closed when a request arrives or timeout occurs
+	req  *http.Request // the received request, or nil if timed out/abandoned
+	err  error         // error if promise was abandoned or timed out
+}
+
+// IsReady checks if the request promise has completed (non-blocking)
+func (rp *RequestPromise) IsReady() bool {
+	select {
+	case <-rp.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// Wait blocks until the request promise completes
+func (rp *RequestPromise) Wait() (*http.Request, error) {
+	<-rp.done
+	return rp.req, rp.err
+}
+
+// Complete marks a request promise as completed with the given request or error
+func (rp *RequestPromise) Complete(req *http.Request, err error) {
+	rp.req = req
+	rp.err = err
+	close(rp.done)
+}
+
+// RequestPromiseHandles is a slice of RequestPromise with methods to get and create
+type RequestPromiseHandles struct {
+	handles []*RequestPromise
+}
+
+// Get returns the RequestPromise identified by id or nil if one does not exist
+func (rphs *RequestPromiseHandles) Get(id int) *RequestPromise {
+	if id < 0 || id >= len(rphs.handles) {
+		return nil
+	}
+	return rphs.handles[id]
+}
+
+// New creates a new RequestPromise and returns its handle id and the handle itself
+func (rphs *RequestPromiseHandles) New() (int, *RequestPromise) {
+	rp := &RequestPromise{done: make(chan struct{})}
+	rphs.handles = append(rphs.handles, rp)
+	return len(rphs.handles) - 1, rp
 }
