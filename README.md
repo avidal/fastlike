@@ -67,33 +67,66 @@ features not exposed through the command-line tool:
 
 - Config Stores: Modern alternative to dictionaries for key-value lookups
 - Secret Stores: Secure credential management with handle-based access
-- KV Stores: Object store API for key-value operations
+- KV Stores: Object store API for key-value operations with async support
 - ACL (Access Control Lists): IP-based access control with CIDR matching
+- Edge Rate Limiting: Rate counters and penalty boxes for request throttling
+- Cache API: Full HTTP caching support with request collapsing and surrogate keys
+- Purge API: Cache invalidation with hard and soft purge support
+- Image Optimizer: Hook-based image transformation support
+- Device Detection: Provide device detection data based on user agents
 - Custom Loggers: Route guest logging to custom destinations
 - Geo Lookup: Custom geographic IP lookups
 - User Agent Parsing: Custom user agent parsing
-- Device Detection: Provide device detection data based on user agents
 - Compliance Regions: Set compliance regions for GDPR and data locality
 - Security Functions: Custom logic to determine if requests are secure
-- Cache API: HTTP caching support
-- Purge API: Cache invalidation
 - Backend Configuration: Full backend configuration with timeouts, SSL settings, and TCP keepalive
 
 Example usage:
 
 ```go
-import "fastlike.dev"
+import (
+    "net/http"
+    "net/http/httputil"
+    "net/url"
+
+    "fastlike.dev"
+)
 
 func main() {
+    // Create a backend handler that proxies to your API
+    apiURL, _ := url.Parse("http://localhost:8000")
+    apiHandler := httputil.NewSingleHostReverseProxy(apiURL)
+
     // Parse ACL from JSON
     aclData := []byte(`{"entries": [{"prefix": "192.168.1.0/24", "action": "ALLOW"}]}`)
     acl, _ := fastlike.ParseACL(aclData)
+
+    // Config store lookup function
+    settingsLookup := func(key string) string {
+        // Return configuration values
+        if key == "api_endpoint" {
+            return "https://api.example.com"
+        }
+        return ""
+    }
+
+    // Secret store lookup function
+    secretsLookup := func(key string) ([]byte, bool) {
+        // Return secrets securely
+        if key == "api_key" {
+            return []byte("secret-key-here"), true
+        }
+        return nil, false
+    }
 
     opts := []fastlike.Option{
         fastlike.WithBackend("api", apiHandler),
         fastlike.WithConfigStore("settings", settingsLookup),
         fastlike.WithSecretStore("credentials", secretsLookup),
+        fastlike.WithKVStore("cache"),
         fastlike.WithACL("allowed_ips", acl),
+        fastlike.WithRateCounter("requests", nil),
+        fastlike.WithPenaltyBox("ratelimited", nil),
         fastlike.WithComplianceRegion("us-eu"),
         fastlike.WithVerbosity(2),
     }
@@ -154,6 +187,46 @@ $ curl localhost:5000/backend
 ```
 
 Go, running Rust, calling Go, proxying to Python.
+
+## Feature Completeness
+
+Fastlike implements the complete Fastly Compute@Edge XQD ABI, providing full compatibility with
+Fastly's runtime environment. This includes all major feature areas:
+
+- Async Operations: Parallel backend requests, async I/O select, pending request operations
+- HTTP Features: Request/response manipulation, header operations, body streaming, trailers
+- Caching: Full cache API with request collapsing, surrogate keys, and purge operations
+- Storage: KV stores, config stores, secret stores, dictionaries
+- Security: ACL, edge rate limiting, TLS introspection, device detection
+- Backends: Dynamic backend registration, backend introspection, auto-decompression
+- Advanced: Image optimizer hooks, compliance regions, client fingerprinting stubs
+
+The implementation matches Viceroy (Fastly's reference implementation) while optimizing for local
+development and testing workflows.
+
+## Testing
+
+Fastlike includes a comprehensive test suite with spec tests that verify XQD ABI compatibility:
+
+```bash
+# Run all tests
+go test ./...
+
+# Run spec tests with default wasm program
+cd specs
+go test
+
+# Run spec tests with a custom wasm program
+go test ./specs -wasm path/to/app.wasm
+
+# Build the spec runner
+cd specs
+go test -c . -o spec-runner
+./spec-runner -test.v -wasm app.wasm
+```
+
+The spec tests use guest WebAssembly programs to verify that both the host implementation and guest
+integration work correctly together.
 
 ## Requirements
 
