@@ -13,8 +13,8 @@ func xqd_multivalue(memory *Memory, data []string, addr int32, maxlen int32, cur
 		return XqdStatusOK
 	}
 
-	// If the cursor points past our slice, return early
-	if int(cursor) >= len(data) {
+	// If the cursor points outside our slice, return early
+	if int(cursor) < 0 || int(cursor) >= len(data) {
 		memory.PutUint32(uint32(0), int64(nwritten_out))
 
 		// Set the cursor to -1 to stop asking
