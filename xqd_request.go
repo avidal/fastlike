@@ -10,6 +10,57 @@ import (
 	"strings"
 )
 
+// SendErrorDetail represents the error details structure for send_v2/send_v3
+// This matches the C struct layout expected by the guest
+type SendErrorDetail struct {
+	Tag            uint32
+	Mask           uint32
+	DnsErrorRcode  uint16
+	DnsErrorInfo   uint16
+	TlsAlertId     uint8
+	_padding       [3]uint8 // Padding to maintain alignment
+}
+
+// writeSendErrorDetail writes a SendErrorDetail struct to guest memory
+func (i *Instance) writeSendErrorDetail(addr int32, detail *SendErrorDetail) error {
+	// Write tag (4 bytes)
+	i.memory.PutUint32(detail.Tag, int64(addr))
+
+	// Write mask (4 bytes)
+	i.memory.PutUint32(detail.Mask, int64(addr+4))
+
+	// Write dns_error_rcode (2 bytes)
+	i.memory.PutUint16(uint16(detail.DnsErrorRcode), int64(addr+8))
+
+	// Write dns_error_info_code (2 bytes)
+	i.memory.PutUint16(uint16(detail.DnsErrorInfo), int64(addr+10))
+
+	// Write tls_alert_id (1 byte)
+	i.memory.PutUint8(uint8(detail.TlsAlertId), int64(addr+12))
+
+	// Padding bytes (3 bytes) are left as-is
+
+	return nil
+}
+
+// createErrorDetailFromError converts a Go error to a SendErrorDetail
+func createErrorDetailFromError(err error) *SendErrorDetail {
+	if err == nil {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailOk,
+			Mask: 0,
+		}
+	}
+
+	// For now, we return a generic internal error
+	// In a more sophisticated implementation, we could parse the error
+	// to determine the specific error type
+	return &SendErrorDetail{
+		Tag:  SendErrorDetailInternalError,
+		Mask: 0,
+	}
+}
+
 func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
 	if i.requests.Get(int(handle)) == nil {
 		i.abilog.Printf("req_version_get: invalid handle %d", handle)
@@ -654,4 +705,104 @@ func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len i
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+}
+
+func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
+	// Validate request handle
+	var r = i.requests.Get(int(rhandle))
+	if r == nil {
+		i.abilog.Printf("req_send_v2: invalid request handle=%d", rhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Validate body handle
+	var b = i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_v2: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Read backend name
+	var buf = make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		errorDetail := createErrorDetailFromError(err)
+		i.writeSendErrorDetail(error_detail_out, errorDetail)
+		return XqdError
+	}
+
+	var backend = string(buf)
+
+	i.abilog.Printf("req_send_v2: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
+
+	// Build the HTTP request
+	req, err := http.NewRequest(r.Method, r.URL.String(), b)
+	if err != nil {
+		errorDetail := createErrorDetailFromError(err)
+		i.writeSendErrorDetail(error_detail_out, errorDetail)
+		return XqdErrHttpUserInvalid
+	}
+
+	req.Header = r.Header.Clone()
+
+	if req.Header == nil {
+		req.Header = http.Header{}
+	}
+
+	// Add CDN-Loop header for loop detection
+	req.Header.Add("cdn-loop", "fastlike")
+
+	// Set content-length if needed
+	if req.Header.Get("content-length") == "" {
+		req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
+		req.ContentLength = b.Size()
+	} else if req.ContentLength <= 0 {
+		req.ContentLength = b.Size()
+	}
+
+	// Get the backend handler
+	var handler http.Handler
+	if backend == "geolocation" {
+		handler = geoHandler(i.geolookup)
+	} else {
+		handler = i.getBackend(backend)
+	}
+
+	// Execute the request
+	wr := httptest.NewRecorder()
+	handler.ServeHTTP(wr, req)
+
+	w := wr.Result()
+
+	// Convert the response into an (rh, bh) pair
+	var whid, wh = i.responses.New()
+	wh.Status = w.Status
+	wh.StatusCode = w.StatusCode
+	wh.Header = w.Header.Clone()
+	wh.Body = w.Body
+
+	var bhid, _ = i.bodies.NewReader(wh.Body)
+
+	i.abilog.Printf("req_send_v2: response handle=%d body=%d", whid, bhid)
+
+	// Write success error detail
+	successDetail := &SendErrorDetail{
+		Tag:  SendErrorDetailOk,
+		Mask: 0,
+	}
+	i.writeSendErrorDetail(error_detail_out, successDetail)
+
+	// Write output handles
+	i.memory.PutUint32(uint32(whid), int64(wh_out))
+	i.memory.PutUint32(uint32(bhid), int64(bh_out))
+
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_req_send_v3(rhandle int32, bhandle int32, backend_addr, backend_size int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
+	// send_v3 is the same as send_v2 for now
+	// The main difference is that send_v3 skips cache override entirely,
+	// but since we don't implement caching, they're functionally identical
+	i.abilog.Printf("req_send_v3: delegating to send_v2")
+	return i.xqd_req_send_v2(rhandle, bhandle, backend_addr, backend_size, error_detail_out, wh_out, bh_out)
 }
