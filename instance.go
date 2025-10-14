@@ -46,6 +46,9 @@ type Instance struct {
 	// dictionaries are used to look up string values using string keys
 	dictionaries []dictionary
 
+	// configStores are used to look up string values using string keys (similar to dictionaries)
+	configStores []configStore
+
 	// geolookup is a function that accepts a net.IP and returns a Geo
 	geolookup func(net.IP) Geo
 
@@ -74,6 +77,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.backends = map[string]http.Handler{}
 	i.loggers = []logger{}
 	i.dictionaries = []dictionary{}
+	i.configStores = []configStore{}
 
 	// By default, any subrequests will return a 502
 	i.defaultBackend = defaultBackend
