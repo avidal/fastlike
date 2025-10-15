@@ -17,12 +17,14 @@ func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr i
 
 	i.abilog.Printf("log_endpoint_get: name=%s\n", name)
 
-	// Write an int32 "handle" to the configured log endpoint to `addr`
-	handle := i.getLoggerHandle(name)
+	// Get the logger handle
+	handle, ok := i.getLoggerHandle(name)
+	if !ok {
+		i.abilog.Printf("log_endpoint_get: logger '%s' not found or is reserved", name)
+		return XqdErrInvalidArgument
+	}
 
-	// TODO: Should there be a way to disable the default logger to exercise errors when fetching
-	// loggers in the guest?
-
+	// Write the handle to the output pointer
 	i.memory.PutUint32(uint32(handle), int64(addr))
 
 	return XqdStatusOK
