@@ -37,6 +37,19 @@ func (i *Instance) xqd_dictionary_get(handle int32, key_addr int32, key_size int
 
 	value := lookup(key)
 
+	// If value is empty, the key doesn't exist
+	if value == "" {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	// Check if buffer is large enough
+	if len(value) > int(size) {
+		// Buffer too small - write the required size
+		i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
 	nwritten, err := i.memory.WriteAt([]byte(value), int64(addr))
 	if err != nil {
 		return XqdError

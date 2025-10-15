@@ -727,6 +727,11 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 		return i.xqd_dictionary_get(dict_handle, key_addr, key_size, value_addr, value_size, nwritten_out)
 	}))
 
+	// xqd_geo.go
+	_ = linker.FuncWrap("fastly_geo", "lookup", safeWrap5(i, "lookup", func(addr_octets int32, addr_len int32, buf int32, buf_len int32, nwritten_out int32) int32 {
+		return i.xqd_geo_lookup(addr_octets, addr_len, buf, buf_len, nwritten_out)
+	}))
+
 	// xqd_config_store.go
 	_ = linker.FuncWrap("fastly_config_store", "open", safeWrap3(i, "open", func(name_addr int32, name_size int32, store_handle_out int32) int32 {
 		return i.xqd_config_store_open(name_addr, name_size, store_handle_out)
