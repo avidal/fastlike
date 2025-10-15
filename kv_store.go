@@ -306,17 +306,18 @@ type KVStoreHandles struct {
 
 // Get returns the KVStoreHandle identified by id or nil if one does not exist
 func (kvsh *KVStoreHandles) Get(id int) *KVStoreHandle {
-	if id < 0 || id >= len(kvsh.handles) {
+	if id <= 0 || id > len(kvsh.handles) {
 		return nil
 	}
-	return kvsh.handles[id]
+	return kvsh.handles[id-1]
 }
 
 // New creates a new KVStoreHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (kvsh *KVStoreHandles) New(store *KVStore) int {
 	handle := &KVStoreHandle{Store: store}
 	kvsh.handles = append(kvsh.handles, handle)
-	return len(kvsh.handles) - 1
+	return len(kvsh.handles)
 }
 
 // KVStoreLookupHandle represents a pending lookup operation
@@ -345,18 +346,20 @@ type KVStoreLookupHandles struct {
 }
 
 // Get returns the handle identified by id or nil
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (h *KVStoreLookupHandles) Get(id int) *KVStoreLookupHandle {
-	if id < 0 || id >= len(h.handles) {
+	if id <= 0 || id > len(h.handles) {
 		return nil
 	}
-	return h.handles[id]
+	return h.handles[id-1]
 }
 
 // New creates a new pending lookup handle
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (h *KVStoreLookupHandles) New() (int, *KVStoreLookupHandle) {
 	handle := &KVStoreLookupHandle{done: make(chan struct{})}
 	h.handles = append(h.handles, handle)
-	return len(h.handles) - 1, handle
+	return len(h.handles), handle
 }
 
 // KVStoreInsertHandle represents a pending insert operation
@@ -385,18 +388,20 @@ type KVStoreInsertHandles struct {
 }
 
 // Get returns the handle identified by id or nil
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (h *KVStoreInsertHandles) Get(id int) *KVStoreInsertHandle {
-	if id < 0 || id >= len(h.handles) {
+	if id <= 0 || id > len(h.handles) {
 		return nil
 	}
-	return h.handles[id]
+	return h.handles[id-1]
 }
 
 // New creates a new pending insert handle
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (h *KVStoreInsertHandles) New() (int, *KVStoreInsertHandle) {
 	handle := &KVStoreInsertHandle{done: make(chan struct{})}
 	h.handles = append(h.handles, handle)
-	return len(h.handles) - 1, handle
+	return len(h.handles), handle
 }
 
 // KVStoreDeleteHandle represents a pending delete operation
@@ -423,18 +428,20 @@ type KVStoreDeleteHandles struct {
 }
 
 // Get returns the handle identified by id or nil
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (h *KVStoreDeleteHandles) Get(id int) *KVStoreDeleteHandle {
-	if id < 0 || id >= len(h.handles) {
+	if id <= 0 || id > len(h.handles) {
 		return nil
 	}
-	return h.handles[id]
+	return h.handles[id-1]
 }
 
 // New creates a new pending delete handle
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (h *KVStoreDeleteHandles) New() (int, *KVStoreDeleteHandle) {
 	handle := &KVStoreDeleteHandle{done: make(chan struct{})}
 	h.handles = append(h.handles, handle)
-	return len(h.handles) - 1, handle
+	return len(h.handles), handle
 }
 
 // KVStoreListHandle represents a pending list operation
@@ -463,18 +470,20 @@ type KVStoreListHandles struct {
 }
 
 // Get returns the handle identified by id or nil
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (h *KVStoreListHandles) Get(id int) *KVStoreListHandle {
-	if id < 0 || id >= len(h.handles) {
+	if id <= 0 || id > len(h.handles) {
 		return nil
 	}
-	return h.handles[id]
+	return h.handles[id-1]
 }
 
 // New creates a new pending list handle
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (h *KVStoreListHandles) New() (int, *KVStoreListHandle) {
 	handle := &KVStoreListHandle{done: make(chan struct{})}
 	h.handles = append(h.handles, handle)
-	return len(h.handles) - 1, handle
+	return len(h.handles), handle
 }
 
 // ToJSON converts a ListResult to JSON bytes for serialization.

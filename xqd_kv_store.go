@@ -20,11 +20,13 @@ func (i *Instance) xqd_kv_store_open(
 		return XqdError
 	}
 
+	storeName := string(nameBuf)
+
 	// Look up the store in the registry
-	store, exists := i.kvStoreRegistry[string(nameBuf)]
+	store, exists := i.kvStoreRegistry[storeName]
 	if !exists {
-		// Store not found - return error
-		return XqdError
+		// Store not found - return INVAL which the Rust SDK maps to StoreNotFound
+		return XqdErrInvalidArgument
 	}
 
 	// Create a handle for the store
@@ -185,6 +187,8 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	// Create a body handle for the value
 	bodyID, bodyHandle := i.bodies.NewBuffer()
 	_, _ = bodyHandle.Write(result.Body)
+
+	i.abilog.Printf("  Created body handle ID: %d for %d bytes", bodyID, len(result.Body))
 
 	// Write body handle
 	i.memory.WriteUint32(bodyHandleOut, uint32(bodyID))
