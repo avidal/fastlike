@@ -622,6 +622,24 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja4", safeWrap4(i, "downstream_tls_ja4", func(req_handle int32, ja4_out int32, ja4_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_tls_ja4(req_handle, ja4_out, ja4_max_len, nwritten_out)
 	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_protocol", safeWrap4(i, "downstream_tls_protocol", func(req_handle int32, protocol_out int32, protocol_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_protocol(req_handle, protocol_out, protocol_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_cipher_openssl_name", safeWrap4(i, "downstream_tls_cipher_openssl_name", func(req_handle int32, cipher_out int32, cipher_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_cipher_openssl_name(req_handle, cipher_out, cipher_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_hello", safeWrap4(i, "downstream_tls_client_hello", func(req_handle int32, client_hello_out int32, client_hello_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_hello(req_handle, client_hello_out, client_hello_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_servername", safeWrap4(i, "downstream_tls_client_servername", func(req_handle int32, servername_out int32, servername_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_servername(req_handle, servername_out, servername_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_raw_client_certificate", safeWrap4(i, "downstream_tls_raw_client_certificate", func(req_handle int32, cert_out int32, cert_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_raw_client_certificate(req_handle, cert_out, cert_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_cert_verify_result", safeWrap2(i, "downstream_tls_client_cert_verify_result", func(req_handle int32, verify_result_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_cert_verify_result(req_handle, verify_result_out)
+	}))
 
 	// xqd_response.go
 	_ = linker.FuncWrap("fastly_http_resp", "send_downstream", safeWrap3(i, "send_downstream", func(resp_handle int32, body_handle int32, streaming int32) int32 {
@@ -796,23 +814,23 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_kv_store", "open", safeWrap3(i, "open", func(name_addr int32, name_size int32, store_handle_out int32) int32 {
 		return i.xqd_kv_store_open(name_addr, name_size, store_handle_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "lookup", safeWrap4(i, "lookup", func(store_handle int32, key_addr int32, key_size int32, lookup_handle_out int32) int32 {
-		return i.xqd_kv_store_lookup(store_handle, key_addr, key_size, lookup_handle_out)
+	_ = linker.FuncWrap("fastly_kv_store", "lookup", safeWrap6(i, "lookup", func(store_handle int32, key_addr int32, key_size int32, lookup_config_mask int32, lookup_config_buf int32, lookup_handle_out int32) int32 {
+		return i.xqd_kv_store_lookup(store_handle, key_addr, key_size, lookup_config_mask, lookup_config_buf, lookup_handle_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "lookup_wait", safeWrap9(i, "lookup_wait", func(lookup_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32, generation_out int32, content_type_out int32, content_type_max_len int32, content_type_len_out int32) int32 {
-		return i.xqd_kv_store_lookup_wait(lookup_handle, body_handle_out, metadata_out, metadata_max_len, metadata_len_out, generation_out, content_type_out, content_type_max_len, content_type_len_out)
+	_ = linker.FuncWrap("fastly_kv_store", "lookup_wait", safeWrap7(i, "lookup_wait", func(lookup_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32, generation_out int32, kv_error_out int32) int32 {
+		return i.xqd_kv_store_lookup_wait(lookup_handle, body_handle_out, metadata_out, metadata_max_len, metadata_len_out, generation_out, kv_error_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "lookup_wait_v2", safeWrap6(i, "lookup_wait_v2", func(lookup_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32, generation_out int32) int32 {
-		return i.xqd_kv_store_lookup_wait_v2(lookup_handle, body_handle_out, metadata_out, metadata_max_len, metadata_len_out, generation_out)
+	_ = linker.FuncWrap("fastly_kv_store", "lookup_wait_v2", safeWrap7(i, "lookup_wait_v2", func(lookup_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32, generation_out int32, kv_error_out int32) int32 {
+		return i.xqd_kv_store_lookup_wait_v2(lookup_handle, body_handle_out, metadata_out, metadata_max_len, metadata_len_out, generation_out, kv_error_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "insert", safeWrap10(i, "insert", func(store_handle int32, key_addr int32, key_size int32, body_handle int32, metadata_addr int32, metadata_size int32, insert_mode int32, insert_config_mask int32, insert_config_buf int32, insert_handle_out int32) int32 {
-		return i.xqd_kv_store_insert(store_handle, key_addr, key_size, body_handle, metadata_addr, metadata_size, insert_mode, uint32(insert_config_mask), insert_config_buf, insert_handle_out)
+	_ = linker.FuncWrap("fastly_kv_store", "insert", safeWrap7(i, "insert", func(store_handle int32, key_addr int32, key_size int32, body_handle int32, insert_config_mask int32, insert_config_buf int32, insert_handle_out int32) int32 {
+		return i.xqd_kv_store_insert(store_handle, key_addr, key_size, body_handle, insert_config_mask, insert_config_buf, insert_handle_out)
 	}))
 	_ = linker.FuncWrap("fastly_kv_store", "insert_wait", safeWrap2(i, "insert_wait", func(insert_handle int32, generation_out int32) int32 {
 		return i.xqd_kv_store_insert_wait(insert_handle, generation_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "delete", safeWrap4(i, "delete", func(store_handle int32, key_addr int32, key_size int32, delete_handle_out int32) int32 {
-		return i.xqd_kv_store_delete(store_handle, key_addr, key_size, delete_handle_out)
+	_ = linker.FuncWrap("fastly_kv_store", "delete", safeWrap6(i, "delete", func(store_handle int32, key_addr int32, key_size int32, delete_config_mask int32, delete_config_buf int32, delete_handle_out int32) int32 {
+		return i.xqd_kv_store_delete(store_handle, key_addr, key_size, delete_config_mask, delete_config_buf, delete_handle_out)
 	}))
 	_ = linker.FuncWrap("fastly_kv_store", "delete_wait", safeWrap1(i, "delete_wait", func(delete_handle int32) int32 {
 		return i.xqd_kv_store_delete_wait(delete_handle)
