@@ -1,5 +1,8 @@
 package fastlike
 
+// xqd_config_store_open opens a named config store and returns a handle.
+// Reads the config store name from guest memory and writes the corresponding handle to addr.
+// The config store must be configured via WithConfigStore option.
 func (i *Instance) xqd_config_store_open(name_addr int32, name_size int32, addr int32) int32 {
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
@@ -19,6 +22,11 @@ func (i *Instance) xqd_config_store_open(name_addr int32, name_size int32, addr 
 	return XqdStatusOK
 }
 
+// xqd_config_store_get retrieves a value from a config store by key.
+// Reads the key from guest memory and writes the corresponding value to addr.
+// Writes the number of bytes written to nwritten_out.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdErrBufferLength if the buffer is too small,
+// or XqdErrNone with nwritten_out=0 if the key does not exist.
 func (i *Instance) xqd_config_store_get(handle int32, key_addr int32, key_size int32, addr int32, size int32, nwritten_out int32) int32 {
 	lookup := i.getConfigStore(int(handle))
 	if lookup == nil {

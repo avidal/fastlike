@@ -687,7 +687,8 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWr
 	return opts
 }
 
-// splitSurrogateKeys splits a space-separated string of surrogate keys
+// splitSurrogateKeys splits a space-separated string of surrogate keys into a slice.
+// Returns nil for empty strings. Multiple consecutive spaces are treated as single separators.
 func splitSurrogateKeys(s string) []string {
 	if s == "" {
 		return nil
@@ -708,7 +709,8 @@ func splitSurrogateKeys(s string) []string {
 	return keys
 }
 
-// cacheBodyWriter writes to a cached object
+// cacheBodyWriter implements io.Writer for writing body data to a cached object.
+// It writes to both the cache object and optionally to an original buffer for tracking.
 type cacheBodyWriter struct {
 	cache        *CachedObject
 	originalBody io.Writer
@@ -726,7 +728,8 @@ func (w *cacheBodyWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// cacheBodyReader reads from a cached object with streaming support
+// cacheBodyReader implements io.Reader for reading body data from a cached object.
+// It supports streaming reads with blocking behavior while the cache write is in progress.
 type cacheBodyReader struct {
 	cache  *CachedObject
 	offset int64
@@ -738,7 +741,8 @@ func (r *cacheBodyReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// pipeAndCacheCloser closes both the pipe writer and marks the cache as complete
+// pipeAndCacheCloser implements io.Closer for cache insert_and_stream_back operations.
+// It closes both the pipe writer (sending EOF to the reader) and marks the cache write as complete.
 type pipeAndCacheCloser struct {
 	pipeWriter *io.PipeWriter
 	cache      *CachedObject

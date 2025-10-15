@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// PurgeOptions represents the options struct for purge operations
+// PurgeOptions represents the options structure for cache purge operations.
+// It contains pointers and lengths for an optional JSON response buffer.
 type PurgeOptions struct {
 	RetBufPtr         int32
 	RetBufLen         uint32

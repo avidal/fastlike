@@ -1,5 +1,10 @@
 package fastlike
 
+// xqd_device_detection_lookup performs device detection based on a user agent string.
+// Reads the user agent string from guest memory, calls the configured device detection function,
+// and writes the result to buf_addr.
+// Writes the number of bytes written to nwritten_out.
+// Returns XqdErrNone with nwritten_out=0 if no device data is available, or XqdErrBufferLength if the buffer is too small.
 func (i *Instance) xqd_device_detection_lookup(
 	user_agent_addr int32,
 	user_agent_size int32,

@@ -5,6 +5,11 @@ import (
 	"net"
 )
 
+// xqd_geo_lookup performs a geolocation lookup for an IP address.
+// Reads IP address octets from guest memory (4 bytes for IPv4, 16 bytes for IPv6),
+// calls the configured geolookup function, and writes the JSON-encoded result to buf.
+// Writes the number of bytes written to nwritten_out.
+// Returns XqdErrInvalidArgument for invalid IP address length, or XqdErrBufferLength if the buffer is too small.
 func (i *Instance) xqd_geo_lookup(addr_octets int32, addr_len int32, buf int32, buf_len int32, nwritten_out int32) int32 {
 	// Read the IP address octets
 	octets := make([]byte, addr_len)

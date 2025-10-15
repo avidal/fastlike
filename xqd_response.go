@@ -8,6 +8,8 @@ import (
 	"sort"
 )
 
+// xqd_resp_new creates a new response handle and writes it to guest memory.
+// Returns XqdStatusOK on success, or an error code if the handle cannot be created.
 func (i *Instance) xqd_resp_new(handle_out int32) int32 {
 	whid, _ := i.responses.New()
 	i.abilog.Printf("resp_new handle=%d\n", whid)
@@ -15,6 +17,8 @@ func (i *Instance) xqd_resp_new(handle_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_resp_status_set sets the HTTP status code for a response handle.
+// The status code must be in the range 100-999, otherwise returns XqdErrInvalidArgument.
 func (i *Instance) xqd_resp_status_set(handle int32, status int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -34,6 +38,8 @@ func (i *Instance) xqd_resp_status_set(handle int32, status int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_resp_status_get retrieves the HTTP status code from a response handle and writes it to guest memory.
+// Returns XqdErrInvalidHandle if the handle is invalid, otherwise XqdStatusOK.
 func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -45,6 +51,8 @@ func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_resp_version_set sets the HTTP protocol version for a response handle.
+// Only HTTP/0.9, HTTP/1.0, and HTTP/1.1 are supported. Returns XqdErrInvalidArgument for unsupported versions.
 func (i *Instance) xqd_resp_version_set(handle int32, version int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -64,6 +72,8 @@ func (i *Instance) xqd_resp_version_set(handle int32, version int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_resp_version_get retrieves the HTTP protocol version from a response handle and writes it to guest memory.
+// Returns XqdErrInvalidHandle if the handle is invalid, otherwise XqdStatusOK.
 func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -76,6 +86,8 @@ func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_resp_header_names_get retrieves response header names using cursor-based pagination.
+// Returns a sorted list of header names, writing them to guest memory at the specified address.
 func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("resp_header_names_get: handle=%d cursor=%d", handle, cursor)
 
@@ -95,6 +107,9 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_resp_header_value_get retrieves the value of a specific response header.
+// The header name is read from guest memory, and the value is written back to guest memory.
+// Returns XqdErrBufferLength if the buffer is too small, XqdErrInvalidArgument if the name is too long.
 func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -137,6 +152,8 @@ func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name
 	return XqdStatusOK
 }
 
+// xqd_resp_header_remove deletes a header from the response.
+// Returns XqdErrInvalidArgument if the header name is too long or the header does not exist.
 func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -168,6 +185,8 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 	return XqdStatusOK
 }
 
+// xqd_resp_header_insert sets a response header, replacing any existing values for that header.
+// Both the header name and value are read from guest memory. Returns XqdErrInvalidArgument if the name is too long.
 func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -205,6 +224,8 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 	return XqdStatusOK
 }
 
+// xqd_resp_header_append adds a value to a response header without replacing existing values.
+// Both the header name and value are read from guest memory. Returns XqdErrInvalidArgument if the name is too long.
 func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -242,6 +263,8 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 	return XqdStatusOK
 }
 
+// xqd_resp_header_values_get retrieves all values for a specific response header using cursor-based pagination.
+// Returns a sorted list of header values for the specified header name.
 func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -268,6 +291,8 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_resp_header_values_set sets multiple values for a response header.
+// The values are provided as a null-terminated list of strings in guest memory.
 func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -305,6 +330,8 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	return XqdStatusOK
 }
 
+// xqd_resp_close marks a response to have the Connection: close header semantics.
+// This indicates that the connection should be closed after the response is sent.
 func (i *Instance) xqd_resp_close(handle int32) int32 {
 	r := i.responses.Get(int(handle))
 	if r == nil {

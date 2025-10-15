@@ -195,7 +195,8 @@ func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32
 	return XqdErrInvalidHandle
 }
 
-// getAsyncItemChannel returns a channel that closes when the async item is ready
+// getAsyncItemChannel returns a channel that closes when the async item is ready.
+// The channel type depends on the async item type (pending request, KV operation, cache busy handle, or body).
 func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 	switch item.Type {
 	case AsyncItemTypePendingRequest:
@@ -269,7 +270,8 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 	}
 }
 
-// isAsyncItemReady checks if an async item is ready (non-blocking)
+// isAsyncItemReady checks if an async item is ready without blocking.
+// Returns true if the operation has completed, false otherwise.
 func (i *Instance) isAsyncItemReady(item *AsyncItemHandle) bool {
 	ch := i.getAsyncItemChannel(item)
 	if ch == nil {

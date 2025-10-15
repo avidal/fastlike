@@ -29,6 +29,8 @@ type Geo struct {
 	UTCOffset        int     `json:"utc_offset"`
 }
 
+// defaultGeoLookup returns a default geographic location response for local development.
+// Returns a fixed location (Austin, TX) with AS64496 (reserved for documentation).
 func defaultGeoLookup(ip net.IP) Geo {
 	return Geo{
 		ASName:   "fastlike",
@@ -47,6 +49,9 @@ func defaultGeoLookup(ip net.IP) Geo {
 	}
 }
 
+// geoHandler creates an HTTP handler that performs geographic lookups for IP addresses.
+// The IP address is extracted from the fastly-xqd-arg1 header and passed to the lookup function.
+// The result is returned as JSON in the response body.
 func geoHandler(fn func(ip net.IP) Geo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr := net.ParseIP(r.Header.Get("fastly-xqd-arg1"))

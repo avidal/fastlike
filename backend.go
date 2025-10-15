@@ -43,11 +43,13 @@ type Backend struct {
 	SSLMaxVersion uint32 // TLS version constant
 }
 
+// addBackend registers a backend with the given name and configuration.
 func (i *Instance) addBackend(name string, b *Backend) {
 	b.Name = name
 	i.backends[name] = b
 }
 
+// getBackend retrieves a backend by name. Returns nil if not found.
 func (i *Instance) getBackend(name string) *Backend {
 	b, ok := i.backends[name]
 	if !ok {
@@ -57,11 +59,14 @@ func (i *Instance) getBackend(name string) *Backend {
 	return b
 }
 
+// backendExists checks whether a backend with the given name is registered.
 func (i *Instance) backendExists(name string) bool {
 	_, ok := i.backends[name]
 	return ok
 }
 
+// getBackendHandler retrieves the http.Handler for a named backend.
+// Falls back to the default backend handler if the backend is not found.
 func (i *Instance) getBackendHandler(name string) http.Handler {
 	b := i.getBackend(name)
 	if b == nil {
@@ -71,6 +76,7 @@ func (i *Instance) getBackendHandler(name string) http.Handler {
 	return b.Handler
 }
 
+// defaultBackend returns a handler that responds with 502 Bad Gateway for unknown backends.
 func defaultBackend(name string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

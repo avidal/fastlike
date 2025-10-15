@@ -1,5 +1,8 @@
 package fastlike
 
+// xqd_dictionary_open opens a named dictionary and returns a handle.
+// Reads the dictionary name from guest memory and writes the corresponding handle to addr.
+// The dictionary must be configured via WithDictionary option.
 func (i *Instance) xqd_dictionary_open(name_addr int32, name_size int32, addr int32) int32 {
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
@@ -19,6 +22,11 @@ func (i *Instance) xqd_dictionary_open(name_addr int32, name_size int32, addr in
 	return XqdStatusOK
 }
 
+// xqd_dictionary_get retrieves a value from a dictionary by key.
+// Reads the key from guest memory and writes the corresponding value to addr.
+// Writes the number of bytes written to nwritten_out.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdErrBufferLength if the buffer is too small,
+// or XqdErrNone with nwritten_out=0 if the key does not exist.
 func (i *Instance) xqd_dictionary_get(handle int32, key_addr int32, key_size int32, addr int32, size int32, nwritten_out int32) int32 {
 	lookup := i.getDictionary(int(handle))
 	if lookup == nil {

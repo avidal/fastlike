@@ -108,12 +108,14 @@ func NewCache() *Cache {
 	}
 }
 
-// cacheKey creates a string key from byte slice
+// cacheKey creates a string key from a byte slice for use as a map key.
 func cacheKey(key []byte) string {
 	return string(key)
 }
 
-// varyKey creates a key that includes vary headers
+// varyKey creates a unique cache key that incorporates the vary rule and request headers.
+// If no vary rule is specified, returns the base cache key unchanged.
+// Otherwise, returns a SHA256 hash of the base key, vary rule, and request headers.
 func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) string {
 	if varyRule == "" {
 		return cacheKey(baseKey)
@@ -127,7 +129,10 @@ func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) 
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// findMatchingVariant finds a cached object that matches the vary rule
+// findMatchingVariant finds a cached object that matches the vary rule and request headers.
+// If no vary rule is provided, returns the most recently inserted variant.
+// Otherwise, returns the variant whose vary key matches the computed vary key for the request.
+// Returns nil if no matching variant is found.
 func (c *Cache) findMatchingVariant(key []byte, varyRule string, requestHeaders []byte) *CachedObject {
 	keyStr := cacheKey(key)
 	variants, ok := c.objects[keyStr]
@@ -353,7 +358,8 @@ func (c *Cache) TransactionCancel(tx *CacheTransaction) error {
 	return nil
 }
 
-// CompleteTransaction marks a transaction as complete
+// CompleteTransaction marks a cache transaction as complete and removes it from the
+// pending transactions map, allowing new transactions for the same key to proceed.
 func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
