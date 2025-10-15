@@ -250,7 +250,7 @@ func (i *Instance) xqd_req_uri_set(handle int32, addr int32, size int32) int32 {
 	u, err := url.Parse(string(buf))
 	if err != nil {
 		i.abilog.Printf("req_uri_set: parse error uri=%q got=%s", buf, err.Error())
-		return XqdErrHttpParse
+		return XqdError
 	}
 
 	i.abilog.Printf("req_uri_set: handle=%d uri=%q", handle, u)
@@ -284,13 +284,27 @@ func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_siz
 		return XqdErrInvalidHandle
 	}
 
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("req_header_remove: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
+	}
+
 	name := make([]byte, name_size)
 	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	r.Header.Del(string(name))
+	header := http.CanonicalHeaderKey(string(name))
+
+	// Check if the header exists before removing
+	if r.Header.Get(header) == "" {
+		i.abilog.Printf("req_header_remove: header %q not found\n", header)
+		return XqdErrInvalidArgument
+	}
+
+	r.Header.Del(header)
 
 	return XqdStatusOK
 }
@@ -299,6 +313,12 @@ func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_siz
 	r := i.requests.Get(int(handle))
 	if r == nil {
 		return XqdErrInvalidHandle
+	}
+
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("req_header_insert: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
 	}
 
 	name := make([]byte, name_size)
@@ -332,6 +352,12 @@ func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_siz
 		return XqdErrInvalidHandle
 	}
 
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("req_header_append: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
+	}
+
 	name := make([]byte, name_size)
 	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
@@ -363,6 +389,13 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 		return XqdErrInvalidHandle
 	}
 
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("req_header_value_get: header name too long: %d bytes (max 65535)\n", name_size)
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrInvalidArgument
+	}
+
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
@@ -374,8 +407,20 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 	i.abilog.Printf("req_header_value_get: handle=%d header=%q\n", handle, header)
 
 	value := r.Header.Get(header)
-	nwritten, _ := i.memory.WriteAt([]byte(value), int64(addr))
-	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+
+	// Always write the length needed
+	i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
+
+	// Check if buffer is large enough
+	if int(maxlen) < len(value) {
+		return XqdErrBufferLength
+	}
+
+	// Write the value to memory
+	_, err = i.memory.WriteAt([]byte(value), int64(addr))
+	if err != nil {
+		return XqdError
+	}
 
 	return XqdStatusOK
 }
@@ -453,12 +498,20 @@ func (i *Instance) xqd_req_uri_get(handle int32, addr int32, maxlen int32, nwrit
 	uri := r.URL.String()
 	i.abilog.Printf("req_uri_get: handle=%d uri=%q", handle, uri)
 
-	nwritten, err := i.memory.WriteAt([]byte(uri), int64(addr))
+	// Always write the length needed
+	i.memory.PutUint32(uint32(len(uri)), int64(nwritten_out))
+
+	// Check if buffer is large enough
+	if int(maxlen) < len(uri) {
+		return XqdErrBufferLength
+	}
+
+	// Write the URI to memory
+	_, err := i.memory.WriteAt([]byte(uri), int64(addr))
 	if err != nil {
 		return XqdError
 	}
 
-	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
 	return XqdStatusOK
 }
 
