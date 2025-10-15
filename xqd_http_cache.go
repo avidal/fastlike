@@ -3,9 +3,11 @@ package fastlike
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // xqd_http_cache_is_request_cacheable checks if a request is cacheable per RFC 9111
@@ -443,11 +445,91 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 		return XqdErrInvalidHandle
 	}
 
-	// Parse cache-control headers and suggest options
-	// For now, return default options
-	i.memory.WriteUint32(options_mask_out, 0)
+	// HTTP cache write options structure (based on Viceroy):
+	// - max_age_ns: u64 (8 bytes) at offset 0
+	// - vary_rule_ptr: *u8 (4 bytes) at offset 8
+	// - vary_rule_len: usize (4 bytes) at offset 12
+	// - initial_age_ns: u64 (8 bytes) at offset 16
+	// - stale_while_revalidate_ns: u64 (8 bytes) at offset 24
+	// - surrogate_keys_ptr: *u8 (4 bytes) at offset 32
+	// - surrogate_keys_len: usize (4 bytes) at offset 36
+	// - length: u64 (8 bytes) at offset 40
+
+	const (
+		HttpCacheWriteOptionsMaskMaxAgeNs                = 1 << 0
+		HttpCacheWriteOptionsMaskVaryRule                = 1 << 1
+		HttpCacheWriteOptionsMaskInitialAgeNs            = 1 << 2
+		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs  = 1 << 3
+		HttpCacheWriteOptionsMaskSurrogateKeys           = 1 << 4
+		HttpCacheWriteOptionsMaskLength                  = 1 << 5
+	)
+
+	// Parse Cache-Control header to determine max-age and other directives
+	// Default to 1 hour (3600 seconds) if not specified
+	maxAgeNs := uint64(3600 * 1000000000) // 1 hour in nanoseconds
+	optionsMask := uint32(HttpCacheWriteOptionsMaskMaxAgeNs)
+
+	// Parse Cache-Control header if present
+	if cacheControl := resp.Header.Get("Cache-Control"); cacheControl != "" {
+		i.abilog.Printf("http_cache_get_suggested_cache_options: parsing Cache-Control: %s", cacheControl)
+		// Simple parsing for max-age directive
+		// In production, this should use a proper Cache-Control parser
+		// For now, we just extract max-age if present
+		// Example: "max-age=3600, public"
+		for _, directive := range splitCacheControl(cacheControl) {
+			if len(directive) > 8 && directive[:8] == "max-age=" {
+				if seconds, err := parseInt(directive[8:]); err == nil && seconds >= 0 {
+					maxAgeNs = uint64(seconds) * 1000000000
+					i.abilog.Printf("http_cache_get_suggested_cache_options: found max-age=%d seconds", seconds)
+				}
+			}
+		}
+	}
+
+	// Write max_age_ns
+	i.memory.WriteUint64(options_out+0, maxAgeNs)
+
+	// Write options mask
+	i.memory.WriteUint32(options_mask_out, optionsMask)
+
+	i.abilog.Printf("http_cache_get_suggested_cache_options: returning mask=%d, max_age_ns=%d", optionsMask, maxAgeNs)
 
 	return XqdStatusOK
+}
+
+// splitCacheControl splits a Cache-Control header value into directives
+func splitCacheControl(s string) []string {
+	var directives []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			directive := strings.TrimSpace(s[start:i])
+			if directive != "" {
+				directives = append(directives, directive)
+			}
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		directive := strings.TrimSpace(s[start:])
+		if directive != "" {
+			directives = append(directives, directive)
+		}
+	}
+	return directives
+}
+
+// parseInt parses an integer from a string
+func parseInt(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	var result int64
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, fmt.Errorf("invalid integer")
+		}
+		result = result*10 + int64(s[i]-'0')
+	}
+	return result, nil
 }
 
 // xqd_http_cache_prepare_response_for_storage prepares response for caching
@@ -610,12 +692,10 @@ func (i *Instance) xqd_http_cache_get_stale_while_revalidate_ns(
 	}
 
 	obj := handle.Transaction.Entry.Object
-	if obj.StaleWhileRevalidateNs > 0 {
-		i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
-		return XqdStatusOK
-	}
+	// Always return the value (even if 0) - the Rust library expects it to be present
+	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
 
-	return XqdErrNone
+	return XqdStatusOK
 }
 
 // xqd_http_cache_get_age_ns gets age of cached object
@@ -693,18 +773,16 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 	}
 
 	obj := handle.Transaction.Entry.Object
-	if obj.SurrogateKeys == nil || len(obj.SurrogateKeys) == 0 {
-		i.memory.WriteUint32(nwritten_out, 0)
-		return XqdErrNone
-	}
 
-	// Join surrogate keys with spaces
+	// Join surrogate keys with spaces (empty list is OK - write 0 bytes)
 	keysStr := ""
-	for idx, key := range obj.SurrogateKeys {
-		if idx > 0 {
-			keysStr += " "
+	if obj.SurrogateKeys != nil && len(obj.SurrogateKeys) > 0 {
+		for idx, key := range obj.SurrogateKeys {
+			if idx > 0 {
+				keysStr += " "
+			}
+			keysStr += key
 		}
-		keysStr += key
 	}
 
 	keyBytes := []byte(keysStr)
@@ -714,7 +792,9 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 		return XqdErrBufferLength
 	}
 
-	_, _ = i.memory.WriteAt(keyBytes, int64(keys_out_ptr))
+	if len(keyBytes) > 0 {
+		_, _ = i.memory.WriteAt(keyBytes, int64(keys_out_ptr))
+	}
 	i.memory.WriteUint32(nwritten_out, uint32(len(keyBytes)))
 
 	return XqdStatusOK
@@ -735,19 +815,16 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 	}
 
 	obj := handle.Transaction.Entry.Object
-	if obj.VaryRule == "" {
-		i.memory.WriteUint32(nwritten_out, 0)
-		return XqdErrNone
-	}
-
-	ruleBytes := []byte(obj.VaryRule)
+	ruleBytes := []byte(obj.VaryRule) // Empty string is OK - write 0 bytes
 
 	if len(ruleBytes) > int(rule_out_len) {
 		i.memory.WriteUint32(nwritten_out, uint32(len(ruleBytes)))
 		return XqdErrBufferLength
 	}
 
-	_, _ = i.memory.WriteAt(ruleBytes, int64(rule_out_ptr))
+	if len(ruleBytes) > 0 {
+		_, _ = i.memory.WriteAt(ruleBytes, int64(rule_out_ptr))
+	}
 	i.memory.WriteUint32(nwritten_out, uint32(len(ruleBytes)))
 
 	return XqdStatusOK
