@@ -2,7 +2,7 @@
 
 # Fastlike
 
-Fastlike is a local development server for Fastly Compute@Edge applications. It allows you to run and test your Fastly Compute WebAssembly programs locally without deploying to Fastly, making development faster and more efficient.
+Fastlike is a local development server for Fastly Compute (previously known as Compute@Edge) applications. It allows you to run and test your Fastly Compute WebAssembly programs locally without deploying to Fastly, making development faster and more efficient.
 
 ## What is Fastlike?
 
