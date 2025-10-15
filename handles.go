@@ -30,15 +30,17 @@ type RequestHandles struct {
 }
 
 // Get returns the RequestHandle identified by id or nil if one does not exist.
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (rhs *RequestHandles) Get(id int) *RequestHandle {
-	if id < 0 || id >= len(rhs.handles) {
+	if id <= 0 || id > len(rhs.handles) {
 		return nil
 	}
 
-	return rhs.handles[id]
+	return rhs.handles[id-1]
 }
 
 // New creates a new RequestHandle and returns its handle id and the handle itself.
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (rhs *RequestHandles) New() (int, *RequestHandle) {
 	// Parse "/" as the default URL
 	defaultURL, _ := url.Parse("/")
@@ -51,7 +53,7 @@ func (rhs *RequestHandles) New() (int, *RequestHandle) {
 		version: 2, // Http11 = 2
 	}
 	rhs.handles = append(rhs.handles, rh)
-	return len(rhs.handles) - 1, rh
+	return len(rhs.handles), rh
 }
 
 // ResponseHandle is an http.Response with extra metadata.
@@ -71,22 +73,24 @@ type ResponseHandles struct {
 }
 
 // Get returns the ResponseHandle identified by id or nil if one does not exist.
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (rhs *ResponseHandles) Get(id int) *ResponseHandle {
-	if id < 0 || id >= len(rhs.handles) {
+	if id <= 0 || id > len(rhs.handles) {
 		return nil
 	}
 
-	return rhs.handles[id]
+	return rhs.handles[id-1]
 }
 
 // New creates a new ResponseHandle and returns its handle id and the handle itself.
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
 	rh := &ResponseHandle{
 		Response: &http.Response{StatusCode: 200},
 		version:  2, // Http11 = 2
 	}
 	rhs.handles = append(rhs.handles, rh)
-	return len(rhs.handles) - 1, rh
+	return len(rhs.handles), rh
 }
 
 // BodyHandle represents an HTTP body that can be readable or writable (but not both).
@@ -215,39 +219,44 @@ type BodyHandles struct {
 }
 
 // Get returns the BodyHandle identified by id or nil if one does not exist
+// Get returns the body handle identified by id or nil
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (bhs *BodyHandles) Get(id int) *BodyHandle {
-	if id < 0 || id >= len(bhs.handles) {
+	if id <= 0 || id > len(bhs.handles) {
 		return nil
 	}
 
-	return bhs.handles[id]
+	return bhs.handles[id-1]
 }
 
 // NewBuffer creates a BodyHandle backed by a buffer which can be read from or written to
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (bhs *BodyHandles) NewBuffer() (int, *BodyHandle) {
 	bh := &BodyHandle{buf: new(bytes.Buffer)}
 	bh.reader = io.Reader(bh.buf)
 	bh.writer = io.Writer(bh.buf)
 	bhs.handles = append(bhs.handles, bh)
-	return len(bhs.handles) - 1, bh
+	return len(bhs.handles), bh
 }
 
 // NewReader creates a BodyHandle whose reader and closer is connected to the supplied ReadCloser
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
 	bh := &BodyHandle{}
 	bh.reader = rdr
 	bh.closer = rdr
 	bh.writer = io.Discard
 	bhs.handles = append(bhs.handles, bh)
-	return len(bhs.handles) - 1, bh
+	return len(bhs.handles), bh
 }
 
 // NewWriter creates a BodyHandle whose writer is connected to the supplied Writer
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (bhs *BodyHandles) NewWriter(w io.Writer) (int, *BodyHandle) {
 	bh := &BodyHandle{}
 	bh.writer = w
 	bhs.handles = append(bhs.handles, bh)
-	return len(bhs.handles) - 1, bh
+	return len(bhs.handles), bh
 }
 
 // PendingRequest represents an asynchronous HTTP request in flight
@@ -279,19 +288,21 @@ type PendingRequestHandles struct {
 }
 
 // Get returns the PendingRequest identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (prhs *PendingRequestHandles) Get(id int) *PendingRequest {
-	if id < 0 || id >= len(prhs.handles) {
+	if id <= 0 || id > len(prhs.handles) {
 		return nil
 	}
 
-	return prhs.handles[id]
+	return prhs.handles[id-1]
 }
 
 // New creates a new PendingRequest and returns its handle id and the handle itself
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (prhs *PendingRequestHandles) New() (int, *PendingRequest) {
 	pr := &PendingRequest{done: make(chan struct{})}
 	prhs.handles = append(prhs.handles, pr)
-	return len(prhs.handles) - 1, pr
+	return len(prhs.handles), pr
 }
 
 // Complete marks a pending request as completed with the given response or error
@@ -317,18 +328,20 @@ type SecretHandles struct {
 }
 
 // Get returns the Secret identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (shs *SecretHandles) Get(id int) *Secret {
-	if id < 0 || id >= len(shs.handles) {
+	if id <= 0 || id > len(shs.handles) {
 		return nil
 	}
-	return shs.handles[id]
+	return shs.handles[id-1]
 }
 
 // New creates a new Secret from plaintext bytes and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (shs *SecretHandles) New(plaintext []byte) int {
 	s := &Secret{plaintext: plaintext}
 	shs.handles = append(shs.handles, s)
-	return len(shs.handles) - 1
+	return len(shs.handles)
 }
 
 // SecretStoreHandle represents a reference to a secret store
@@ -342,18 +355,20 @@ type SecretStoreHandles struct {
 }
 
 // Get returns the SecretStoreHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (sshs *SecretStoreHandles) Get(id int) *SecretStoreHandle {
-	if id < 0 || id >= len(sshs.handles) {
+	if id <= 0 || id > len(sshs.handles) {
 		return nil
 	}
-	return sshs.handles[id]
+	return sshs.handles[id-1]
 }
 
 // New creates a new SecretStoreHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (sshs *SecretStoreHandles) New(name string) int {
 	ssh := &SecretStoreHandle{name: name}
 	sshs.handles = append(sshs.handles, ssh)
-	return len(sshs.handles) - 1
+	return len(sshs.handles)
 }
 
 // CacheHandle represents a cache lookup result (could be found, not found, or must-insert)
@@ -369,18 +384,20 @@ type CacheHandles struct {
 }
 
 // Get returns the CacheHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (chs *CacheHandles) Get(id int) *CacheHandle {
-	if id < 0 || id >= len(chs.handles) {
+	if id <= 0 || id > len(chs.handles) {
 		return nil
 	}
-	return chs.handles[id]
+	return chs.handles[id-1]
 }
 
 // New creates a new CacheHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (chs *CacheHandles) New(tx *CacheTransaction) int {
 	ch := &CacheHandle{Transaction: tx}
 	chs.handles = append(chs.handles, ch)
-	return len(chs.handles) - 1
+	return len(chs.handles)
 }
 
 // CacheBusyHandle represents a pending async cache lookup
@@ -394,18 +411,20 @@ type CacheBusyHandles struct {
 }
 
 // Get returns the CacheBusyHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (cbhs *CacheBusyHandles) Get(id int) *CacheBusyHandle {
-	if id < 0 || id >= len(cbhs.handles) {
+	if id <= 0 || id > len(cbhs.handles) {
 		return nil
 	}
-	return cbhs.handles[id]
+	return cbhs.handles[id-1]
 }
 
 // New creates a new CacheBusyHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (cbhs *CacheBusyHandles) New(tx *CacheTransaction) int {
 	cbh := &CacheBusyHandle{Transaction: tx}
 	cbhs.handles = append(cbhs.handles, cbh)
-	return len(cbhs.handles) - 1
+	return len(cbhs.handles)
 }
 
 // CacheReplaceHandle represents a cache replace operation
@@ -420,18 +439,20 @@ type CacheReplaceHandles struct {
 }
 
 // Get returns the CacheReplaceHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (crhs *CacheReplaceHandles) Get(id int) *CacheReplaceHandle {
-	if id < 0 || id >= len(crhs.handles) {
+	if id <= 0 || id > len(crhs.handles) {
 		return nil
 	}
-	return crhs.handles[id]
+	return crhs.handles[id-1]
 }
 
 // New creates a new CacheReplaceHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (crhs *CacheReplaceHandles) New(entry *CacheEntry, options *CacheReplaceOptions) int {
 	crh := &CacheReplaceHandle{Entry: entry, Options: options}
 	crhs.handles = append(crhs.handles, crh)
-	return len(crhs.handles) - 1
+	return len(crhs.handles)
 }
 
 // AclHandle represents a reference to an ACL (Access Control List)
@@ -446,18 +467,20 @@ type AclHandles struct {
 }
 
 // Get returns the AclHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (ahs *AclHandles) Get(id int) *AclHandle {
-	if id < 0 || id >= len(ahs.handles) {
+	if id <= 0 || id > len(ahs.handles) {
 		return nil
 	}
-	return ahs.handles[id]
+	return ahs.handles[id-1]
 }
 
 // New creates a new AclHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (ahs *AclHandles) New(name string, acl *Acl) int {
 	ah := &AclHandle{name: name, acl: acl}
 	ahs.handles = append(ahs.handles, ah)
-	return len(ahs.handles) - 1
+	return len(ahs.handles)
 }
 
 // AsyncItemType indicates the type of async operation being tracked.
@@ -492,21 +515,23 @@ type AsyncItemHandles struct {
 }
 
 // Get returns the AsyncItemHandle identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (aihs *AsyncItemHandles) Get(id int) *AsyncItemHandle {
-	if id < 0 || id >= len(aihs.handles) {
+	if id <= 0 || id > len(aihs.handles) {
 		return nil
 	}
-	return aihs.handles[id]
+	return aihs.handles[id-1]
 }
 
 // New creates a new AsyncItemHandle and returns its handle id
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
 	aih := &AsyncItemHandle{
 		Type:     itemType,
 		HandleID: handleID,
 	}
 	aihs.handles = append(aihs.handles, aih)
-	return len(aihs.handles) - 1
+	return len(aihs.handles)
 }
 
 // RequestPromise represents a promise for receiving an additional downstream request.
@@ -551,16 +576,18 @@ type RequestPromiseHandles struct {
 }
 
 // Get returns the RequestPromise identified by id or nil if one does not exist
+// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (rphs *RequestPromiseHandles) Get(id int) *RequestPromise {
-	if id < 0 || id >= len(rphs.handles) {
+	if id <= 0 || id > len(rphs.handles) {
 		return nil
 	}
-	return rphs.handles[id]
+	return rphs.handles[id-1]
 }
 
 // New creates a new RequestPromise and returns its handle id and the handle itself
+// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (rphs *RequestPromiseHandles) New() (int, *RequestPromise) {
 	rp := &RequestPromise{done: make(chan struct{})}
 	rphs.handles = append(rphs.handles, rp)
-	return len(rphs.handles) - 1, rp
+	return len(rphs.handles), rp
 }

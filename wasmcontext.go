@@ -662,7 +662,13 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_kv_store", "open", safeWrap3(i, "open", func(name_addr int32, name_size int32, store_handle_out int32) int32 {
 		return i.xqd_kv_store_open(name_addr, name_size, store_handle_out)
 	}))
+	_ = linker.FuncWrap("fastly_kv_store", "open_v2", safeWrap3(i, "open_v2", func(name_addr int32, name_size int32, store_handle_out int32) int32 {
+		return i.xqd_kv_store_open(name_addr, name_size, store_handle_out)
+	}))
 	_ = linker.FuncWrap("fastly_kv_store", "lookup", safeWrap6(i, "lookup", func(store_handle int32, key_addr int32, key_size int32, lookup_config_mask int32, lookup_config_buf int32, lookup_handle_out int32) int32 {
+		return i.xqd_kv_store_lookup(store_handle, key_addr, key_size, lookup_config_mask, lookup_config_buf, lookup_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_kv_store", "lookup_v2", safeWrap6(i, "lookup_v2", func(store_handle int32, key_addr int32, key_size int32, lookup_config_mask int32, lookup_config_buf int32, lookup_handle_out int32) int32 {
 		return i.xqd_kv_store_lookup(store_handle, key_addr, key_size, lookup_config_mask, lookup_config_buf, lookup_handle_out)
 	}))
 	_ = linker.FuncWrap("fastly_kv_store", "lookup_wait", safeWrap7(i, "lookup_wait", func(lookup_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32, generation_out int32, kv_error_out int32) int32 {

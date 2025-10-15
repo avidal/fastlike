@@ -67,6 +67,9 @@ func (i *Instance) xqd_cache_insert(
 		originalBody: origWriter,
 	}
 
+	// Set a closer that marks the cache write as complete
+	body.closer = &cacheOnlyCloser{cache: obj}
+
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
 	return XqdStatusOK
@@ -165,6 +168,9 @@ func (i *Instance) xqd_cache_transaction_insert(
 		cache:        obj,
 		originalBody: body.buf,
 	}
+
+	// Set a closer that marks the cache write as complete
+	body.closer = &cacheOnlyCloser{cache: obj}
 
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
@@ -730,6 +736,18 @@ func (c *pipeAndCacheCloser) Close() error {
 	// Mark the cache write as complete
 	c.cache.FinishWrite()
 	return err
+}
+
+// cacheOnlyCloser implements io.Closer for cache insert operations.
+// It marks the cache write as complete when closed.
+type cacheOnlyCloser struct {
+	cache *CachedObject
+}
+
+func (c *cacheOnlyCloser) Close() error {
+	// Mark the cache write as complete
+	c.cache.FinishWrite()
+	return nil
 }
 
 // Cache replace API - These functions are stubs that return XqdErrUnsupported
