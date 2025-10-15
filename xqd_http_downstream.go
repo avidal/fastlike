@@ -667,8 +667,8 @@ func (i *Instance) xqd_http_downstream_client_ddos_detected(req_handle int32, dd
 	}
 
 	// DDoS detection is not implemented in local testing
-	// Always write 0 (false) to the output pointer
-	i.memory.WriteUint32(ddos_detected_out, 0)
+	// Always return 0 (false)
+	i.memory.PutUint32(0, int64(ddos_detected_out))
 	i.abilog.Printf("http_downstream_client_ddos_detected: DDoS detection not available (always returns false)")
 	return XqdStatusOK
 }
@@ -726,8 +726,8 @@ func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32, is_
 	}
 
 	// In local testing, we don't validate Fastly-Key headers
-	// Return 0 (false) to match Viceroy's behavior in local testing
-	i.memory.WriteUint32(is_valid_out, 0)
+	// Return 0 (false) to match Viceroy's behavior
+	i.memory.PutUint32(0, int64(is_valid_out))
 	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns false)")
 	return XqdStatusOK
 }

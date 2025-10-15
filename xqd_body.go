@@ -30,15 +30,16 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdErrInvalidHandle
 	}
 
-	// Check if this is a streaming body
+	// Check if this is a streaming body (used with async streaming requests)
 	if body.IsStreaming() {
-		// Use streaming write
+		// Read data from guest memory
 		data := make([]byte, size)
 		_, err := i.memory.ReadAt(data, int64(addr))
 		if err != nil {
 			return XqdError
 		}
 
+		// Write to the streaming channel
 		n, err := body.WriteStreaming(data)
 		if err != nil {
 			i.abilog.Printf("body_write: streaming write error: %v", err)
@@ -47,7 +48,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 		i.memory.PutUint32(uint32(n), int64(nwritten_out))
 
-		// Handle end flag - close the streaming body when done
+		// If body_end is set, close the streaming body (signals completion)
 		if body_end == BodyWriteEndBack || body_end == BodyWriteEndFront {
 			_ = body.CloseStreaming()
 		}
@@ -55,7 +56,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdStatusOK
 	}
 
-	// Original non-streaming logic continues...
+	// Non-streaming body logic
 	// Read the data from guest memory
 	data := make([]byte, size)
 	_, err := i.memory.ReadAt(data, int64(addr))
@@ -63,22 +64,26 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdError
 	}
 
-	if body_end == 1 {
-		// Write to front (prepend)
-		// Replace the reader with a MultiReader that first reads the new data, then the existing reader
+	const (
+		writeEndBack  = 0 // Append to back (default)
+		writeEndFront = 1 // Prepend to front
+	)
+
+	if body_end == writeEndFront {
+		// Prepend: Create a MultiReader that reads new data first, then existing content
 		body.reader = io.MultiReader(bytes.NewReader(data), body.reader)
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
 		return XqdStatusOK
 	}
 
-	// Write to back (append) - default behavior
-	// Copy size bytes into the body handle's writer
+	// Append to back (default behavior)
+	// Copy the data into the body handle's internal buffer
 	nwritten, err := io.CopyN(body, bytes.NewReader(data), int64(size))
 	if err != nil {
 		return XqdError
 	}
 
-	// Write out how many bytes we copied
+	// Write the number of bytes copied to guest memory
 	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
 
 	return XqdStatusOK
@@ -87,8 +92,8 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 // xqd_body_read reads up to maxlen bytes from a body handle into guest memory.
 // Copies data from the body identified by handle into guest memory starting at addr.
 // The actual number of bytes read is written to nread_out. This is a streaming operation
-// that consumes bytes from the body's reader.
-// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// that consumes bytes from the body's reader (subsequent reads continue from where the last read left off).
+// Returns XqdStatusOK on success (even if 0 bytes read/EOF), XqdErrInvalidHandle if the body handle is invalid,
 // or XqdError if memory or I/O operations fail.
 func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) int32 {
 	body := i.bodies.Get(int(handle))
@@ -98,6 +103,7 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 
 	i.abilog.Printf("body_read: handle=%d addr=%d maxlen=%d", handle, addr, maxlen)
 
+	// Read up to maxlen bytes from the body
 	buf := bytes.NewBuffer(make([]byte, 0, maxlen))
 	ncopied, err := io.Copy(buf, io.LimitReader(body, int64(maxlen)))
 	if err != nil {
@@ -105,28 +111,31 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 		return XqdError
 	}
 
-	nwritten, err2 := i.memory.WriteAt(buf.Bytes(), int64(addr))
-	if err2 != nil {
-		i.abilog.Printf("body_read: error writing got=%s", err2.Error())
+	// Write the read data to guest memory
+	nwritten, err := i.memory.WriteAt(buf.Bytes(), int64(addr))
+	if err != nil {
+		i.abilog.Printf("body_read: error writing to guest memory got=%s", err.Error())
 		return XqdError
 	}
 
+	// Sanity check: bytes copied from body should match bytes written to memory
 	if ncopied != int64(nwritten) {
-		i.abilog.Printf("body_read: error copying copied=%d wrote=%d", ncopied, nwritten)
+		i.abilog.Printf("body_read: mismatch: copied=%d wrote=%d", ncopied, nwritten)
 		return XqdError
 	}
 
-	i.abilog.Printf("body_read: handle=%d maxlen=%d copied=%d", handle, maxlen, ncopied)
+	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, ncopied)
 
-	// Write out how many bytes we copied
+	// Write the number of bytes read to guest memory
 	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
 
 	return XqdStatusOK
 }
 
 // xqd_body_append appends the contents of one body to another.
-// Combines the src_handle body with dst_handle by creating a MultiReader that reads
-// from dst first, then src. Both handles must be valid body handles.
+// Combines src_handle body with dst_handle by creating a MultiReader that reads
+// from dst first, then src. This is a zero-copy operation that chains the readers.
+// Both handles must be valid body handles.
 // Returns XqdStatusOK on success or XqdErrInvalidHandle if either handle is invalid.
 func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
@@ -141,8 +150,8 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 		return XqdErrInvalidHandle
 	}
 
-	// replace the destination reader with a multireader that reads first from the original reader
-	// and then from the source
+	// Chain the readers: dst content followed by src content
+	// This is efficient as it doesn't copy data, just creates a composite reader
 	dst.reader = io.MultiReader(dst.reader, src)
 
 	return XqdStatusOK
@@ -169,7 +178,7 @@ func (i *Instance) xqd_body_close(handle int32) int32 {
 // Reads the trailer name from guest memory at name_addr (name_size bytes) and the value
 // from value_addr (value_size bytes), then appends it to the body's trailer map.
 // If a trailer with the same name already exists, the new value is appended to the list.
-// Trailers are HTTP headers sent after the body content in chunked transfer encoding.
+// Trailers are HTTP headers sent after the body content (used with chunked transfer encoding).
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
 // or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
@@ -178,26 +187,26 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 		return XqdErrInvalidHandle
 	}
 
-	// Read the trailer name
+	// Read the trailer name from guest memory
 	name := make([]byte, name_size)
 	_, err := i.memory.ReadAt(name, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	// Read the trailer value
+	// Read the trailer value from guest memory
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	// Initialize the trailer map if it doesn't exist
+	// Initialize the trailer map if this is the first trailer
 	if body.trailers == nil {
 		body.trailers = make(map[string][]string)
 	}
 
-	// Append the trailer (using Add which appends to existing values)
+	// Append the trailer value (supports multiple values per trailer name)
 	body.trailers.Add(string(name), string(value))
 
 	i.abilog.Printf("body_trailer_append: handle=%d name=%q value=%q", handle, string(name), string(value))
@@ -230,8 +239,8 @@ func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen i
 
 // xqd_body_trailer_value_get retrieves the first value of a trailer header.
 // Reads the trailer name from guest memory at name_addr (name_size bytes) and writes
-// the first value for that trailer to value_addr (up to value_maxlen bytes).
-// The value is null-terminated. If the trailer has no values, nwritten_out is set to 0.
+// the first value for that trailer to value_addr (up to value_maxlen bytes), null-terminated.
+// If the trailer doesn't exist or has no values, nwritten_out is set to 0.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
 // XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
@@ -240,24 +249,25 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 		return XqdErrInvalidHandle
 	}
 
-	// Read the trailer name
+	// Read the trailer name from guest memory
 	nameBuf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(nameBuf, int64(name_addr))
 	if err != nil {
 		return XqdError
 	}
 
-	// Get the first value for this trailer name
+	// Get all values for this trailer name
 	values := body.trailers.Values(string(nameBuf))
 	if len(values) == 0 {
+		// No values found - return 0 bytes written
 		i.memory.PutUint32(0, int64(nwritten_out))
 		return XqdStatusOK
 	}
 
-	// Get the first value
+	// Get the first value and prepare to null-terminate it
 	value := []byte(values[0])
 
-	// Check if buffer is large enough
+	// Check if buffer is large enough (including null terminator)
 	if len(value)+1 > int(value_maxlen) {
 		return XqdErrBufferLength
 	}
@@ -265,7 +275,7 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 	// Append null terminator
 	value = append(value, '\x00')
 
-	// Write to memory
+	// Write the null-terminated value to guest memory
 	nwritten, err := i.memory.WriteAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
@@ -329,8 +339,9 @@ func (i *Instance) xqd_body_abandon(handle int32) int32 {
 }
 
 // xqd_body_known_length retrieves the known length of a body if available.
-// Writes the body's size in bytes to length_out in guest memory. If the body's length
-// is not known in advance (e.g., for streaming bodies), returns XqdErrNone.
+// Writes the body's size in bytes to length_out in guest memory as a uint64.
+// If the body's length is not known in advance (e.g., for streaming bodies with unknown size),
+// returns XqdErrNone without writing to length_out.
 // This is useful for setting Content-Length headers or preallocating buffers.
 // Returns XqdStatusOK if the length is known, XqdErrNone if unknown,
 // or XqdErrInvalidHandle if the body handle is invalid.
@@ -340,14 +351,14 @@ func (i *Instance) xqd_body_known_length(handle int32, length_out int32) int32 {
 		return XqdErrInvalidHandle
 	}
 
-	// Get the known length of the body
-	// If the length is not known (e.g., streaming body), return XqdErrNone
+	// Get the body's size (-1 indicates unknown length)
 	length := body.Size()
 	if length < 0 {
 		i.abilog.Printf("body_known_length: handle=%d length=unknown", handle)
 		return XqdErrNone
 	}
 
+	// Write the known length as uint64 to guest memory
 	i.abilog.Printf("body_known_length: handle=%d length=%d", handle, length)
 	i.memory.PutUint64(uint64(length), int64(length_out))
 

@@ -468,3 +468,14 @@ func (i *Instance) xqd_backend_get_tcp_keepalive_time(backend_addr int32, backen
 	i.memory.PutUint32(timeSecs, int64(timeout_out))
 	return XqdStatusOK
 }
+
+// readBackendName is a helper function to read a backend name from guest memory.
+// Returns the backend name as a string, or an error if the memory read fails.
+func (i *Instance) readBackendName(namePtr int32, nameLen int32) (string, error) {
+	buf := make([]byte, nameLen)
+	_, err := i.memory.ReadAt(buf, int64(namePtr))
+	if err != nil {
+		return "", err
+	}
+	return string(buf), nil
+}

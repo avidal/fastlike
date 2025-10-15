@@ -127,7 +127,7 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 			messageBytes := []byte(errorDetail.Message)
 			messagePtr := ioErrorDetailPtr + 12 // Start after the 12-byte struct
 			_, _ = i.memory.WriteAt(messageBytes, int64(messagePtr))
-			i.memory.PutUint32(uint32(messagePtr), int64(ioErrorDetailPtr+4))         // message pointer
+			i.memory.PutUint32(uint32(messagePtr), int64(ioErrorDetailPtr+4))        // message pointer
 			i.memory.PutUint32(uint32(len(messageBytes)), int64(ioErrorDetailPtr+8)) // message length
 		} else {
 			// No error message - set pointer and length to 0

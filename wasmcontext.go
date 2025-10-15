@@ -199,16 +199,20 @@ func (i *Instance) compile(wasmbytes []byte) {
 }
 
 // link binds all XQD ABI host functions to the linker using modern naming conventions (fastly_*).
-// Each function is wrapped with panic recovery to work around wasmtime-go v37 bugs.
+//
+// This method links all the host functions that implement the XQD ABI. The guest wasm program
+// calls these functions to interact with the host (e.g., to send HTTP requests, manipulate
+// headers, access dictionaries, etc.).
+//
+// Each function is wrapped with safeWrap* to provide panic recovery, working around bugs in
+// wasmtime-go v37 where panics in host functions can cause nil pointer dereferences.
 func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
-	// Verify instance is not nil
+	// Verify instance is properly initialized
 	if i == nil {
 		panic("Instance is nil in link()")
 	}
-	// XQD Stubbing -{{{
-	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
-	// here and explicitly linked in the section below.
-	// Note: In wasmtime-go v37, we must wrap instance methods in closures to avoid nil pointer issues
+
+	// Additional HTTP request/response functions
 	_ = linker.FuncWrap("fastly_http_req", "original_header_count", safeWrap1(i, "original_header_count", func(count_out int32) int32 {
 		return i.xqd_http_downstream_original_header_count(i.downstreamRequestHandle, count_out)
 	}))
@@ -219,8 +223,6 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_resp", "header_remove", safeWrap3(i, "header_remove", func(handle int32, name_addr int32, name_size int32) int32 {
 		return i.xqd_resp_header_remove(handle, name_addr, name_size)
 	}))
-
-	// End XQD Stubbing -}}}
 
 	// xqd_http_cache.go
 	_ = linker.FuncWrap("fastly_http_cache", "is_request_cacheable", safeWrap2(i, "is_request_cacheable", func(req_handle int32, is_cacheable_out int32) int32 {
@@ -916,11 +918,13 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 }
 
 // linklegacy binds legacy XQD ABI functions using old naming conventions (xqd_*, env module).
-// Maintained for backwards compatibility with older wasm programs.
+//
+// This provides backwards compatibility with older wasm programs that were compiled against
+// the legacy ABI naming scheme. Modern programs use the fastly_* naming scheme (linked in link()).
+//
+// The implementations are the same; only the module names and function names differ.
 func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
-	// XQD Stubbing -{{{
-	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
-	// here and explicitly linked in the section below.
+	// Additional legacy HTTP request/response functions
 	_ = linker.FuncWrap("env", "xqd_req_original_header_count", safeWrap1(i, "xqd_req_original_header_count", func(a int32) int32 {
 		return i.wasm1("xqd_req_original_header_count")(a)
 	}))
@@ -932,7 +936,6 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_body_close_downstream", safeWrap1(i, "xqd_body_close_downstream", func(a int32) int32 {
 		return i.xqd_body_close(a)
 	}))
-	// End XQD Stubbing -}}}
 
 	// xqd.go
 	_ = linker.FuncWrap("fastly", "init", safeWrap1i64(i, "init", func(abiv int64) int32 {
