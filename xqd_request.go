@@ -1554,3 +1554,19 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 	i.abilog.Printf("req_register_dynamic_backend: successfully registered backend %q", backendName)
 	return XqdStatusOK
 }
+
+// xqd_req_inspect performs NGWAF (Web Application Firewall) inspection
+// Returns UNSUPPORTED in local testing environments as NGWAF is not available
+func (i *Instance) xqd_req_inspect(
+	req int32,
+	body int32,
+	insp_info_mask int32,
+	insp_info int32,
+	buf int32,
+	buf_len int32,
+) int32 {
+	i.abilog.Printf("req_inspect: NGWAF not available in local testing")
+	// NGWAF (Next-Gen Web Application Firewall) is only available in Fastly production
+	// Return unsupported for local testing
+	return XqdErrUnsupported
+}

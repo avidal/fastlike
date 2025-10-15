@@ -429,6 +429,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "register_dynamic_backend", safeWrap6(i, "register_dynamic_backend", func(backend_addr int32, backend_size int32, target_addr int32, target_size int32, options_mask int32, options_ptr int32) int32 {
 		return i.xqd_req_register_dynamic_backend(backend_addr, backend_size, target_addr, target_size, options_mask, options_ptr)
 	}))
+	_ = linker.FuncWrap("fastly_http_req", "inspect", safeWrap6(i, "inspect", func(req int32, body int32, insp_info_mask int32, insp_info int32, buf int32, buf_len int32) int32 {
+		return i.xqd_req_inspect(req, body, insp_info_mask, insp_info, buf, buf_len)
+	}))
 	// DEPRECATED: use fastly_http_downstream versions
 	_ = linker.FuncWrap("fastly_http_req", "downstream_client_h2_fingerprint", safeWrap3(i, "downstream_client_h2_fingerprint", func(h2_out int32, h2_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_client_h2_fingerprint(i.downstreamRequestHandle, h2_out, h2_max_len, nwritten_out)
