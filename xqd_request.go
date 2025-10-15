@@ -722,8 +722,8 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 			i.abilog.Printf("pending_req_poll: request failed, err=%s", err.Error())
 			i.memory.PutUint32(1, int64(is_done_out))
 			// Return invalid handles to signal error
-			i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
-			i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+			i.memory.PutUint32(HandleInvalid, int64(wh_out))
+			i.memory.PutUint32(HandleInvalid, int64(bh_out))
 			return XqdError
 		}
 
@@ -748,8 +748,8 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 	// Not done yet
 	i.abilog.Printf("pending_req_poll: not ready yet")
 	i.memory.PutUint32(0, int64(is_done_out))
-	i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
-	i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+	i.memory.PutUint32(HandleInvalid, int64(wh_out))
+	i.memory.PutUint32(HandleInvalid, int64(bh_out))
 	return XqdStatusOK
 }
 
@@ -779,8 +779,8 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	if err != nil {
 		i.abilog.Printf("pending_req_wait: request failed, err=%s", err.Error())
 		// Return invalid handles to signal error
-		i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
-		i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+		i.memory.PutUint32(HandleInvalid, int64(wh_out))
+		i.memory.PutUint32(HandleInvalid, int64(bh_out))
 		return XqdError
 	}
 
@@ -801,7 +801,7 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_pending_req_wait_v2(phandle int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+func (i *Instance) xqd_pending_req_wait_v2(phandle int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_wait(phandle, wh_out, bh_out)
@@ -872,8 +872,8 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	if err != nil {
 		i.abilog.Printf("pending_req_select: request failed, err=%s", err.Error())
 		i.memory.PutUint32(uint32(doneIndex), int64(done_idx_out))
-		i.memory.PutUint32(0xFFFFFFFF, int64(wh_out))
-		i.memory.PutUint32(0xFFFFFFFF, int64(bh_out))
+		i.memory.PutUint32(HandleInvalid, int64(wh_out))
+		i.memory.PutUint32(HandleInvalid, int64(bh_out))
 		return XqdError
 	}
 

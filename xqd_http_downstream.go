@@ -10,8 +10,8 @@ import (
 // In production Fastly, this enables session reuse where one wasm execution handles multiple requests.
 // In local testing, this will never receive a request and will timeout.
 //
-// Signature: (options_mask: u32, options: *const NextRequestOptions) -> RequestPromiseHandle
-func (i *Instance) xqd_http_downstream_next_request(options_mask int32, options_ptr int32) int32 {
+// Signature: (options_mask: u32, options: *const NextRequestOptions, handle_out: *mut RequestPromiseHandle) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_next_request(options_mask int32, options_ptr int32, handle_out int32) int32 {
 	i.abilog.Printf("http_downstream_next_request: options_mask=%d", options_mask)
 
 	// Create a new request promise handle
@@ -40,7 +40,11 @@ func (i *Instance) xqd_http_downstream_next_request(options_mask int32, options_
 		promise.Complete(nil, errors.New("no additional downstream requests in local testing"))
 	}()
 
-	return int32(promiseID)
+	// Write the promise handle to the output pointer
+	i.memory.PutUint32(uint32(promiseID), int64(handle_out))
+	i.abilog.Printf("http_downstream_next_request: promise_handle=%d", promiseID)
+
+	return XqdStatusOK
 }
 
 // xqd_http_downstream_next_request_wait waits for the next downstream request to arrive.
