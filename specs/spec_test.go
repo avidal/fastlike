@@ -288,22 +288,38 @@ func TestFastlike(t *testing.T) {
 			w.WriteHeader(http.StatusTeapot)
 			_, _ = w.Write([]byte("i am a teapot"))
 		})))
+
+		// Measure execution time to verify interruption actually occurred
+		start := time.Now()
 		inst.ServeHTTP(w, r)
+		elapsed := time.Since(start)
 
 		if w.Code != http.StatusInternalServerError {
 			st.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
 		}
 
 		// Verify the error indicates an interrupted wasm execution
-		// TODO: Come up with a better way to test this behavior.
-		// If the embedding application sets up a custom deadline for fastlike calls, they may want
-		// to catch this case and return their own response. In the default setup though, the
-		// context will only cancel when the client hangs up and they won't see whatever we write
-		// to the response.
 		expectedError := "wasm trap: interrupt"
 		if !strings.Contains(w.Body.String(), expectedError) {
 			st.Errorf("Expected error message to contain %q, got %q", expectedError, w.Body.String())
 		}
+
+		// Verify that the execution was actually interrupted (not just that the backend timed out).
+		// The context timeout is 50ms but the backend takes 100ms to respond.
+		// If interruption works correctly, the test should complete in < 100ms.
+		// We allow up to 90ms to account for overhead while ensuring it didn't wait the full 100ms.
+		maxAllowedDuration := 90 * time.Millisecond
+		if elapsed > maxAllowedDuration {
+			st.Errorf("Expected interruption to occur within %v, but took %v (backend would take 100ms)",
+				maxAllowedDuration, elapsed)
+		}
+
+		// Note on production behavior:
+		// In real deployments, when a client disconnects (ctx.Done()), they won't see the error response
+		// since the connection is already closed. This test uses httptest.ResponseRecorder which captures
+		// the response even after context cancellation, allowing us to verify the interruption behavior.
+		// Embedding applications may want to use middleware to detect context cancellation and return
+		// custom error responses before calling fastlike.ServeHTTP().
 	})
 }
 
