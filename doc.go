@@ -1,7 +1,7 @@
-// Package fastlike is a Go implementation of the Fastly Compute@Edge XQD ABI.
+// Package fastlike is a Go implementation of the Fastly Compute XQD ABI.
 //
 // It implements an http.Handler that executes WebAssembly programs compatible with Fastly's
-// Compute@Edge platform. Each incoming HTTP request is handled by a fresh wasm instance,
+// Compute platform. Each incoming HTTP request is handled by a fresh wasm instance,
 // as the XQD ABI is designed around a single request/response pair per instance.
 //
 // The public API is intentionally minimal to prevent misuse. The main entry points are:
