@@ -8,4 +8,5 @@ type UserAgent struct {
 	Patch  string
 }
 
+// UserAgentParser is a function that parses a user agent string and returns structured UserAgent data.
 type UserAgentParser func(uastring string) UserAgent

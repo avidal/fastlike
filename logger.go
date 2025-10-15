@@ -77,11 +77,13 @@ func (lw LineWriter) Write(data []byte) (int, error) {
 	}
 }
 
+// PrefixWriter wraps an io.Writer and prepends a prefix to each write operation.
 type PrefixWriter struct {
 	io.Writer
 	prefix string
 }
 
+// Write implements io.Writer for PrefixWriter by prepending the prefix to the data.
 func (w *PrefixWriter) Write(data []byte) (n int, err error) {
 	l := len(data)
 	msg := make([]byte, 0, len(w.prefix)+2+len(data))
@@ -95,6 +97,7 @@ func (w *PrefixWriter) Write(data []byte) (n int, err error) {
 	return l, nil
 }
 
+// NewPrefixWriter creates a new PrefixWriter that prepends the given prefix to all writes.
 func NewPrefixWriter(prefix string, w io.Writer) *PrefixWriter {
 	return &PrefixWriter{Writer: w, prefix: prefix}
 }

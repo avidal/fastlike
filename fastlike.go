@@ -72,6 +72,9 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Warmup pre-creates n instances and adds them to the pool.
+// This can be used to pre-compile the wasm module and reduce cold-start latency.
+// If n exceeds the pool size, it is clamped to the maximum pool capacity.
 func (f *Fastlike) Warmup(n int) {
 	f.mu.RLock()
 	instances := f.instances

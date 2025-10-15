@@ -66,55 +66,69 @@ type Memory struct {
 	MemorySlice
 }
 
+// ReadUint8 reads a uint8 from the given offset in memory.
 func (m *Memory) ReadUint8(offset int64) uint8 {
 	return m.Data()[offset]
 }
 
+// Uint16 reads a uint16 in little-endian byte order from the given offset in memory.
 func (m *Memory) Uint16(offset int64) uint16 {
 	return binary.LittleEndian.Uint16(m.Data()[offset:])
 }
 
+// Uint32 reads a uint32 in little-endian byte order from the given offset in memory.
 func (m *Memory) Uint32(offset int64) uint32 {
 	return binary.LittleEndian.Uint32(m.Data()[offset:])
 }
 
+// Uint64 reads a uint64 in little-endian byte order from the given offset in memory.
 func (m *Memory) Uint64(offset int64) uint64 {
 	return binary.LittleEndian.Uint64(m.Data()[offset:])
 }
 
+// PutUint8 writes a uint8 to the given offset in memory.
 func (m *Memory) PutUint8(v uint8, offset int64) {
 	m.Data()[offset] = v
 }
 
+// PutUint16 writes a uint16 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutUint16(v uint16, offset int64) {
 	binary.LittleEndian.PutUint16(m.Data()[offset:], v)
 }
 
+// PutUint32 writes a uint32 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutUint32(v uint32, offset int64) {
 	binary.LittleEndian.PutUint32(m.Data()[offset:], v)
 }
 
+// PutInt32 writes an int32 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutInt32(v int32, offset int64) {
 	b := new(bytes.Buffer)
 	_ = binary.Write(b, binary.LittleEndian, v)
 	_, _ = m.WriteAt(b.Bytes(), offset)
 }
 
+// PutInt64 writes an int64 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutInt64(v int64, offset int64) {
 	b := new(bytes.Buffer)
 	_ = binary.Write(b, binary.LittleEndian, v)
 	_, _ = m.WriteAt(b.Bytes(), offset)
 }
 
+// PutUint64 writes a uint64 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutUint64(v uint64, offset int64) {
 	binary.LittleEndian.PutUint64(m.Data()[offset:], v)
 }
 
+// ReadAt reads len(p) bytes from memory starting at the given offset.
+// It implements io.ReaderAt.
 func (m *Memory) ReadAt(p []byte, offset int64) (int, error) {
 	n := copy(p, m.Data()[offset:])
 	return n, nil
 }
 
+// WriteAt writes len(p) bytes to memory starting at the given offset.
+// It implements io.WriterAt.
 func (m *Memory) WriteAt(p []byte, offset int64) (int, error) {
 	n := copy(m.Data()[offset:], p)
 	return n, nil
