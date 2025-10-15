@@ -83,7 +83,7 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 
 	// Read the compressed body
 	compressedBody, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 		resp.Header.Del("Content-Length")
 		return err
 	}
-	defer gzReader.Close()
+	defer func() { _ = gzReader.Close() }()
 
 	decompressedBody, err := io.ReadAll(gzReader)
 	if err != nil {
@@ -816,7 +816,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 				_, err := pipeWriter.Write(chunk)
 				if err != nil {
 					// Pipe closed by backend, but keep draining channel to prevent blocking
-					pipeWriter.Close()
+					_ = pipeWriter.Close()
 					pipeOpen = false
 				}
 			}
@@ -825,7 +825,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Close pipe if still open
 		if pipeOpen {
-			pipeWriter.Close()
+			_ = pipeWriter.Close()
 		}
 	}()
 
@@ -1533,10 +1533,10 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 		resp, err := http.DefaultTransport.RoundTrip(r)
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(fmt.Sprintf("Backend request failed: %v", err)))
+			_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Copy the response
 		for k, v := range resp.Header {
@@ -1545,7 +1545,7 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		_, _ = io.Copy(w, resp.Body)
 	})
 
 	// Register the backend

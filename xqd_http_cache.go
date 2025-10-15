@@ -474,12 +474,12 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 	// - length: u64 (8 bytes) at offset 40
 
 	const (
-		HttpCacheWriteOptionsMaskMaxAgeNs                = 1 << 0
-		HttpCacheWriteOptionsMaskVaryRule                = 1 << 1
-		HttpCacheWriteOptionsMaskInitialAgeNs            = 1 << 2
-		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs  = 1 << 3
-		HttpCacheWriteOptionsMaskSurrogateKeys           = 1 << 4
-		HttpCacheWriteOptionsMaskLength                  = 1 << 5
+		HttpCacheWriteOptionsMaskMaxAgeNs               = 1 << 0
+		HttpCacheWriteOptionsMaskVaryRule               = 1 << 1
+		HttpCacheWriteOptionsMaskInitialAgeNs           = 1 << 2
+		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs = 1 << 3
+		HttpCacheWriteOptionsMaskSurrogateKeys          = 1 << 4
+		HttpCacheWriteOptionsMaskLength                 = 1 << 5
 	)
 
 	// Parse Cache-Control header to determine max-age and other directives
@@ -794,7 +794,7 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 
 	// Join surrogate keys with spaces (empty list is OK - write 0 bytes)
 	keysStr := ""
-	if obj.SurrogateKeys != nil && len(obj.SurrogateKeys) > 0 {
+	if len(obj.SurrogateKeys) > 0 {
 		for idx, key := range obj.SurrogateKeys {
 			if idx > 0 {
 				keysStr += " "
@@ -867,12 +867,12 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 
 	// Mask bits for HTTP cache write options
 	const (
-		HttpCacheWriteOptionsMaskVaryRule                = 1 << 1
-		HttpCacheWriteOptionsMaskInitialAgeNs            = 1 << 2
-		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs  = 1 << 3
-		HttpCacheWriteOptionsMaskSurrogateKeys           = 1 << 4
-		HttpCacheWriteOptionsMaskLength                  = 1 << 5
-		HttpCacheWriteOptionsMaskSensitiveData           = 1 << 6
+		HttpCacheWriteOptionsMaskVaryRule               = 1 << 1
+		HttpCacheWriteOptionsMaskInitialAgeNs           = 1 << 2
+		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs = 1 << 3
+		HttpCacheWriteOptionsMaskSurrogateKeys          = 1 << 4
+		HttpCacheWriteOptionsMaskLength                 = 1 << 5
+		HttpCacheWriteOptionsMaskSensitiveData          = 1 << 6
 	)
 
 	// Read vary_rule

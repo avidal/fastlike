@@ -214,13 +214,6 @@ func (i *Instance) wasm1(name string) func(a int32) int32 {
 	}
 }
 
-func (i *Instance) wasm3(name string) func(a, b, c int32) int32 {
-	return func(a, b, c int32) int32 {
-		p(i.abilog, name, a, b, c)
-		return 5
-	}
-}
-
 func (i *Instance) wasm6(name string) func(a, b, c, d, e, f int32) int32 {
 	return func(a, b, c, d, e, f int32) int32 {
 		p(i.abilog, name, a, b, c, d, e, f)

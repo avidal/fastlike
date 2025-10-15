@@ -66,7 +66,7 @@ func TestAutoDecompression(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to compress body: %v", err)
 				}
-				gzWriter.Close()
+				_ = gzWriter.Close()
 				body = buf.Bytes()
 			} else {
 				body = originalBody
