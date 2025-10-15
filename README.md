@@ -35,20 +35,20 @@ Fastlike is a complete Go implementation of the Fastly Compute XQD ABI that runs
 ### Install via Go
 
 ```bash
-go install Fastlike.dev/cmd/Fastlike@latest
+go install fastlike.dev/cmd/fastlike@latest
 ```
 
 ### Build from Source
 
 ```bash
 # Clone the repository (if you have the source code)
-# If you just want to install, use: go install Fastlike.dev/cmd/Fastlike@latest
-git clone https://github.com/Fastlike/Fastlike.git
-cd Fastlike
+# If you just want to install, use: go install fastlike.dev/cmd/fastlike@latest
+git clone https://github.com/fastlike/fastlike.git
+cd fastlike
 
 # Build and install
 make build
-# Binary will be available at ./bin/Fastlike
+# Binary will be available at ./bin/fastlike
 
 # Or install to GOPATH/bin
 make install
@@ -76,10 +76,10 @@ Start Fastlike with your WASM program and a backend service:
 
 ```bash
 # Run with a local backend on port 8000
-Fastlike -wasm bin/main.wasm -backend localhost:8000
+fastlike -wasm bin/main.wasm -backend localhost:8000
 
 # Or with a named backend
-Fastlike -wasm bin/main.wasm -backend api=localhost:8000 -bind localhost:5000
+fastlike -wasm bin/main.wasm -backend api=localhost:8000 -bind localhost:5000
 ```
 
 ### 3. Test Your Application
@@ -96,13 +96,13 @@ curl http://localhost:5000/
 
 ```bash
 # Specify custom bind address
-Fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:8080
+fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:8080
 
 # Enable verbose logging (0, 1, or 2 levels)
-Fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
+fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
 
 # Enable hot reloading on SIGHUP
-Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+fastlike -wasm my-program.wasm -backend localhost:8000 -reload
 ```
 
 ### Multiple Backends
@@ -110,7 +110,7 @@ Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
 Configure multiple named backends for complex routing:
 
 ```bash
-Fastlike -wasm my-program.wasm \
+fastlike -wasm my-program.wasm \
   -backend api=localhost:8000 \
   -backend static=localhost:8080 \
   -backend images=localhost:9000
@@ -125,7 +125,7 @@ Use JSON files for key-value lookups:
 echo '{"api_key": "secret123", "version": "1.0.0"}' > config.json
 
 # Use the dictionary in your program
-Fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary config=config.json
+fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary config=config.json
 ```
 
 The dictionary file should contain a JSON object with string keys and values:
@@ -144,10 +144,10 @@ Enable hot reloading to automatically reload your WASM module when you make chan
 
 ```bash
 # Start with reload enabled
-Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+fastlike -wasm my-program.wasm -backend localhost:8000 -reload
 
 # In another terminal, send SIGHUP to reload
-kill -SIGHUP $(pgrep Fastlike)
+kill -SIGHUP $(pgrep fastlike)
 # Or if you know the process ID: kill -SIGHUP <pid>
 ```
 
@@ -176,10 +176,10 @@ make run WASM=my-program.wasm BACKEND=localhost:8000 ARGS='-v 2'
 
 ### Verbose Mode per Request
 
-For debugging specific requests, add the `Fastlike-verbose` header:
+For debugging specific requests, add the `fastlike-verbose` header:
 
 ```bash
-curl -H "Fastlike-verbose: 1" http://localhost:5000/
+curl -H "fastlike-verbose: 1" http://localhost:5000/
 ```
 
 This enables verbose logging for just that request.
@@ -193,7 +193,7 @@ This enables verbose logging for just that request.
 python3 -m http.server 8000 &
 
 # Run Fastlike with your WASM program
-Fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:5000
+fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:5000
 
 # Test it
 curl http://localhost:5000/
@@ -208,7 +208,7 @@ node app.js 8080 &             # API server
 npx serve public/ 9000 &       # Another service
 
 # Run Fastlike with multiple backends
-Fastlike -wasm my-program.wasm \
+fastlike -wasm my-program.wasm \
   -backend static=localhost:8000 \
   -backend api=localhost:8080 \
   -backend images=localhost:9000 \
@@ -222,12 +222,12 @@ Fastlike -wasm my-program.wasm \
 
 ```bash
 # Terminal 1: Start Fastlike with hot reload
-Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+fastlike -wasm my-program.wasm -backend localhost:8000 -reload
 
 # Terminal 2: Build and reload when changes occur
 while inotifywait -e modify my-project/src/*; do
   cd my-project && fastly compute build
-  kill -SIGHUP $(pgrep Fastlike)
+  kill -SIGHUP $(pgrep fastlike)
 done
 
 # Terminal 3: Test continuously
@@ -242,10 +242,10 @@ Enable verbose logging to see all ABI calls:
 
 ```bash
 # Persistent verbose logging
-Fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
+fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
 
 # Per-request verbose logging
-curl -H "Fastlike-verbose: 1" http://localhost:5000/
+curl -H "fastlike-verbose: 1" http://localhost:5000/
 ```
 
 ### Backend Configuration
