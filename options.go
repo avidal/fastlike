@@ -38,7 +38,9 @@ func WithBackendConfig(backend *Backend) Option {
 	}
 }
 
-// WithDefaultBackend is an Option to override the default subrequest backend.
+// WithDefaultBackend sets a fallback handler for backend requests to undefined backends.
+// The function receives the backend name and returns an http.Handler.
+// If not set, undefined backends return 502 Bad Gateway.
 func WithDefaultBackend(fn func(name string) http.Handler) Option {
 	return func(i *Instance) {
 		i.defaultBackend = fn
@@ -59,9 +61,10 @@ func WithLogger(name string, w io.Writer) Option {
 	}
 }
 
-// WithDefaultLogger sets the default logger used for logs issued by the guest
-// This one is different from WithLogger, because it accepts a name and returns a writer so that
-// custom implementations can print the name, if they prefer
+// WithDefaultLogger sets a fallback logger for log endpoints not registered with WithLogger.
+// The function receives the log endpoint name and returns an io.Writer.
+// This differs from WithLogger in that it's called dynamically when the guest requests
+// an undefined log endpoint, allowing custom implementations to print the endpoint name.
 func WithDefaultLogger(fn func(name string) io.Writer) Option {
 	return func(i *Instance) {
 		i.defaultLogger = fn
@@ -97,10 +100,12 @@ func WithSecretStore(name string, fn SecretLookupFunc) Option {
 	}
 }
 
-// WithSecureFunc is an Option that determines if a request should be considered "secure" or not.
-// If it returns true, the request url has the "https" scheme and the "fastly-ssl" header set when
-// going into the wasm program.
-// The default implementation checks if `req.TLS` is non-nil.
+// WithSecureFunc sets a custom function to determine if a request should be considered "secure".
+// When the function returns true, the request will have:
+//   - URL scheme set to "https"
+//   - "fastly-ssl" header set to "1"
+// This affects how the wasm guest program sees the request.
+// The default implementation checks if req.TLS is non-nil.
 func WithSecureFunc(fn func(*http.Request) bool) Option {
 	return func(i *Instance) {
 		i.secureFn = fn
@@ -134,9 +139,10 @@ func WithImageOptimizer(fn ImageOptimizerTransformFunc) Option {
 	}
 }
 
-// WithVerbosity controls how verbose the system level logs are.
-// A verbosity of 2 prints all calls from the wasm guest into the host methods
-// Currently, verbosity less than 2 does nothing
+// WithVerbosity controls logging verbosity for ABI calls and system-level operations.
+//   - Level 0 (default): No logging
+//   - Level 1: System-level logs to stderr
+//   - Level 2: All XQD ABI calls from guest to host logged to stderr
 func WithVerbosity(v int) Option {
 	return func(i *Instance) {
 		if v >= 2 {
@@ -148,9 +154,9 @@ func WithVerbosity(v int) Option {
 	}
 }
 
-// WithComplianceRegion sets the compliance region for the request
-// The compliance region is a string identifier like "none", "us-eu", "us", etc.
-// This is used for GDPR and data locality requirements
+// WithComplianceRegion sets the compliance region identifier for data locality requirements.
+// Valid values include "none", "us-eu", "us", etc.
+// This is used by guest programs to implement GDPR compliance and data residency policies.
 func WithComplianceRegion(region string) Option {
 	return func(i *Instance) {
 		i.complianceRegion = region

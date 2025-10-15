@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// RateCounter tracks request counts over time windows for rate limiting.
-// It uses a time-bucketed approach to efficiently calculate rates and counts
-// over sliding windows.
+// RateCounter tracks request counts over time windows for Edge Rate Limiting (ERL).
+// It uses a time-bucketed event log to efficiently calculate rates and counts
+// over sliding time windows without continuous background processing.
 type RateCounter struct {
 	mu      sync.RWMutex
 	entries map[string]*RateCounterEntry
@@ -96,9 +96,8 @@ func (rc *RateCounter) LookupCount(entry string, duration uint32) uint32 {
 	return rc.countEventsInWindow(e, windowStart, now)
 }
 
-// countEventsInWindow counts the total number of events for an entry that occurred
-// between the start and end times (inclusive). Returns the sum of all event deltas
-// within the time window.
+// countEventsInWindow counts the total events for an entry within a time window (inclusive).
+// Returns the sum of all event deltas that occurred between start and end times.
 func (rc *RateCounter) countEventsInWindow(entry *RateCounterEntry, start, end time.Time) uint32 {
 	var count uint32
 
@@ -144,8 +143,8 @@ func NewPenaltyBox() *PenaltyBox {
 	}
 }
 
-// Add adds an entry to the penalty box for the given TTL (in seconds)
-// TTL is truncated to the nearest minute and must be between 1m and 1h
+// Add adds an entry to the penalty box for the specified TTL (in seconds).
+// TTL is clamped to the valid range [60s, 3600s] and rounded to the nearest minute.
 func (pb *PenaltyBox) Add(entry string, ttl uint32) {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
@@ -183,8 +182,8 @@ func (pb *PenaltyBox) Has(entry string) bool {
 	return true
 }
 
-// Cleanup removes expired entries from the penalty box
-// This is called periodically to prevent memory leaks
+// Cleanup removes expired entries from the penalty box.
+// This should be called periodically to prevent unbounded memory growth.
 func (pb *PenaltyBox) Cleanup() {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
@@ -197,10 +196,15 @@ func (pb *PenaltyBox) Cleanup() {
 	}
 }
 
-// CheckRate is a convenience function that combines rate checking and penalty box logic.
-// It increments the counter by delta, checks if the rate exceeds the limit over the window,
-// and if so, adds the entry to the penalty box.
-// Returns 1 if the entry should be blocked (rate exceeded), 0 otherwise.
+// CheckRate is a convenience function combining rate counting with penalty box enforcement.
+//
+// Logic flow:
+//  1. Check if entry is already in penalty box (blocked)
+//  2. Increment the rate counter by delta
+//  3. Calculate rate over the specified time window (in seconds)
+//  4. If rate exceeds limit, add entry to penalty box with given TTL
+//
+// Returns 1 if the entry should be blocked (rate exceeded or in penalty box), 0 otherwise.
 func CheckRate(rc *RateCounter, pb *PenaltyBox, entry string, delta, window, limit uint32, ttl uint32) uint32 {
 	// First check if already in penalty box
 	if pb.Has(entry) {

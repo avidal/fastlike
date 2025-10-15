@@ -20,27 +20,10 @@ func (i *Instance) xqd_cache_lookup(
 ) int32 {
 	i.abilog.Println("xqd_cache_lookup")
 
-	keyBuf := make([]byte, cache_key_len)
-	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
-	key := keyBuf
+	key := make([]byte, cache_key_len)
+	_, _ = i.memory.ReadAt(key, int64(cache_key))
 
-	lookupOpts := &CacheLookupOptions{}
-	if options_mask&CacheLookupOptionsMaskRequestHeaders != 0 {
-		// Read request headers handle from options struct
-		reqHandle := i.memory.Uint32(int64(options + 0))
-		if reqHandle != uint32(HandleInvalid) {
-			req := i.requests.Get(int(reqHandle))
-			if req != nil {
-				// Serialize request headers
-				buf := &bytes.Buffer{}
-				_ = req.Header.Write(buf)
-				lookupOpts.RequestHeaders = buf.Bytes()
-			}
-		}
-	}
-	if options_mask&CacheLookupOptionsMaskAlwaysUseRequestedRange != 0 {
-		lookupOpts.AlwaysUseRequestedRange = true
-	}
+	lookupOpts := i.readCacheLookupOptions(options_mask, options)
 
 	entry := i.cache.Lookup(key, lookupOpts)
 
@@ -68,9 +51,8 @@ func (i *Instance) xqd_cache_insert(
 ) int32 {
 	i.abilog.Println("xqd_cache_insert")
 
-	keyBuf := make([]byte, cache_key_len)
-	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
-	key := keyBuf
+	key := make([]byte, cache_key_len)
+	_, _ = i.memory.ReadAt(key, int64(cache_key))
 	writeOpts := i.readCacheWriteOptions(options_mask, options)
 
 	obj := i.cache.Insert(key, writeOpts)
@@ -100,25 +82,10 @@ func (i *Instance) xqd_cache_transaction_lookup(
 ) int32 {
 	i.abilog.Println("xqd_cache_transaction_lookup")
 
-	keyBuf := make([]byte, cache_key_len)
-	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
-	key := keyBuf
+	key := make([]byte, cache_key_len)
+	_, _ = i.memory.ReadAt(key, int64(cache_key))
 
-	lookupOpts := &CacheLookupOptions{}
-	if options_mask&CacheLookupOptionsMaskRequestHeaders != 0 {
-		reqHandle := i.memory.Uint32(int64(options + 0))
-		if reqHandle != uint32(HandleInvalid) {
-			req := i.requests.Get(int(reqHandle))
-			if req != nil {
-				buf := &bytes.Buffer{}
-				_ = req.Header.Write(buf)
-				lookupOpts.RequestHeaders = buf.Bytes()
-			}
-		}
-	}
-	if options_mask&CacheLookupOptionsMaskAlwaysUseRequestedRange != 0 {
-		lookupOpts.AlwaysUseRequestedRange = true
-	}
+	lookupOpts := i.readCacheLookupOptions(options_mask, options)
 
 	tx := i.cache.TransactionLookup(key, lookupOpts)
 
@@ -138,25 +105,10 @@ func (i *Instance) xqd_cache_transaction_lookup_async(
 ) int32 {
 	i.abilog.Println("xqd_cache_transaction_lookup_async")
 
-	keyBuf := make([]byte, cache_key_len)
-	_, _ = i.memory.ReadAt(keyBuf, int64(cache_key))
-	key := keyBuf
+	key := make([]byte, cache_key_len)
+	_, _ = i.memory.ReadAt(key, int64(cache_key))
 
-	lookupOpts := &CacheLookupOptions{}
-	if options_mask&CacheLookupOptionsMaskRequestHeaders != 0 {
-		reqHandle := i.memory.Uint32(int64(options + 0))
-		if reqHandle != uint32(HandleInvalid) {
-			req := i.requests.Get(int(reqHandle))
-			if req != nil {
-				buf := &bytes.Buffer{}
-				_ = req.Header.Write(buf)
-				lookupOpts.RequestHeaders = buf.Bytes()
-			}
-		}
-	}
-	if options_mask&CacheLookupOptionsMaskAlwaysUseRequestedRange != 0 {
-		lookupOpts.AlwaysUseRequestedRange = true
-	}
+	lookupOpts := i.readCacheLookupOptions(options_mask, options)
 
 	// Start async lookup (in our case, it's immediate but we return a busy handle)
 	tx := i.cache.TransactionLookup(key, lookupOpts)
@@ -222,7 +174,9 @@ func (i *Instance) xqd_cache_transaction_insert(
 	return XqdStatusOK
 }
 
-// xqd_cache_transaction_insert_and_stream_back inserts and streams back simultaneously
+// xqd_cache_transaction_insert_and_stream_back inserts and streams back simultaneously.
+// This allows the guest program to write data to the cache while simultaneously reading it back,
+// which is useful for streaming scenarios where the data needs to be both cached and sent downstream.
 func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 	cache_handle int32,
 	options_mask uint32,
@@ -241,8 +195,7 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
 
-	// Create a pipe to connect write and read handles
-	// This allows the guest to write and read simultaneously without deadlock
+	// Create a pipe to enable simultaneous write and read without deadlock
 	pipeReader, pipeWriter := io.Pipe()
 
 	// Create a cache body writer that writes to the cache object
@@ -251,8 +204,7 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 		originalBody: nil,
 	}
 
-	// Create a MultiWriter that writes to both the pipe and the cache
-	// This ensures data is immediately available for reading while also being cached
+	// Use MultiWriter to tee data to both the pipe (for immediate reading) and the cache (for storage)
 	multiWriter := io.MultiWriter(pipeWriter, cacheWriter)
 
 	// Create a write body handle that writes to both the pipe and cache
@@ -439,12 +391,13 @@ func (i *Instance) xqd_cache_get_body(
 
 	obj := handle.Transaction.Entry.Object
 
+	// Parse optional range parameters from options
 	var fromOffset, toOffset int64
 	hasFrom := options_mask&CacheGetBodyOptionsMaskFrom != 0
 	hasTo := options_mask&CacheGetBodyOptionsMaskTo != 0
 
 	if hasFrom {
-		fromOffset = int64(i.memory.ReadUint64(options + 0))
+		fromOffset = int64(i.memory.ReadUint64(options))
 	}
 	if hasTo {
 		toOffset = int64(i.memory.ReadUint64(options + 8))
@@ -591,14 +544,37 @@ func (i *Instance) xqd_cache_get_hits(
 
 // Helper functions
 
+// readCacheLookupOptions reads cache lookup options from guest memory and returns a CacheLookupOptions struct
+func (i *Instance) readCacheLookupOptions(mask uint32, optionsPtr int32) *CacheLookupOptions {
+	opts := &CacheLookupOptions{}
+
+	if mask&CacheLookupOptionsMaskRequestHeaders != 0 {
+		reqHandle := i.memory.Uint32(int64(optionsPtr))
+		if reqHandle != uint32(HandleInvalid) {
+			req := i.requests.Get(int(reqHandle))
+			if req != nil {
+				buf := &bytes.Buffer{}
+				_ = req.Header.Write(buf)
+				opts.RequestHeaders = buf.Bytes()
+			}
+		}
+	}
+
+	if mask&CacheLookupOptionsMaskAlwaysUseRequestedRange != 0 {
+		opts.AlwaysUseRequestedRange = true
+	}
+
+	return opts
+}
+
 // readCacheWriteOptions reads cache write options from guest memory
 func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWriteOptions {
 	opts := &CacheWriteOptions{}
 
-	// Read max_age_ns (always present)
-	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr + 0)
+	// Read max_age_ns (always present at offset 0)
+	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr)
 
-	offset := int32(8) // Start after max_age_ns
+	offset := int32(8) // Next field starts after max_age_ns (8 bytes)
 
 	// Read request_headers handle
 	if mask&CacheWriteOptionsMaskRequestHeaders != 0 {

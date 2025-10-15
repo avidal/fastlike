@@ -6,11 +6,16 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v37"
 )
 
-// wasmContext holds the compiled wasm module and engine for reuse across requests.
-// The engine and module are shared, while each request gets its own store and instance.
+// wasmContext holds the compiled wasm module and engine that are shared across all requests.
+// This allows amortizing the expensive compilation step across multiple request instances.
+//
+// Thread-safe sharing model:
+//   - engine and module: Read-only, safely shared across all instances
+//   - store: Created fresh per-request in Instance.setup()
+//   - wasm instance: Created fresh per-request in Instance.setup()
 type wasmContext struct {
-	engine *wasmtime.Engine
-	module *wasmtime.Module
+	engine *wasmtime.Engine // Shared wasm engine
+	module *wasmtime.Module // Compiled wasm module (shared, read-only)
 }
 
 // safeWrap1 wraps a 1-argument host function with panic recovery to work around wasmtime-go v37 bug.
@@ -170,17 +175,23 @@ func safeWrap1i64(i *Instance, name string, fn func(int64) int32) func(*wasmtime
 
 // compile creates a wasm engine and module from the provided wasm bytes.
 // The compiled module is stored in wasmContext for reuse across requests.
+// This is called once per Fastlike instance (or when reloading).
 func (i *Instance) compile(wasmbytes []byte) {
+	// Create a wasmtime config with default settings
 	config := wasmtime.NewConfig()
 
+	// Enable compilation caching for faster startup
 	check(config.CacheConfigLoadDefault())
-	// Temporarily disable epoch interruption to debug the issue
-	// config.SetEpochInterruption(true)
 
+	// Note: Epoch interruption is temporarily disabled due to bugs in wasmtime-go v37
+	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
+
+	// Create the engine and compile the module
 	engine := wasmtime.NewEngineWithConfig(config)
 	module, err := wasmtime.NewModule(engine, wasmbytes)
 	check(err)
 
+	// Store for reuse across all request instances
 	i.wasmctx = &wasmContext{
 		engine: engine,
 		module: module,

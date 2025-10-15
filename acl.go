@@ -85,8 +85,9 @@ func (e *AclEntry) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// normalizeIP applies the network mask to an IP address to get the network prefix.
-// This ensures that 192.168.100.200/16 becomes 192.168.0.0/16.
+// normalizeIP applies a network mask to an IP address to extract the network prefix.
+// This ensures that host bits are zeroed out, e.g., 192.168.100.200/16 becomes 192.168.0.0.
+// Used for consistent IP matching in ACL lookups.
 func normalizeIP(ip net.IP, mask uint8) net.IP {
 	if ip == nil {
 		return nil
@@ -123,8 +124,9 @@ func normalizeIP(ip net.IP, mask uint8) net.IP {
 	return ip
 }
 
-// isMatch checks if the given IP matches this ACL entry's prefix and returns the mask length.
-// Returns 0 if there is no match.
+// isMatch checks if the given IP matches this ACL entry's network prefix.
+// Returns the mask length (prefix length) if matched, or 0 if no match.
+// The mask length is used to determine the most specific match.
 func (e *AclEntry) isMatch(ip net.IP) uint8 {
 	if ip == nil || e.ip == nil {
 		return 0
@@ -158,10 +160,12 @@ func (e *AclEntry) isMatch(ip net.IP) uint8 {
 	return e.mask
 }
 
-// Lookup performs an IP lookup in the ACL.
-// If the IP matches multiple ACL entries, the most specific match is returned
-// (longest mask), and in case of a tie, the last entry wins.
-// Returns nil if no match is found.
+// Lookup performs an IP address lookup in the ACL.
+//
+// Match priority:
+//   - Most specific match wins (longest network mask / prefix length)
+//   - In case of a tie, the last matching entry wins
+//   - Returns nil if no match is found
 func (a *Acl) Lookup(ip net.IP) *AclEntry {
 	var bestMatch *AclEntry
 

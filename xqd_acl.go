@@ -26,7 +26,7 @@ func (i *Instance) xqd_acl_open(
 	acl := i.getACL(name)
 	if acl == nil {
 		i.abilog.Printf("acl_open: ACL not found: %s", name)
-		return XqdErrNone // Return error when ACL doesn't exist (matches Viceroy)
+		return XqdErrNone // XqdErrNone indicates not found (matches Viceroy behavior)
 	}
 
 	// Create a handle for this ACL

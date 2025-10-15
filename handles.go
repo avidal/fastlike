@@ -8,18 +8,19 @@ import (
 	"net/url"
 )
 
-// RequestHandle is an http.Request with extra metadata
-// Notably, the request body is ignored and instead the guest will provide a BodyHandle to use
+// RequestHandle is an http.Request with extra metadata.
+// The http.Request.Body field is ignored; instead, the guest program provides a BodyHandle
+// to use for the request body.
 type RequestHandle struct {
 	*http.Request
 	// autoDecompressEncodings is a bitfield indicating which encodings to auto-decompress
 	autoDecompressEncodings uint32
 	// originalHeaders preserves the original header names and order from the downstream request
-	// (used by downstream_original_header_names and downstream_original_header_count)
+	// (used by downstream_original_header_names and downstream_original_header_count XQD calls)
 	originalHeaders []string
 	// tlsState contains the TLS connection state if the downstream request was over TLS
 	tlsState *tls.ConnectionState
-	// version stores the HTTP version (Http09, Http10, or Http11), defaults to Http11
+	// version stores the HTTP version (0=Http09, 1=Http10, 2=Http11). Defaults to 2 (Http11).
 	version int32
 }
 
@@ -53,13 +54,14 @@ func (rhs *RequestHandles) New() (int, *RequestHandle) {
 	return len(rhs.handles) - 1, rh
 }
 
-// ResponseHandle is an http.Response with extra metadata
-// Notably, the response body is ignored and instead the guest will provide a BodyHandle to use
+// ResponseHandle is an http.Response with extra metadata.
+// The http.Response.Body field is ignored; instead, the guest program provides a BodyHandle
+// to use for the response body.
 type ResponseHandle struct {
 	*http.Response
 	// RemoteAddr is the remote address of the backend that handled the request
 	RemoteAddr string
-	// version stores the HTTP version (Http09, Http10, or Http11), defaults to Http11
+	// version stores the HTTP version (0=Http09, 1=Http10, 2=Http11). Defaults to 2 (Http11).
 	version int32
 }
 
@@ -87,32 +89,36 @@ func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
 	return len(rhs.handles) - 1, rh
 }
 
-// BodyHandle represents a body. It could be readable or writable, but not both.
-// For cases where it's already connected to a request or response body, the reader or writer
-// properties will reference the original request or response respectively.
-// For new bodies, buf will hold the contents and either the reader or writer will wrap it.
+// BodyHandle represents an HTTP body that can be readable or writable (but not both).
+//
+// For bodies attached to an existing request or response, the reader/writer/closer fields
+// reference the original body's I/O interfaces.
+//
+// For new bodies created by the guest program, buf holds the content and reader/writer wrap it.
+//
+// Streaming bodies (send_async_streaming) use separate pipes and channels for backpressure control.
 type BodyHandle struct {
-	// reader, writer, and closer are connected to the existing request/response body, if one exists
+	// reader, writer, and closer connect to an existing request/response body, if one exists
 	reader io.Reader
 	writer io.Writer
 	closer io.Closer
 
-	// for bodies created outside of a request/response, buf holds the body content and
-	// reader/writer/closer wrap it
+	// buf holds body content for newly created bodies (not attached to request/response)
+	// The reader/writer/closer fields wrap this buffer.
 	buf *bytes.Buffer
 
-	// length is the number of bytes in the body
+	// length is the total number of bytes in the body
 	length int64
 
-	// trailers are HTTP trailers that come after the body in chunked encoding
+	// trailers are HTTP trailers that come after the body in chunked transfer encoding
 	trailers http.Header
 
-	// Streaming body support (for send_async_streaming)
+	// Streaming body support (for send_async_streaming XQD call)
 	isStreaming      bool
-	streamingWriter  *io.PipeWriter // writes go here
-	streamingChan    chan []byte    // buffered channel for backpressure
-	streamingDone    chan struct{}  // closed when streaming completes
-	streamingWritten int64          // total bytes written to streaming body
+	streamingWriter  *io.PipeWriter // writes go here from guest
+	streamingChan    chan []byte    // buffered channel for backpressure control
+	streamingDone    chan struct{}  // closed when streaming completes or is cancelled
+	streamingWritten int64          // total bytes written to streaming body so far
 }
 
 // Close implements io.Closer for a BodyHandle
@@ -148,8 +154,8 @@ func (b *BodyHandle) IsStreaming() bool {
 	return b.isStreaming
 }
 
-// IsStreamingReady checks if the streaming body has capacity for writes (non-blocking)
-// Returns true if writes will not block, false if buffer is full (backpressure) or done
+// IsStreamingReady checks if the streaming body has capacity for writes (non-blocking).
+// Returns true if writes will not block, false if the buffer is full (backpressure applied) or done.
 func (b *BodyHandle) IsStreamingReady() bool {
 	if !b.isStreaming || b.streamingChan == nil {
 		return false
@@ -164,7 +170,8 @@ func (b *BodyHandle) IsStreamingReady() bool {
 	return len(b.streamingChan) < cap(b.streamingChan)
 }
 
-// WriteStreaming writes data to a streaming body (non-blocking check, may block on channel send)
+// WriteStreaming writes data to a streaming body.
+// The ready check is non-blocking, but the actual channel send may block if the buffer is full.
 func (b *BodyHandle) WriteStreaming(p []byte) (int, error) {
 	if !b.isStreaming {
 		return 0, io.ErrClosedPipe
@@ -453,17 +460,7 @@ func (ahs *AclHandles) New(name string, acl *Acl) int {
 	return len(ahs.handles) - 1
 }
 
-// AsyncItemHandle represents a unified handle for async I/O operations
-// It can wrap different types of async handles (bodies, pending requests, KV operations, cache operations)
-type AsyncItemHandle struct {
-	// Type indicates what kind of async item this is
-	Type AsyncItemType
-
-	// HandleID is the original handle ID for the wrapped item
-	HandleID int
-}
-
-// AsyncItemType indicates the type of async item
+// AsyncItemType indicates the type of async operation being tracked.
 type AsyncItemType int
 
 const (
@@ -476,6 +473,18 @@ const (
 	AsyncItemTypeCacheBusy
 	AsyncItemTypeRequestPromise
 )
+
+// AsyncItemHandle represents a unified handle for async I/O operations.
+// It wraps different types of async handles (streaming bodies, pending requests,
+// KV operations, cache operations) into a single type that can be selected on
+// using the async_io_select XQD call.
+type AsyncItemHandle struct {
+	// Type indicates what kind of async operation this handle represents
+	Type AsyncItemType
+
+	// HandleID is the original handle ID for the wrapped operation
+	HandleID int
+}
 
 // AsyncItemHandles manages async item handles
 type AsyncItemHandles struct {
@@ -500,12 +509,16 @@ func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
 	return len(aihs.handles) - 1
 }
 
-// RequestPromise represents a promise for receiving an additional downstream request
-// In production Fastly environments, this allows session reuse where one execution can handle
-// multiple requests. In local testing, this will never actually receive a request.
+// RequestPromise represents a promise for receiving an additional downstream request.
+//
+// In production Fastly environments, this enables session reuse where a single wasm execution
+// can handle multiple sequential requests from the same client.
+//
+// In local testing environments, request promises never receive requests and will timeout/fail,
+// as fastlike is designed for single-request-per-instance semantics.
 type RequestPromise struct {
-	done chan struct{} // closed when a request arrives or timeout occurs
-	req  *http.Request // the received request, or nil if timed out/abandoned
+	done chan struct{} // closed when a request arrives, times out, or is abandoned
+	req  *http.Request // the received request (nil if timed out or abandoned)
 	err  error         // error if promise was abandoned or timed out
 }
 

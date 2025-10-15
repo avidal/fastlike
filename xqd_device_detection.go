@@ -12,21 +12,21 @@ func (i *Instance) xqd_device_detection_lookup(
 	buf_len int32,
 	nwritten_out int32,
 ) int32 {
-	// Read user agent string from memory
-	buf := make([]byte, user_agent_size)
-	_, err := i.memory.ReadAt(buf, int64(user_agent_addr))
+	// Read user agent string from guest memory
+	userAgentBuf := make([]byte, user_agent_size)
+	_, err := i.memory.ReadAt(userAgentBuf, int64(user_agent_addr))
 	if err != nil {
-		i.abilog.Printf("device_detection_lookup: read user agent err, got %s", err.Error())
+		i.abilog.Printf("device_detection_lookup: failed to read user agent: %s", err.Error())
 		return XqdError
 	}
 
-	userAgent := string(buf)
+	userAgent := string(userAgentBuf)
 	i.abilog.Printf("device_detection_lookup: user_agent=%s\n", userAgent)
 
 	// Call the configured device detection function
 	result := i.deviceDetection(userAgent)
 
-	// If no result, return None status
+	// If no result, return XqdErrNone (indicates success but no data available)
 	if result == "" {
 		i.abilog.Printf("device_detection_lookup: no data for user agent")
 		return XqdErrNone
@@ -39,10 +39,10 @@ func (i *Instance) xqd_device_detection_lookup(
 		return XqdErrBufferLength
 	}
 
-	// Write the result to memory
+	// Write the result to guest memory
 	nwritten, err := i.memory.WriteAt([]byte(result), int64(buf_addr))
 	if err != nil {
-		i.abilog.Printf("device_detection_lookup: write err, got %s", err.Error())
+		i.abilog.Printf("device_detection_lookup: failed to write result: %s", err.Error())
 		return XqdError
 	}
 

@@ -7,6 +7,10 @@ import (
 
 // xqd_image_optimizer_transform_request transforms an image according to the provided configuration.
 //
+// This function takes an origin request to fetch an image, applies transformations based on the config,
+// and returns the transformed image as a response. The configuration is passed via a bitmasked struct
+// that can contain JSON-encoded Image Optimizer API parameters.
+//
 // Function signature (from WITX):
 //
 //	(@interface func (export "transform_image_optimizer_request")
@@ -21,12 +25,12 @@ import (
 //	            (error $fastly_status)))
 //	)
 //
-// The transform config struct contains:
+// The transform config struct (ImageOptimizerTransformConfig) contains:
 //   - sdk_claims_opts: pointer to string (JSON-encoded Image Optimizer API parameters)
 //   - sdk_claims_opts_len: u32
 //
-// The error detail struct contains:
-//   - tag: u32 (ImageOptimizerErrorTag)
+// The error detail struct (ImageOptimizerErrorDetail) contains:
+//   - tag: u32 (ImageOptimizerErrorTag: None=0, Error=1, Unsupported=2)
 //   - message: pointer to string
 //   - message_len: u32
 func (i *Instance) xqd_image_optimizer_transform_request(
@@ -83,13 +87,13 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 		}
 	}
 
-	// Parse transform config if sdk_claims_opts is provided
+	// Parse transform config if sdk_claims_opts flag is set in the mask
 	var config ImageOptimizerTransformConfig
 	if ioTransformConfigMask&ImageOptimizerTransformConfigOptionsSdkClaimsOpt != 0 {
-		// Read the ImageOptimizerTransformConfig struct from memory
-		// struct layout:
-		//   field $sdk_claims_opts (@witx pointer (@witx char8))  // offset 0, 4 bytes
-		//   field $sdk_claims_opts_len u32                         // offset 4, 4 bytes
+		// Read the ImageOptimizerTransformConfig struct from guest memory.
+		// Memory layout (8 bytes total):
+		//   offset 0: sdk_claims_opts pointer (4 bytes)
+		//   offset 4: sdk_claims_opts_len (4 bytes)
 		sdkClaimsOptsPtr := i.memory.Uint32(int64(ioTransformConfigPtr))
 		sdkClaimsOptsLen := i.memory.Uint32(int64(ioTransformConfigPtr + 4))
 
@@ -108,25 +112,25 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 	// Call the user-provided image optimizer function
 	response, errorDetail, err := i.imageOptimizer(originReqHandle.Request, originBody, backendName, config)
 
-	// Write error detail back to guest memory
-	// struct layout:
-	//   field $tag u32                                // offset 0, 4 bytes
-	//   field $message (@witx pointer (@witx char8))  // offset 4, 4 bytes
-	//   field $message_len u32                        // offset 8, 4 bytes
+	// Write error detail struct back to guest memory.
+	// Memory layout (12 bytes total):
+	//   offset 0: tag (4 bytes) - error type enum
+	//   offset 4: message pointer (4 bytes)
+	//   offset 8: message_len (4 bytes)
 	if ioErrorDetailPtr != 0 {
 		i.memory.PutUint32(errorDetail.Tag, int64(ioErrorDetailPtr))
 		if errorDetail.Message != "" {
-			// Allocate space in guest memory for the error message
-			// Note: In a full implementation, we'd need a proper memory allocator.
-			// For now, we write to a temporary buffer area. The guest should
-			// provide a buffer or handle memory management.
+			// Write error message to guest memory.
+			// SIMPLIFICATION: We write the message inline immediately after the struct.
+			// A full implementation would use a proper guest-side memory allocator,
+			// but for local testing this approach works.
 			messageBytes := []byte(errorDetail.Message)
-			// We'll write the message inline after the struct (this is a simplification)
-			messagePtr := ioErrorDetailPtr + 12 // After the struct
+			messagePtr := ioErrorDetailPtr + 12 // Start after the 12-byte struct
 			_, _ = i.memory.WriteAt(messageBytes, int64(messagePtr))
-			i.memory.PutUint32(uint32(messagePtr), int64(ioErrorDetailPtr+4))
-			i.memory.PutUint32(uint32(len(messageBytes)), int64(ioErrorDetailPtr+8))
+			i.memory.PutUint32(uint32(messagePtr), int64(ioErrorDetailPtr+4))         // message pointer
+			i.memory.PutUint32(uint32(len(messageBytes)), int64(ioErrorDetailPtr+8)) // message length
 		} else {
+			// No error message - set pointer and length to 0
 			i.memory.PutUint32(0, int64(ioErrorDetailPtr+4))
 			i.memory.PutUint32(0, int64(ioErrorDetailPtr+8))
 		}

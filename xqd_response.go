@@ -96,19 +96,21 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 		return XqdErrInvalidHandle
 	}
 
+	// Collect all header names from the response
 	names := []string{}
-	for n := range w.Header {
-		names = append(names, n)
+	for headerName := range w.Header {
+		names = append(names, headerName)
 	}
 
-	// these names are explicitly unsorted, so let's sort them ourselves
-	sort.Strings(names[:])
+	// Sort names alphabetically for consistent ordering (Go's map iteration is non-deterministic)
+	sort.Strings(names)
 
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
-// xqd_resp_header_value_get retrieves the value of a specific response header.
-// The header name is read from guest memory, and the value is written back to guest memory.
+// xqd_resp_header_value_get retrieves the first value of a specific response header.
+// The header name is read from guest memory, and the first value is written back to guest memory.
+// If the header doesn't exist, nwritten_out is set to 0 but XqdStatusOK is returned.
 // Returns XqdErrBufferLength if the buffer is too small, XqdErrInvalidArgument if the name is too long.
 func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
@@ -133,6 +135,7 @@ func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name
 
 	i.abilog.Printf("resp_header_value_get: handle=%d header=%q\n", handle, header)
 
+	// Get the first value for this header (returns "" if not found)
 	value := w.Header.Get(header)
 
 	// Always write the length needed
@@ -278,27 +281,31 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 	}
 
 	header := http.CanonicalHeaderKey(string(buf))
+
+	i.abilog.Printf("resp_header_values_get: handle=%d header=%q cursor=%d\n", handle, header, cursor)
+
+	// Get all values for this header (empty slice if not found)
 	values, ok := w.Header[header]
 	if !ok {
 		values = []string{}
 	}
 
-	i.abilog.Printf("resp_header_values_get: handle=%d header=%q cursor=%d\n", handle, header, cursor)
-
-	// Sort the values otherwise cursors don't work
-	sort.Strings(values[:])
+	// Sort the values for consistent ordering (required for cursor-based pagination)
+	sort.Strings(values)
 
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
 // xqd_resp_header_values_set sets multiple values for a response header.
 // The values are provided as a null-terminated list of strings in guest memory.
+// Format in memory: "value1\0value2\0value3\0"
 func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
+	// Read the header name
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
@@ -307,14 +314,15 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 	header := http.CanonicalHeaderKey(string(buf))
 
-	// read values_size bytes from values_addr for a list of \0 terminated values for the header
-	// but, read 1 less than that to avoid the trailing nul
+	// Read the null-terminated values list
+	// We read (values_size - 1) bytes to exclude the trailing null terminator
 	buf = make([]byte, values_size-1)
 	_, err = i.memory.ReadAt(buf, int64(values_addr))
 	if err != nil {
 		return XqdError
 	}
 
+	// Split on null bytes to get individual values
 	values := bytes.Split(buf, []byte("\x00"))
 
 	i.abilog.Printf("resp_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
@@ -344,8 +352,9 @@ func (i *Instance) xqd_resp_close(handle int32) int32 {
 	return XqdStatusOK
 }
 
-// xqd_resp_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set
-// Only supports automatic mode
+// xqd_resp_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set.
+// Mode 0 (Automatic) is supported: Go's http package automatically sets these headers.
+// Mode 1 (ManuallyFromHeaders) is not supported and returns XqdErrUnsupported.
 func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) int32 {
 	// Validate response handle
 	w := i.responses.Get(int(handle))
@@ -356,9 +365,12 @@ func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) i
 
 	i.abilog.Printf("resp_framing_headers_mode_set: handle=%d mode=%d", handle, mode)
 
-	// Mode 0 = Automatic (supported)
-	// Mode 1 = ManuallyFromHeaders (not supported)
-	if mode != 0 {
+	const (
+		framingModeAutomatic          = 0
+		framingModeManuallyFromHeaders = 1
+	)
+
+	if mode != framingModeAutomatic {
 		i.abilog.Printf("resp_framing_headers_mode_set: manual mode not supported")
 		return XqdErrUnsupported
 	}
@@ -366,8 +378,9 @@ func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) i
 	return XqdStatusOK
 }
 
-// xqd_resp_http_keepalive_mode_set controls connection reuse mode
-// Only supports automatic mode
+// xqd_resp_http_keepalive_mode_set controls HTTP connection reuse (keepalive) mode.
+// Mode 0 (Automatic) is supported: Go's http package handles keepalive automatically.
+// Mode 1 (NoKeepalive) is not supported and returns XqdErrUnsupported.
 func (i *Instance) xqd_resp_http_keepalive_mode_set(handle int32, mode int32) int32 {
 	// Validate response handle
 	w := i.responses.Get(int(handle))
@@ -378,9 +391,12 @@ func (i *Instance) xqd_resp_http_keepalive_mode_set(handle int32, mode int32) in
 
 	i.abilog.Printf("resp_http_keepalive_mode_set: handle=%d mode=%d", handle, mode)
 
-	// Mode 0 = Automatic (supported)
-	// Mode 1 = NoKeepalive (not supported)
-	if mode != 0 {
+	const (
+		keepaliveModeAutomatic = 0
+		keepaliveModeNoKeepalive = 1
+	)
+
+	if mode != keepaliveModeAutomatic {
 		i.abilog.Printf("resp_http_keepalive_mode_set: no-keepalive mode not supported")
 		return XqdErrUnsupported
 	}
@@ -388,7 +404,10 @@ func (i *Instance) xqd_resp_http_keepalive_mode_set(handle int32, mode int32) in
 	return XqdStatusOK
 }
 
-// xqd_resp_get_addr_dest_ip returns the destination IP address for the backend request
+// xqd_resp_get_addr_dest_ip returns the destination IP address for the backend request.
+// This extracts the IP from the response's RemoteAddr field and writes it to guest memory.
+// IPv4 addresses are returned in 4-byte format, IPv6 in 16-byte format.
+// Returns XqdErrNone if no remote address is available, XqdStatusOK on success.
 func (i *Instance) xqd_resp_get_addr_dest_ip(handle int32, addr_octets_out int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -398,13 +417,13 @@ func (i *Instance) xqd_resp_get_addr_dest_ip(handle int32, addr_octets_out int32
 
 	i.abilog.Printf("resp_get_addr_dest_ip: handle=%d", handle)
 
-	// Get the remote address from response metadata
+	// Check if remote address is available
 	if w.RemoteAddr == "" {
 		i.abilog.Printf("resp_get_addr_dest_ip: no remote address available")
 		return XqdErrNone
 	}
 
-	// Parse the remote address
+	// Parse the remote address (format is "IP:port")
 	host, _, err := net.SplitHostPort(w.RemoteAddr)
 	if err != nil {
 		i.abilog.Printf("resp_get_addr_dest_ip: failed to parse remote address: %v", err)
@@ -418,7 +437,7 @@ func (i *Instance) xqd_resp_get_addr_dest_ip(handle int32, addr_octets_out int32
 		return XqdErrNone
 	}
 
-	// Convert to 16-byte representation (IPv4 will be in IPv4-mapped IPv6 format)
+	// Determine the IP format (IPv4 or IPv6)
 	var octets []byte
 	if ip.To4() != nil {
 		// IPv4 address - return 4 bytes
@@ -439,7 +458,9 @@ func (i *Instance) xqd_resp_get_addr_dest_ip(handle int32, addr_octets_out int32
 	return XqdStatusOK
 }
 
-// xqd_resp_get_addr_dest_port returns the destination port for the backend request
+// xqd_resp_get_addr_dest_port returns the destination port for the backend request.
+// This extracts the port from the response's RemoteAddr field and writes it to guest memory as u16.
+// Returns XqdErrNone if no remote address is available, XqdStatusOK on success.
 func (i *Instance) xqd_resp_get_addr_dest_port(handle int32, port_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
@@ -449,13 +470,13 @@ func (i *Instance) xqd_resp_get_addr_dest_port(handle int32, port_out int32) int
 
 	i.abilog.Printf("resp_get_addr_dest_port: handle=%d", handle)
 
-	// Get the remote address from response metadata
+	// Check if remote address is available
 	if w.RemoteAddr == "" {
 		i.abilog.Printf("resp_get_addr_dest_port: no remote address available")
 		return XqdErrNone
 	}
 
-	// Parse the remote address
+	// Parse the remote address (format is "IP:port")
 	_, portStr, err := net.SplitHostPort(w.RemoteAddr)
 	if err != nil {
 		i.abilog.Printf("resp_get_addr_dest_port: failed to parse remote address: %v", err)

@@ -1,36 +1,40 @@
 package fastlike
 
-// Constants used for return values from ABI functions.
-// See https://docs.rs/fastly-shared for more.
+// XQD ABI status codes returned from host functions.
+// These match the fastly-shared Rust crate definitions.
+// See https://docs.rs/fastly-shared for more details.
 const (
-	XqdStatusOK           int32 = 0
-	XqdError              int32 = 1
-	XqdErrInvalidArgument int32 = 2
-	XqdErrInvalidHandle   int32 = 3
-	XqdErrBufferLength    int32 = 4
-	XqdErrUnsupported     int32 = 5
-	XqdErrBadAlignment    int32 = 6
-	XqdErrHttpParse       int32 = 7
-	XqdErrHttpUserInvalid int32 = 8
-	XqdErrHttpIncomplete  int32 = 9
-	XqdErrNone            int32 = 10
-	XqdErrAgain           int32 = 11
-	XqdErrLimitExceeded   int32 = 12
+	XqdStatusOK           int32 = 0  // Success
+	XqdError              int32 = 1  // Generic error
+	XqdErrInvalidArgument int32 = 2  // Invalid argument passed
+	XqdErrInvalidHandle   int32 = 3  // Invalid handle ID
+	XqdErrBufferLength    int32 = 4  // Buffer too small
+	XqdErrUnsupported     int32 = 5  // Operation not supported
+	XqdErrBadAlignment    int32 = 6  // Misaligned pointer
+	XqdErrHttpParse       int32 = 7  // HTTP parsing error
+	XqdErrHttpUserInvalid int32 = 8  // Invalid HTTP user input
+	XqdErrHttpIncomplete  int32 = 9  // Incomplete HTTP message
+	XqdErrNone            int32 = 10 // No value/data available
+	XqdErrAgain           int32 = 11 // Operation would block (try again)
+	XqdErrLimitExceeded   int32 = 12 // Resource limit exceeded
 )
 
-// HandleInvalid is returned to guests when they attempt to obtain a handle that doesn't exist.
-// For instance, opening a dictionary that is not registered.
-// Note that this is distinct from XqdErrInvalidHandle, which is returned when callers attempt to
-// use an otherwise invalid handle, such as attempting to send a request whose handle has not
-// been created. Value is uint32_max - 1 (4294967294).
+// HandleInvalid is returned when attempting to open a resource that doesn't exist
+// (e.g., opening a dictionary that was not registered).
+//
+// This is distinct from XqdErrInvalidHandle, which is returned when using an invalid
+// handle ID (e.g., a handle that was never created or already closed).
+//
+// Value is uint32_max - 1 (4294967294).
 const HandleInvalid = 4294967295 - 1
 
+// HTTP version constants for request/response version fields.
 const (
-	Http09 int32 = 0
-	Http10 int32 = 1
-	Http11 int32 = 2
-	Http2  int32 = 3
-	Http3  int32 = 4
+	Http09 int32 = 0 // HTTP/0.9
+	Http10 int32 = 1 // HTTP/1.0
+	Http11 int32 = 2 // HTTP/1.1
+	Http2  int32 = 3 // HTTP/2
+	Http3  int32 = 4 // HTTP/3
 )
 
 // SendErrorDetailTag represents different error types that can occur during send operations
@@ -129,10 +133,10 @@ const (
 	ContentEncodingsGzip uint32 = 1 << 0
 )
 
-// BodyWriteEnd represents the position where data should be written
+// BodyWriteEnd specifies where to write data in a body.
 const (
-	BodyWriteEndBack  int32 = 0 // Append to the end (back)
-	BodyWriteEndFront int32 = 1 // Prepend to the front
+	BodyWriteEndBack  int32 = 0 // Append to the end of the body
+	BodyWriteEndFront int32 = 1 // Prepend to the beginning of the body
 )
 
 // AclError represents ACL lookup errors

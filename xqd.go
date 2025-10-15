@@ -11,10 +11,12 @@ import (
 )
 
 // xqd_init initializes the XQD ABI and verifies the protocol version.
+// The XQD ABI currently only supports version 1.
 // Returns XqdErrUnsupported if the version is not supported, XqdStatusOK otherwise.
 func (i *Instance) xqd_init(abiv int64) int32 {
 	i.abilog.Printf("init: version=%d\n", abiv)
-	if abiv != 1 {
+	const supportedABIVersion = 1
+	if abiv != supportedABIVersion {
 		return XqdErrUnsupported
 	}
 
@@ -23,13 +25,14 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 
 // xqd_req_body_downstream_get converts the downstream HTTP request into a (request, body) handle pair.
 // Captures TLS state, original header names, and sets up the request URL with scheme and host.
+// This is typically the first XQD call made by guest programs to access the incoming HTTP request.
 // Returns XqdStatusOK on success.
 func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) int32 {
-	// Convert the downstream request into a (request, body) handle pair
+	// Create a new request handle and clone the downstream request into it
 	rhid, rh := i.requests.New()
 	rh.Request = i.ds_request.Clone(context.Background())
 
-	// downstream requests don't have host or scheme on the URL, but we need it
+	// The downstream request URL doesn't include host or scheme, so we populate them
 	rh.URL.Host = i.ds_request.Host
 
 	if i.secureFn(i.ds_request) {
@@ -54,10 +57,10 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 		rh.tlsState = i.ds_request.TLS
 	}
 
-	// NOTE: Originally, we setup the body handle using `bodies.NewReader(rh.Body)`, but there is
-	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
-	// get the body. I don't know why. This "solves" the problem for fastlike, at least
-	// temporarily.
+	// Create a body handle by copying the downstream request body into a buffer.
+	// NOTE: We use NewBuffer instead of NewReader to avoid a bug where subrequests
+	// don't properly forward the body. This copies the entire body into memory,
+	// which works around the issue but may not be ideal for very large bodies.
 	bhid, bh := i.bodies.NewBuffer()
 	if i.ds_request.Body != nil {
 		_, _ = io.Copy(bh, i.ds_request.Body)
@@ -114,22 +117,23 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 // IPv4 addresses are returned in 4-byte format, IPv6 in 16-byte format.
 // Returns XqdStatusOK on success or XqdError on failure.
 func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_out int32) int32 {
-	ip := net.ParseIP(strings.SplitN(i.ds_request.RemoteAddr, ":", 2)[0])
+	// Extract IP from RemoteAddr (format is typically "IP:port")
+	hostPort := strings.SplitN(i.ds_request.RemoteAddr, ":", 2)
+	ip := net.ParseIP(hostPort[0])
 	i.abilog.Printf("req_downstream_client_ip_addr: remoteaddr=%s, ip=%q\n", i.ds_request.RemoteAddr, ip)
 
-	// If there's no good IP on the incoming request, we can exit early
+	// If we can't parse the IP, return success with zero bytes written
 	if ip == nil {
 		return XqdStatusOK
 	}
 
-	// Convert to 4-byte representation if it's an IPv4 address
-	// This avoids writing IPv6-mapped IPv4 addresses (::ffff:x.x.x.x)
+	// Convert IPv6-mapped IPv4 addresses (::ffff:x.x.x.x) to native IPv4 (4 bytes)
+	// This ensures IPv4 addresses are always returned in 4-byte format
 	if ipv4 := ip.To4(); ipv4 != nil {
 		ip = ipv4
 	}
 
-	// Write the IP to memory. net.IP is implemented a byte slice, which we can
-	// write directly out
+	// Write the IP bytes to guest memory. net.IP is a byte slice that can be written directly.
 	nwritten, err := i.memory.WriteAt(ip, int64(octets_out))
 	if err != nil {
 		return XqdError
@@ -140,14 +144,15 @@ func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_
 	return XqdStatusOK
 }
 
-// xqd_req_downstream_server_ip_addr returns the server's IP address that received the downstream request
-// For local testing, this would be the listening address (e.g., 127.0.0.1 or 0.0.0.0)
+// xqd_req_downstream_server_ip_addr returns the server's IP address that received the downstream request.
+// For local testing, this returns 127.0.0.1. In a production Fastly environment, this would be
+// the actual server IP that accepted the connection.
+// Returns XqdStatusOK on success or XqdError on failure.
 func (i *Instance) xqd_req_downstream_server_ip_addr(octets_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("req_downstream_server_ip_addr")
 
-	// For local testing, return localhost IPv4 address
-	// In production, this would be the actual server IP
-	// Use direct byte slice to ensure 4-byte IPv4 representation
+	// Return localhost (127.0.0.1) for local testing
+	// Use a byte slice to ensure proper 4-byte IPv4 format
 	ip := []byte{127, 0, 0, 1}
 
 	// Write the IP to memory
@@ -213,31 +218,33 @@ func (i *Instance) xqd_uap_parse(
 	return XqdStatusOK
 }
 
-// p logs stub function calls with their arguments for debugging purposes.
-// Used to track unimplemented or stubbed XQD ABI functions.
-func p(l *log.Logger, name string, args ...int32) {
-	xs := []string{}
-	for _, x := range args {
-		xs = append(xs, fmt.Sprintf("%d", x))
+// logStubCall logs stub function calls with their arguments for debugging purposes.
+// Used to track unimplemented or stubbed XQD ABI functions during development.
+func logStubCall(logger *log.Logger, functionName string, args ...int32) {
+	argStrings := []string{}
+	for _, arg := range args {
+		argStrings = append(argStrings, fmt.Sprintf("%d", arg))
 	}
 
-	l.Printf("[STUB] %s: args=%q\n", name, xs)
+	logger.Printf("[STUB] %s: args=%q\n", functionName, argStrings)
 }
 
 // wasm1 creates a stub function that accepts one int32 argument.
-// Returns a function that logs the call and returns an unsupported status code.
+// Returns a function that logs the call and returns XqdErrUnsupported (5).
+// Used during development to identify unimplemented XQD functions.
 func (i *Instance) wasm1(name string) func(a int32) int32 {
 	return func(a int32) int32 {
-		p(i.abilog, name, a)
-		return 5
+		logStubCall(i.abilog, name, a)
+		return XqdErrUnsupported
 	}
 }
 
 // wasm6 creates a stub function that accepts six int32 arguments.
-// Returns a function that logs the call and returns an unsupported status code.
+// Returns a function that logs the call and returns XqdErrUnsupported (5).
+// Used during development to identify unimplemented XQD functions.
 func (i *Instance) wasm6(name string) func(a, b, c, d, e, f int32) int32 {
 	return func(a, b, c, d, e, f int32) int32 {
-		p(i.abilog, name, a, b, c, d, e, f)
-		return 5
+		logStubCall(i.abilog, name, a, b, c, d, e, f)
+		return XqdErrUnsupported
 	}
 }

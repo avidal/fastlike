@@ -86,8 +86,9 @@ func defaultBackend(name string) http.Handler {
 }
 
 // DynamicBackendConfig represents the configuration structure passed from guest code
-// when registering a dynamic backend. This maps to the dynamic_backend_config struct
-// in the XQD ABI.
+// when registering a dynamic backend at runtime.
+// This struct maps directly to the dynamic_backend_config struct in the XQD ABI,
+// with all pointer fields and lengths matching the C-style interface.
 type DynamicBackendConfig struct {
 	HostOverride             int32  // Pointer to host override string
 	HostOverrideLen          uint32 // Length of host override string

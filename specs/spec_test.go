@@ -36,15 +36,16 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/simple-response", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
-		i.ServeHTTP(w, r)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		inst.ServeHTTP(w, r)
 
-		if w.Body.String() != "Hello, world!" {
-			st.Fail()
+		expectedBody := "Hello, world!"
+		if w.Body.String() != expectedBody {
+			st.Errorf("Expected body %q, got %q", expectedBody, w.Body.String())
 		}
 
 		if w.Code != http.StatusOK {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 	})
 
@@ -52,15 +53,15 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/no-body", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
-		i.ServeHTTP(w, r)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		inst.ServeHTTP(w, r)
 
 		if w.Body.String() != "" {
-			st.Fail()
+			st.Errorf("Expected empty body, got %q", w.Body.String())
 		}
 
 		if w.Code != http.StatusNoContent {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusNoContent, w.Code)
 		}
 	})
 
@@ -68,15 +69,16 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-body", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
-		i.ServeHTTP(w, r)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		inst.ServeHTTP(w, r)
 
-		if w.Body.String() != "original\nappended" {
-			st.Fail()
+		expectedBody := "original\nappended"
+		if w.Body.String() != expectedBody {
+			st.Errorf("Expected body %q, got %q", expectedBody, w.Body.String())
 		}
 
 		if w.Code != http.StatusOK {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 	})
 
@@ -85,7 +87,7 @@ func TestFastlike(t *testing.T) {
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/user-agent", io.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("user-agent", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:76.0) Gecko/20100101 Firefox/76.1.15")
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)), fastlike.WithUserAgentParser(func(_ string) fastlike.UserAgent {
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)), fastlike.WithUserAgentParser(func(_ string) fastlike.UserAgent {
 			return fastlike.UserAgent{
 				Family: "Firefox",
 				Major:  "76",
@@ -93,14 +95,15 @@ func TestFastlike(t *testing.T) {
 				Patch:  "15",
 			}
 		}))
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 
-		if w.Body.String() != "Firefox 76.1.15" {
-			st.Fail()
+		expectedBody := "Firefox 76.1.15"
+		if w.Body.String() != expectedBody {
+			st.Errorf("Expected body %q, got %q", expectedBody, w.Body.String())
 		}
 
 		if w.Code != http.StatusOK {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 	})
 
@@ -108,115 +111,120 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusTeapot)
 			_, _ = w.Write([]byte("i am a teapot"))
 		})))
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 
-		if w.Body.String() != "i am a teapot" {
-			st.Fail()
+		expectedBody := "i am a teapot"
+		if w.Body.String() != expectedBody {
+			st.Errorf("Expected body %q, got %q", expectedBody, w.Body.String())
 		}
 
 		if w.Code != http.StatusTeapot {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusTeapot, w.Code)
 		}
 	})
 
 	t.Run("append-header", func(st *testing.T) {
 		st.Parallel()
-		// Assert that we can carry headers via subrequests
+		// Verify that headers are correctly passed through subrequests
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/append-header", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 			defer func() { _ = r.Body.Close() }()
-			if r.Header.Get("test-header") != "test-value" {
-				st.Fail()
+			expectedHeader := "test-value"
+			if actualHeader := r.Header.Get("test-header"); actualHeader != expectedHeader {
+				st.Errorf("Expected header 'test-header' to be %q, got %q", expectedHeader, actualHeader)
 			}
 
 			w.WriteHeader(http.StatusNoContent)
 		})))
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 	})
 
 	t.Run("panic!", func(st *testing.T) {
 		st.Parallel()
+		// Verify that wasm panics are caught and return 500 errors
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/panic!", io.NopCloser(bytes.NewBuffer(nil)))
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
-		i.ServeHTTP(w, r)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		inst.ServeHTTP(w, r)
 
 		if w.Code != http.StatusInternalServerError {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
 		}
 
-		if !strings.Contains(w.Body.String(), "Error running wasm program") {
-			st.Fail()
+		expectedErrorText := "Error running wasm program"
+		if !strings.Contains(w.Body.String(), expectedErrorText) {
+			st.Errorf("Expected error message to contain %q, got %q", expectedErrorText, w.Body.String())
 		}
 	})
 
 	t.Run("geo", func(st *testing.T) {
 		st.Parallel()
+		// Verify geolocation API returns correct data
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/geo", io.NopCloser(bytes.NewBuffer(nil)))
 
-		// In normal operation (ie, part of an http server handler), these requests will always
-		// have a remote addr. But not if you create them yourself.
+		// Set RemoteAddr explicitly (normally set by http.Server but not in tests)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
-		i.ServeHTTP(w, r)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		inst.ServeHTTP(w, r)
 
 		if w.Code != http.StatusOK {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 
 		payload := struct {
 			ASName string `json:"as_name"`
 		}{}
-		_ = json.NewDecoder(w.Body).Decode(&payload)
+		if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+			st.Errorf("Failed to decode response body: %v", err)
+		}
 
-		if payload.ASName != "fastlike" {
-			st.Fail()
+		expectedASName := "fastlike"
+		if payload.ASName != expectedASName {
+			st.Errorf("Expected AS name %q, got %q", expectedASName, payload.ASName)
 		}
 	})
 
 	t.Run("logger", func(st *testing.T) {
 		st.Parallel()
+		// Verify logging API writes to the configured logger
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/log", io.NopCloser(bytes.NewBuffer(nil)))
 
-		// In normal operation (ie, part of an http server handler), these requests will always
-		// have a remote addr. But not if you create them yourself.
+		// Set RemoteAddr explicitly (normally set by http.Server but not in tests)
 		r.RemoteAddr = "127.0.0.1:9999"
-		buf := new(bytes.Buffer)
-		i := f.Instantiate(
+		logBuffer := new(bytes.Buffer)
+		inst := f.Instantiate(
 			fastlike.WithDefaultBackend(failingBackendHandler(st)),
-			fastlike.WithLogger("default", buf),
+			fastlike.WithLogger("default", logBuffer),
 		)
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 
 		if w.Code != http.StatusNoContent {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusNoContent, w.Code)
 		}
 
-		// The contents of the buffer must be "Hello from fastlike!"
-		actual := buf.String()
 		expected := "Hello from fastlike!\n"
+		actual := logBuffer.String()
 		if actual != expected {
-			st.Logf("expected %q, got %q", expected, actual)
-			st.Fail()
+			st.Errorf("Expected log output %q, got %q", expected, actual)
 		}
 	})
 
 	t.Run("dictionary", func(st *testing.T) {
 		st.Parallel()
+		// Verify dictionary lookup returns correct values
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/dictionary/testdict/testkey", io.NopCloser(bytes.NewBuffer(nil)))
 
-		// In normal operation (ie, part of an http server handler), these requests will always
-		// have a remote addr. But not if you create them yourself.
+		// Set RemoteAddr explicitly (normally set by http.Server but not in tests)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(
+		inst := f.Instantiate(
 			fastlike.WithDefaultBackend(failingBackendHandler(st)),
 			fastlike.WithDictionary("testdict", func(key string) string {
 				if key == "testkey" {
@@ -225,39 +233,38 @@ func TestFastlike(t *testing.T) {
 				return ""
 			}),
 		)
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 
 		if w.Code != http.StatusOK {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 		}
 
-		actual := w.Body.String()
 		expected := "Hello from the dictionary"
+		actual := w.Body.String()
 		if actual != expected {
-			st.Logf("expected %q, got %q", expected, actual)
-			st.Fail()
+			st.Errorf("Expected body %q, got %q", expected, actual)
 		}
 	})
 
 	t.Run("parallel", func(st *testing.T) {
-		// Assert that we can safely handle concurrent requests by sending off 5 requests each of
-		// which sleep for 500ms in the host.
-		for i := 1; i <= 5; i++ {
+		// Verify that concurrent requests are handled safely by running 5 parallel requests,
+		// each with a backend that sleeps for 500ms
+		for requestNum := 1; requestNum <= 5; requestNum++ {
 			st.Run("", func(stt *testing.T) {
 				stt.Parallel()
 				w := httptest.NewRecorder()
 				r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
 
 				r.RemoteAddr = "127.0.0.1:9999"
-				i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+				inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 					<-time.After(500 * time.Millisecond)
 					w.WriteHeader(http.StatusTeapot)
 					_, _ = w.Write([]byte("i am a teapot"))
 				})))
-				i.ServeHTTP(w, r)
+				inst.ServeHTTP(w, r)
 
 				if w.Code != http.StatusTeapot {
-					stt.Fail()
+					stt.Errorf("Expected status %d, got %d", http.StatusTeapot, w.Code)
 				}
 			})
 		}
@@ -265,32 +272,37 @@ func TestFastlike(t *testing.T) {
 
 	t.Run("context-cancel", func(st *testing.T) {
 		st.Parallel()
+		// Verify that context cancellation properly interrupts wasm execution
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
 		r.Header.Set("fastlike-verbose", "1") // Enable verbose logging
+
+		// Create a context that times out before the backend responds
 		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Millisecond)
 		defer cancel()
 
 		r = r.WithContext(ctx)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.WithVerbosity(2), fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
-			<-time.After(100 * time.Millisecond)
+		inst := f.Instantiate(fastlike.WithVerbosity(2), fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			<-time.After(100 * time.Millisecond) // Backend takes longer than context timeout
 			w.WriteHeader(http.StatusTeapot)
 			_, _ = w.Write([]byte("i am a teapot"))
 		})))
-		i.ServeHTTP(w, r)
+		inst.ServeHTTP(w, r)
 
 		if w.Code != http.StatusInternalServerError {
-			st.Fail()
+			st.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
 		}
 
+		// Verify the error indicates an interrupted wasm execution
 		// TODO: Come up with a better way to test this behavior.
 		// If the embedding application sets up a custom deadline for fastlike calls, they may want
 		// to catch this case and return their own response. In the default setup though, the
 		// context will only cancel when the client hangs up and they won't see whatever we write
 		// to the response.
-		if !strings.Contains(w.Body.String(), "wasm trap: interrupt") {
-			st.Fail()
+		expectedError := "wasm trap: interrupt"
+		if !strings.Contains(w.Body.String(), expectedError) {
+			st.Errorf("Expected error message to contain %q, got %q", expectedError, w.Body.String())
 		}
 	})
 }

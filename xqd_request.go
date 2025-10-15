@@ -47,7 +47,10 @@ func (i *Instance) writeSendErrorDetail(addr int32, detail *SendErrorDetail) err
 	return nil
 }
 
-// createErrorDetailFromError converts a Go error to a SendErrorDetail
+// createErrorDetailFromError converts a Go error to a SendErrorDetail struct.
+// Returns SendErrorDetailOk if err is nil, otherwise returns SendErrorDetailInternalError.
+// In a more sophisticated implementation, this could parse the error message to determine
+// specific error types (DNS errors, TLS alerts, etc.) and populate the appropriate fields.
 func createErrorDetailFromError(err error) *SendErrorDetail {
 	if err == nil {
 		return &SendErrorDetail{
@@ -56,29 +59,28 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		}
 	}
 
-	// For now, we return a generic internal error
-	// In a more sophisticated implementation, we could parse the error
-	// to determine the specific error type
+	// Return a generic internal error for all non-nil errors
+	// TODO: Parse error types to populate DNS/TLS specific fields
 	return &SendErrorDetail{
 		Tag:  SendErrorDetailInternalError,
 		Mask: 0,
 	}
 }
 
-// applyAutoDecompression checks if the response should be auto-decompressed and does so
-// This modifies the response in-place if decompression is needed
+// applyAutoDecompression checks if the response should be auto-decompressed and decompresses if needed.
+// This modifies the response in-place, replacing the body with decompressed content and removing
+// Content-Encoding and Content-Length headers. Currently only supports gzip/x-gzip encoding.
+// Returns an error if decompression fails (but still modifies the response to remove encoding headers).
 func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32) error {
-	// Check if gzip auto-decompression is enabled
+	// Check if gzip auto-decompression is enabled in the bitfield
 	if (autoDecompressEncodings & ContentEncodingsGzip) == 0 {
-		// Auto-decompression not enabled
-		return nil
+		return nil // Auto-decompression not enabled for gzip
 	}
 
-	// Check if the response has gzip or x-gzip encoding
+	// Check if the response is gzip-encoded (supports both "gzip" and "x-gzip")
 	encoding := resp.Header.Get("Content-Encoding")
 	if encoding != "gzip" && encoding != "x-gzip" {
-		// Not gzip encoded
-		return nil
+		return nil // Not gzip-encoded
 	}
 
 	// Read the compressed body
@@ -88,11 +90,11 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 		return err
 	}
 
-	// Decompress the body
+	// Create a gzip reader to decompress the body
 	gzReader, err := gzip.NewReader(bytes.NewReader(compressedBody))
 	if err != nil {
-		// If we can't create a gzip reader, return the original compressed body
-		// but still remove the Content-Encoding header
+		// If we can't create a gzip reader, restore the original body but remove headers
+		// This ensures the guest sees the raw compressed data without encoding indicators
 		resp.Body = io.NopCloser(bytes.NewReader(compressedBody))
 		resp.Header.Del("Content-Encoding")
 		resp.Header.Del("Content-Length")
@@ -102,8 +104,7 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 
 	decompressedBody, err := io.ReadAll(gzReader)
 	if err != nil {
-		// If we can't decompress, return the original compressed body
-		// but still remove the Content-Encoding header
+		// If decompression fails, restore the original body but remove headers
 		resp.Body = io.NopCloser(bytes.NewReader(compressedBody))
 		resp.Header.Del("Content-Encoding")
 		resp.Header.Del("Content-Length")
@@ -113,7 +114,8 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 	// Replace the response body with the decompressed version
 	resp.Body = io.NopCloser(bytes.NewReader(decompressedBody))
 
-	// Remove Content-Encoding and Content-Length headers as per the spec
+	// Remove Content-Encoding and Content-Length headers (they're now invalid)
+	// The guest will see uncompressed data without encoding indicators
 	resp.Header.Del("Content-Encoding")
 	resp.Header.Del("Content-Length")
 
@@ -225,8 +227,9 @@ func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int3
 		return XqdError
 	}
 
-	// Make sure the method is in the set of valid http methods
-	methods := strings.Join([]string{
+	// Validate that the method is one of the standard HTTP methods (case-insensitive)
+	// We use null-terminated concatenation as a simple string set for validation
+	validMethods := strings.Join([]string{
 		http.MethodGet,
 		http.MethodHead,
 		http.MethodPost,
@@ -238,14 +241,16 @@ func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int3
 		http.MethodTrace,
 	}, "\x00")
 
-	if !strings.Contains(methods, strings.ToUpper(string(method))) {
+	methodUpper := strings.ToUpper(string(method))
+	if !strings.Contains(validMethods, methodUpper) {
 		i.abilog.Printf("req_method_set: invalid method=%q", method)
 		return XqdErrHttpParse
 	}
 
 	i.abilog.Printf("req_method_set: handle=%d method=%q", handle, method)
 
-	r.Method = strings.ToUpper(string(method))
+	// Store the method in uppercase (HTTP methods are case-sensitive and should be uppercase)
+	r.Method = methodUpper
 	return XqdStatusOK
 }
 
@@ -290,13 +295,14 @@ func (i *Instance) xqd_req_header_names_get(handle int32, addr int32, maxlen int
 		return XqdErrInvalidHandle
 	}
 
+	// Collect all header names from the request
 	names := []string{}
-	for n := range r.Header {
-		names = append(names, n)
+	for headerName := range r.Header {
+		names = append(names, headerName)
 	}
 
-	// these names are explicitly unsorted, so let's sort them ourselves
-	sort.Strings(names[:])
+	// Sort names alphabetically for consistent ordering (Go's map iteration is non-deterministic)
+	sort.Strings(names)
 
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
@@ -500,6 +506,7 @@ func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name
 
 // xqd_req_header_values_set sets multiple values for a header.
 // Reads null-terminated values from guest memory and adds them all to the specified header.
+// The values in memory are formatted as: "value1\0value2\0value3\0"
 // Returns XqdErrInvalidHandle if handle is invalid, XqdError on memory read failure, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
 	r := i.requests.Get(int(handle))
@@ -507,6 +514,7 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 		return XqdErrInvalidHandle
 	}
 
+	// Read the header name
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
@@ -515,14 +523,15 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 
 	header := http.CanonicalHeaderKey(string(buf))
 
-	// read values_size bytes from values_addr for a list of \0 terminated values for the header
-	// but, read 1 less than that to avoid the trailing nul
+	// Read the null-terminated values list
+	// We read (values_size - 1) bytes to exclude the trailing null terminator
 	buf = make([]byte, values_size-1)
 	_, err = i.memory.ReadAt(buf, int64(values_addr))
 	if err != nil {
 		return XqdError
 	}
 
+	// Split on null bytes to get individual values
 	values := bytes.Split(buf, []byte("\x00"))
 
 	i.abilog.Printf("req_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
@@ -619,15 +628,16 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	req.Header = r.Header.Clone()
 
-	// TODO: Ensure we always have something in r.Header so we can avoid the nil check here
+	// Ensure headers are initialized
 	if req.Header == nil {
 		req.Header = http.Header{}
 	}
 
-	// Make sure to add a CDN-Loop header, which we can check (and block) at ingress
+	// Add a CDN-Loop header for loop detection (checked at ingress to prevent infinite loops)
 	req.Header.Add("cdn-loop", "fastlike")
 
-	// TODO: Not sure if this is strictly necessary (or correct!)
+	// Set Content-Length if not already set or if ContentLength field is uninitialized
+	// This ensures the backend receives proper content length information
 	if req.Header.Get("content-length") == "" {
 		req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
 		req.ContentLength = b.Size()
@@ -643,10 +653,10 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		handler = i.getBackendHandler(backend)
 	}
 
-	// TODO: Is there a better way to get an *http.Response from an http.Handler?
-	// The Handler interface is useful for embedders, since often-times they'll be processing wasm
-	// requests in the embedding application, and it's very easy to adapt an http.Handler to an
-	// http.RoundTripper if they want it to go offsite.
+	// Use httptest.ResponseRecorder to capture the response from the handler
+	// This provides an http.ResponseWriter interface and allows us to extract the *http.Response
+	// NOTE: The Handler interface is useful for embedders who want to process requests locally
+	// or easily adapt to an http.RoundTripper for external requests
 	wr := httptest.NewRecorder()
 
 	// Pause CPU time tracking during the blocking HTTP request
@@ -1078,14 +1088,16 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 
 	i.abilog.Printf("pending_req_select: selecting from %d pending requests", phandles_len)
 
-	// Read the list of pending request handles from guest memory
+	// Read the array of pending request handles from guest memory
+	// The array is stored as contiguous int32 values (4 bytes each)
 	handles := make([]int32, phandles_len)
 	for idx := int32(0); idx < phandles_len; idx++ {
-		handle := i.memory.Uint32(int64(phandles_addr + idx*4))
+		handleOffset := phandles_addr + idx*4 // Each handle is 4 bytes
+		handle := i.memory.Uint32(int64(handleOffset))
 		handles[idx] = int32(handle)
 	}
 
-	// Build a list of channels to select on
+	// Build a list of pending requests with their channels for monitoring
 	type selectCase struct {
 		index   int
 		channel <-chan struct{}
@@ -1106,11 +1118,9 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 		})
 	}
 
-	// Use reflection to build a dynamic select
-	// Go doesn't support dynamic select natively, so we need to use reflect.Select
-	// Or, we can use a simpler approach with goroutines
-
-	// Simple approach: spawn goroutines to monitor each channel
+	// Use goroutines to implement dynamic select over multiple channels
+	// Go doesn't support dynamic select natively without reflection,
+	// so we spawn a goroutine per channel that signals when its request completes
 	doneCh := make(chan int, len(cases))
 	for _, c := range cases {
 		go func(idx int, ch <-chan struct{}) {

@@ -1,7 +1,7 @@
 package fastlike
 
-// LookupFunc is a function that retrieves a string value by key.
-// It returns the value as a string. If the key is not found, an empty string is returned.
+// LookupFunc is a function that retrieves a value by key from a dictionary or config store.
+// Returns the value as a string, or an empty string if the key is not found.
 type LookupFunc func(key string) string
 
 // addDictionary registers a named dictionary with the given lookup function.
