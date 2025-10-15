@@ -38,10 +38,14 @@ func (i *Instance) xqd_kv_store_open(
 }
 
 // xqd_kv_store_lookup initiates an async lookup operation
+// Structure: kv_lookup_config (4 bytes)
+//   - reserved (u32)
 func (i *Instance) xqd_kv_store_lookup(
 	kvStoreHandle int32,
 	keyPtr int32,
 	keyLen int32,
+	lookupConfigMask int32,
+	lookupConfigBuf int32,
 	lookupHandleOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_lookup")
@@ -64,6 +68,8 @@ func (i *Instance) xqd_kv_store_lookup(
 	if err := ValidateKey(key); err != nil {
 		return XqdErrInvalidArgument
 	}
+
+	// Note: lookup config only contains reserved fields, so we ignore it
 
 	// Create a pending lookup handle
 	lookupID, lookupHandle := i.kvLookups.New()
@@ -89,9 +95,7 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 	metadataMaxLen int32,
 	metadataLenOut int32,
 	generationOut int32, // u32
-	contentTypeOut int32,
-	contentTypeMaxLen int32,
-	contentTypeLenOut int32,
+	kvErrorOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_lookup_wait")
 
@@ -104,6 +108,8 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 	// Wait for the lookup to complete
 	result, err := lookup.Wait()
 	if err != nil {
+		// Write error code
+		i.memory.WriteUint32(kvErrorOut, uint32(1)) // KV_ERROR_UNKNOWN
 		return XqdError
 	}
 
@@ -112,7 +118,7 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 		i.memory.WriteUint32(bodyHandleOut, uint32(HandleInvalid))
 		i.memory.WriteUint32(metadataLenOut, 0)
 		i.memory.WriteUint32(generationOut, 0)
-		i.memory.WriteUint32(contentTypeLenOut, 0)
+		i.memory.WriteUint32(kvErrorOut, 0) // No error
 		return XqdErrNone
 	}
 
@@ -135,8 +141,8 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 	// Write generation (V1 uses u32, always 0 for compatibility)
 	i.memory.WriteUint32(generationOut, 0)
 
-	// Content type is always empty (not used in KV store)
-	i.memory.WriteUint32(contentTypeLenOut, 0)
+	// Write error code (success)
+	i.memory.WriteUint32(kvErrorOut, 0)
 
 	return XqdStatusOK
 }
@@ -150,6 +156,7 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	metadataMaxLen int32,
 	metadataLenOut int32,
 	generationOut int32, // u64
+	kvErrorOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_lookup_wait_v2")
 
@@ -162,6 +169,8 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	// Wait for the lookup to complete
 	result, err := lookup.Wait()
 	if err != nil {
+		// Write error code
+		i.memory.WriteUint32(kvErrorOut, uint32(1)) // KV_ERROR_UNKNOWN
 		return XqdError
 	}
 
@@ -170,6 +179,7 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 		i.memory.WriteUint32(bodyHandleOut, uint32(HandleInvalid))
 		i.memory.WriteUint32(metadataLenOut, 0)
 		i.memory.WriteUint64(generationOut, 0)
+		i.memory.WriteUint32(kvErrorOut, 0) // No error
 		return XqdErrNone
 	}
 
@@ -192,19 +202,26 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	// Write generation (V2 uses u64)
 	i.memory.WriteUint64(generationOut, result.Generation)
 
+	// Write error code (success)
+	i.memory.WriteUint32(kvErrorOut, 0)
+
 	return XqdStatusOK
 }
 
 // xqd_kv_store_insert initiates an async insert operation
+// Structure: kv_insert_config (24 bytes)
+//   - mode (u32)
+//   - unused (u32)
+//   - metadata_ptr (u32)
+//   - metadata_len (u32)
+//   - time_to_live_sec (u32)
+//   - if_generation_match (u64)
 func (i *Instance) xqd_kv_store_insert(
 	kvStoreHandle int32,
 	keyPtr int32,
 	keyLen int32,
 	bodyHandle int32,
-	metadataPtr int32,
-	metadataLen int32,
-	insertMode int32,
-	insertConfigMask uint32,
+	insertConfigMask int32,
 	insertConfigBuf int32,
 	insertHandleOut int32,
 ) int32 {
@@ -241,31 +258,41 @@ func (i *Instance) xqd_kv_store_insert(
 		value = body.buf.Bytes()
 	}
 
-	// Read metadata
+	// Read insert config structure
+	var mode InsertMode
 	var metadata string
-	if metadataLen > 0 {
-		metadataBuf := make([]byte, metadataLen)
-		_, err = i.memory.ReadAt(metadataBuf, int64(metadataPtr))
-		if err != nil {
-			return XqdError
-		}
-		metadata = string(metadataBuf)
-	}
-
-	// Parse insert config
 	var ttl *time.Duration
 	var ifGenerationMatch *uint64
 
-	// Mask bit 0: time_to_live_sec (u32)
-	if insertConfigMask&(1<<0) != 0 {
-		ttlSec := i.memory.ReadUint32(insertConfigBuf)
+	// Read mode (always present at offset 0)
+	mode = InsertMode(i.memory.ReadUint32(insertConfigBuf))
+
+	// unused u32 at offset 4
+
+	// Mask bit 3: metadata (pointer + length)
+	if insertConfigMask&(1<<3) != 0 {
+		metadataPtr := i.memory.ReadUint32(insertConfigBuf + 8)
+		metadataLen := i.memory.ReadUint32(insertConfigBuf + 12)
+		if metadataLen > 0 {
+			metadataBuf := make([]byte, metadataLen)
+			_, err = i.memory.ReadAt(metadataBuf, int64(metadataPtr))
+			if err != nil {
+				return XqdError
+			}
+			metadata = string(metadataBuf)
+		}
+	}
+
+	// Mask bit 4: time_to_live_sec (u32)
+	if insertConfigMask&(1<<4) != 0 {
+		ttlSec := i.memory.ReadUint32(insertConfigBuf + 16)
 		duration := time.Duration(ttlSec) * time.Second
 		ttl = &duration
 	}
 
-	// Mask bit 1: if_generation_match (u64)
-	if insertConfigMask&(1<<1) != 0 {
-		generation := i.memory.ReadUint64(insertConfigBuf + 4)
+	// Mask bit 5: if_generation_match (u64)
+	if insertConfigMask&(1<<5) != 0 {
+		generation := i.memory.ReadUint64(insertConfigBuf + 20)
 		ifGenerationMatch = &generation
 	}
 
@@ -273,7 +300,6 @@ func (i *Instance) xqd_kv_store_insert(
 	insertID, insertHandle := i.kvInserts.New()
 
 	// Start the insert in a goroutine
-	mode := InsertMode(insertMode)
 	go func() {
 		generation, err := storeHandle.Store.Insert(key, value, metadata, ttl, mode, ifGenerationMatch)
 		insertHandle.Complete(generation, err)
@@ -311,10 +337,14 @@ func (i *Instance) xqd_kv_store_insert_wait(
 }
 
 // xqd_kv_store_delete initiates an async delete operation
+// Structure: kv_delete_config (4 bytes)
+//   - reserved (u32)
 func (i *Instance) xqd_kv_store_delete(
 	kvStoreHandle int32,
 	keyPtr int32,
 	keyLen int32,
+	deleteConfigMask int32,
+	deleteConfigBuf int32,
 	deleteHandleOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_delete")
@@ -337,6 +367,8 @@ func (i *Instance) xqd_kv_store_delete(
 	if err := ValidateKey(key); err != nil {
 		return XqdErrInvalidArgument
 	}
+
+	// Note: delete config only contains reserved fields, so we ignore it
 
 	// Create a pending delete handle
 	deleteID, deleteHandle := i.kvDeletes.New()
