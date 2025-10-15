@@ -457,7 +457,7 @@ func (h *KVStoreListHandles) New() (int, *KVStoreListHandle) {
 	return len(h.handles) - 1, handle
 }
 
-// Helper to convert ListResult to JSON bytes
+// ToJSON converts a ListResult to JSON bytes for serialization.
 func (lr *ListResult) ToJSON() ([]byte, error) {
 	return json.Marshal(lr)
 }

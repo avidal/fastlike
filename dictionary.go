@@ -1,5 +1,7 @@
 package fastlike
 
+// LookupFunc is a function that retrieves a string value by key.
+// It returns the value as a string. If the key is not found, an empty string is returned.
 type LookupFunc func(key string) string
 
 func (i *Instance) addDictionary(name string, fn LookupFunc) {

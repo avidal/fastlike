@@ -135,6 +135,7 @@ func (b *BodyHandle) Write(p []byte) (int, error) {
 	return n, e
 }
 
+// Size returns the length of the body in bytes, or -1 if the length is unknown.
 func (b *BodyHandle) Size() int64 {
 	if b.length == 0 {
 		return -1
