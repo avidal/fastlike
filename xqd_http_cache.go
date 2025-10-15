@@ -26,16 +26,17 @@ func (i *Instance) xqd_http_cache_is_request_cacheable(
 		return XqdErrInvalidHandle
 	}
 
-	// TEMPORARY: Disable guest-side caching to avoid deadlock in transaction_insert_and_stream_back
-	// TODO: Fix the streaming cache implementation to properly handle concurrent read/write
 	// Per RFC 9111 conservative semantics: only GET and HEAD are cacheable
 	method := req.Method
 	var isCacheable uint32
-	_ = method // Suppress unused variable warning
 
-	// Always return not cacheable for now
-	i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable (guest-side caching disabled)", method)
-	isCacheable = 0
+	if method == http.MethodGet || method == http.MethodHead {
+		isCacheable = 1
+		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> cacheable", method)
+	} else {
+		isCacheable = 0
+		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable", method)
+	}
 
 	// Write result to guest memory
 	i.memory.WriteUint32(is_cacheable_out, isCacheable)
@@ -228,14 +229,28 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
 
-	// Create a body handle for writing
-	writeBodyID, writeBody := i.bodies.NewBuffer()
-	writeBody.writer = &cacheBodyWriter{
+	// Create a pipe to connect write and read handles
+	// This allows the guest to write and read simultaneously without deadlock
+	pipeReader, pipeWriter := io.Pipe()
+
+	// Create a cache body writer that writes to the cache object
+	cacheWriter := &cacheBodyWriter{
 		cache:        obj,
-		originalBody: writeBody.buf,
+		originalBody: nil,
 	}
 
-	// Create a new transaction/handle for reading back
+	// Create a MultiWriter that writes to both the pipe and the cache
+	multiWriter := io.MultiWriter(pipeWriter, cacheWriter)
+
+	// Create a write body handle that writes to both the pipe and cache
+	writeBodyID, writeBody := i.bodies.NewBuffer()
+	writeBody.writer = multiWriter
+	writeBody.closer = &pipeAndCacheCloser{
+		pipeWriter: pipeWriter,
+		cache:      obj,
+	}
+
+	// Create a new transaction/handle for reading back from the pipe
 	readTx := &CacheTransaction{
 		Key: handle.Transaction.Key,
 		Entry: &CacheEntry{
@@ -250,6 +265,9 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	close(readTx.ready)
 
 	readHandleID := i.cacheHandles.New(readTx)
+	// Store the pipe reader in the cache handle so get_body can use it
+	readCacheHandle := i.cacheHandles.Get(readHandleID)
+	readCacheHandle.StreamingPipeReader = pipeReader
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))

@@ -241,14 +241,29 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
 
-	// Create a body handle for writing
-	writeBodyID, writeBody := i.bodies.NewBuffer()
-	writeBody.writer = &cacheBodyWriter{
+	// Create a pipe to connect write and read handles
+	// This allows the guest to write and read simultaneously without deadlock
+	pipeReader, pipeWriter := io.Pipe()
+
+	// Create a cache body writer that writes to the cache object
+	cacheWriter := &cacheBodyWriter{
 		cache:        obj,
-		originalBody: writeBody.buf,
+		originalBody: nil,
 	}
 
-	// Create a new transaction/handle for reading back
+	// Create a MultiWriter that writes to both the pipe and the cache
+	// This ensures data is immediately available for reading while also being cached
+	multiWriter := io.MultiWriter(pipeWriter, cacheWriter)
+
+	// Create a write body handle that writes to both the pipe and cache
+	writeBodyID, writeBody := i.bodies.NewBuffer()
+	writeBody.writer = multiWriter
+	writeBody.closer = &pipeAndCacheCloser{
+		pipeWriter: pipeWriter,
+		cache:      obj,
+	}
+
+	// Create a new transaction/handle for reading back from the pipe
 	readTx := &CacheTransaction{
 		Key: handle.Transaction.Key,
 		Entry: &CacheEntry{
@@ -263,6 +278,9 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 	close(readTx.ready)
 
 	readHandleID := i.cacheHandles.New(readTx)
+	// Store the pipe reader in the cache handle so get_body can use it
+	readCacheHandle := i.cacheHandles.Get(readHandleID)
+	readCacheHandle.StreamingPipeReader = pipeReader
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
@@ -454,10 +472,17 @@ func (i *Instance) xqd_cache_get_body(
 		body.buf.Write(data)
 		body.reader = bytes.NewReader(body.buf.Bytes())
 	} else {
-		// Full body read - use streaming reader
-		body.reader = &cacheBodyReader{
-			cache:  obj,
-			offset: 0,
+		// Full body read
+		// Check if this is a streaming cache handle (from insert_and_stream_back)
+		if handle.StreamingPipeReader != nil {
+			// Use the pipe reader to avoid deadlock
+			body.reader = handle.StreamingPipeReader
+		} else {
+			// Use the normal cache reader with blocking support
+			body.reader = &cacheBodyReader{
+				cache:  obj,
+				offset: 0,
+			}
 		}
 	}
 
@@ -711,6 +736,20 @@ func (r *cacheBodyReader) Read(p []byte) (int, error) {
 	n, err := r.cache.ReadBody(p, r.offset)
 	r.offset += int64(n)
 	return n, err
+}
+
+// pipeAndCacheCloser closes both the pipe writer and marks the cache as complete
+type pipeAndCacheCloser struct {
+	pipeWriter *io.PipeWriter
+	cache      *CachedObject
+}
+
+func (c *pipeAndCacheCloser) Close() error {
+	// Close the pipe writer first (this will EOF the pipe reader)
+	err := c.pipeWriter.Close()
+	// Mark the cache write as complete
+	c.cache.FinishWrite()
+	return err
 }
 
 // Cache replace API - These functions are stubs that return XqdErrUnsupported

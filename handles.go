@@ -350,8 +350,9 @@ func (sshs *SecretStoreHandles) New(name string) int {
 
 // CacheHandle represents a cache lookup result (could be found, not found, or must-insert)
 type CacheHandle struct {
-	Transaction *CacheTransaction // reference to the transaction
-	ReadOffset  int64             // current read offset for streaming
+	Transaction         *CacheTransaction // reference to the transaction
+	ReadOffset          int64             // current read offset for streaming
+	StreamingPipeReader io.Reader         // for insert_and_stream_back to avoid deadlock
 }
 
 // CacheHandles is a slice of CacheHandle with methods to get and create
