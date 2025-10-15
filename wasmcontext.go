@@ -1004,8 +1004,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	}))
 
 	// xqd_http_downstream.go
-	_ = linker.FuncWrap("fastly_http_downstream", "next_request", safeWrap2(i, "next_request", func(options_mask int32, options_ptr int32) int32 {
-		return i.xqd_http_downstream_next_request(options_mask, options_ptr)
+	_ = linker.FuncWrap("fastly_http_downstream", "next_request", safeWrap3(i, "next_request", func(options_mask int32, options_ptr int32, handle_out int32) int32 {
+		return i.xqd_http_downstream_next_request(options_mask, options_ptr, handle_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_downstream", "next_request_wait", safeWrap3(i, "next_request_wait", func(promise_handle int32, req_handle_out int32, body_handle_out int32) int32 {
 		return i.xqd_http_downstream_next_request_wait(promise_handle, req_handle_out, body_handle_out)
@@ -1211,7 +1211,7 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_async_io_is_ready", safeWrap2(i, "xqd_async_io_is_ready", func(a int32, b int32) int32 { return i.xqd_async_io_is_ready(a, b) }))
 
 	// xqd_http_downstream.go
-	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request", safeWrap2(i, "xqd_http_downstream_next_request", func(a int32, b int32) int32 { return i.xqd_http_downstream_next_request(a, b) }))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request", safeWrap3(i, "xqd_http_downstream_next_request", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_next_request(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request_wait", safeWrap3(i, "xqd_http_downstream_next_request_wait", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_next_request_wait(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request_abandon", safeWrap1(i, "xqd_http_downstream_next_request_abandon", func(a int32) int32 { return i.xqd_http_downstream_next_request_abandon(a) }))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_original_header_names", safeWrap6(i, "xqd_http_downstream_original_header_names", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_http_downstream_original_header_names(a, b, c, d, e, f) }))
