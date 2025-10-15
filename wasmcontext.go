@@ -6,14 +6,16 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v37"
 )
 
+// wasmContext holds the compiled wasm module and engine for reuse across requests.
+// The engine and module are shared, while each request gets its own store and instance.
 type wasmContext struct {
 	engine *wasmtime.Engine
 	module *wasmtime.Module
 }
 
-// safeWrap wraps a host function with panic recovery to work around wasmtime-go v37 bug
-// When host functions with *Caller panic, wasmtime-go v37 has a nil pointer dereference bug
-// This wrapper catches panics and converts them to proper error returns
+// safeWrap1 wraps a 1-argument host function with panic recovery to work around wasmtime-go v37 bug.
+// When host functions with *Caller panic, wasmtime-go v37 has a nil pointer dereference bug.
+// This wrapper catches panics and converts them to proper error returns.
 func safeWrap1(i *Instance, name string, fn func(int32) int32) func(*wasmtime.Caller, int32) int32 {
 	return func(caller *wasmtime.Caller, a int32) (ret int32) {
 		defer func() {
@@ -26,6 +28,7 @@ func safeWrap1(i *Instance, name string, fn func(int32) int32) func(*wasmtime.Ca
 	}
 }
 
+// safeWrap2 wraps a 2-argument host function with panic recovery.
 func safeWrap2(i *Instance, name string, fn func(int32, int32) int32) func(*wasmtime.Caller, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b int32) (ret int32) {
 		defer func() {
@@ -38,6 +41,7 @@ func safeWrap2(i *Instance, name string, fn func(int32, int32) int32) func(*wasm
 	}
 }
 
+// safeWrap3 wraps a 3-argument host function with panic recovery.
 func safeWrap3(i *Instance, name string, fn func(int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c int32) (ret int32) {
 		defer func() {
@@ -50,6 +54,7 @@ func safeWrap3(i *Instance, name string, fn func(int32, int32, int32) int32) fun
 	}
 }
 
+// safeWrap4 wraps a 4-argument host function with panic recovery.
 func safeWrap4(i *Instance, name string, fn func(int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c, d int32) (ret int32) {
 		defer func() {
@@ -62,6 +67,7 @@ func safeWrap4(i *Instance, name string, fn func(int32, int32, int32, int32) int
 	}
 }
 
+// safeWrap5 wraps a 5-argument host function with panic recovery.
 func safeWrap5(i *Instance, name string, fn func(int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c, d, e int32) (ret int32) {
 		defer func() {
@@ -74,6 +80,7 @@ func safeWrap5(i *Instance, name string, fn func(int32, int32, int32, int32, int
 	}
 }
 
+// safeWrap6 wraps a 6-argument host function with panic recovery.
 func safeWrap6(i *Instance, name string, fn func(int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f int32) (ret int32) {
 		defer func() {
@@ -86,6 +93,7 @@ func safeWrap6(i *Instance, name string, fn func(int32, int32, int32, int32, int
 	}
 }
 
+// safeWrap7 wraps a 7-argument host function with panic recovery.
 func safeWrap7(i *Instance, name string, fn func(int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g int32) (ret int32) {
 		defer func() {
@@ -160,6 +168,8 @@ func safeWrap1i64(i *Instance, name string, fn func(int64) int32) func(*wasmtime
 	}
 }
 
+// compile creates a wasm engine and module from the provided wasm bytes.
+// The compiled module is stored in wasmContext for reuse across requests.
 func (i *Instance) compile(wasmbytes []byte) {
 	config := wasmtime.NewConfig()
 
@@ -177,6 +187,8 @@ func (i *Instance) compile(wasmbytes []byte) {
 	}
 }
 
+// link binds all XQD ABI host functions to the linker using modern naming conventions (fastly_*).
+// Each function is wrapped with panic recovery to work around wasmtime-go v37 bugs.
 func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// Verify instance is not nil
 	if i == nil {
@@ -892,7 +904,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	}))
 }
 
-// linklegacy links in the abi methods using the legacy method names
+// linklegacy binds legacy XQD ABI functions using old naming conventions (xqd_*, env module).
+// Maintained for backwards compatibility with older wasm programs.
 func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// XQD Stubbing -{{{
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from

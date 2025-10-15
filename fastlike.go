@@ -182,6 +182,7 @@ func (f *Fastlike) Instantiate(opts ...Option) *Instance {
 	}
 }
 
+// check panics if err is non-nil. Used for fatal initialization errors.
 func check(err error) {
 	if err != nil {
 		panic(err)

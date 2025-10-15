@@ -18,11 +18,11 @@ const (
 	XqdErrLimitExceeded   int32 = 12
 )
 
-// HandleInvalid is returned to guests when they attempt to obtain a handle that doesn't exist. For
-// instance, opening a dictionary that is not registered
-// Note that this is dictinct from XqdErrInvalidHandle, which is returned when callers attempt to
-// *use* an otherwise invalid handle, such as attempting to send a request whose handle has not
-// been created.
+// HandleInvalid is returned to guests when they attempt to obtain a handle that doesn't exist.
+// For instance, opening a dictionary that is not registered.
+// Note that this is distinct from XqdErrInvalidHandle, which is returned when callers attempt to
+// use an otherwise invalid handle, such as attempting to send a request whose handle has not
+// been created. Value is uint32_max - 1 (4294967294).
 const HandleInvalid = 4294967295 - 1
 
 const (
