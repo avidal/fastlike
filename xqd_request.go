@@ -753,9 +753,129 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 }
 
 func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
-	// For now, streaming is the same as non-streaming since we buffer everything anyway
-	// In a more sophisticated implementation, this would enable true streaming
-	return i.xqd_req_send_async(rhandle, bhandle, backend_addr, backend_size, ph_out)
+	// Validate request handle
+	r := i.requests.Get(int(rhandle))
+	if r == nil {
+		i.abilog.Printf("req_send_async_streaming: invalid request handle=%d", rhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Validate body handle
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_async_streaming: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+
+	// Read backend name
+	buf := make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+	backend := string(buf)
+
+	// Check if URL is set
+	if r.URL == nil {
+		i.abilog.Printf("req_send_async_streaming: URL not set for request handle %d", rhandle)
+		return XqdErrHttpUserInvalid
+	}
+
+	i.abilog.Printf("req_send_async_streaming: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
+
+	// Read initial body content
+	initialBody, _ := io.ReadAll(b)
+
+	// Create pipe for streaming
+	pipeReader, pipeWriter := io.Pipe()
+
+	// Convert body handle to streaming mode
+	b.isStreaming = true
+	b.streamingWriter = pipeWriter
+	b.streamingChan = make(chan []byte, 128) // Buffered channel for backpressure (128 * 8KB ~= 1MB buffer)
+	b.streamingDone = make(chan struct{})
+	b.streamingWritten = 0
+
+	// Start goroutine to drain channel to pipe
+	go func() {
+		defer close(b.streamingDone)
+
+		// First write the initial body
+		if len(initialBody) > 0 {
+			_, _ = pipeWriter.Write(initialBody)
+		}
+
+		pipeOpen := true
+		// Then drain the channel, writing chunks to the pipe (or discarding if pipe closed)
+		for chunk := range b.streamingChan {
+			if chunk == nil {
+				// Sentinel value to close
+				break
+			}
+			if pipeOpen {
+				_, err := pipeWriter.Write(chunk)
+				if err != nil {
+					// Pipe closed by backend, but keep draining channel to prevent blocking
+					pipeWriter.Close()
+					pipeOpen = false
+				}
+			}
+			// If pipe is closed, just discard the data (backend finished early)
+		}
+
+		// Close pipe if still open
+		if pipeOpen {
+			pipeWriter.Close()
+		}
+	}()
+
+	// Create pending request handle
+	phid, pendingReq := i.pendingRequests.New()
+
+	// Launch goroutine to perform the async request
+	go func(ctx context.Context, req *http.Request, body io.Reader, backendName string, pr *PendingRequest, autoDecompress uint32) {
+		// Build the request with the pipe reader as body
+		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
+		if err != nil {
+			pr.Complete(nil, err)
+			return
+		}
+
+		httpReq.Header = req.Header.Clone()
+		if httpReq.Header == nil {
+			httpReq.Header = http.Header{}
+		}
+
+		// Add CDN-Loop header
+		httpReq.Header.Add("cdn-loop", "fastlike")
+
+		// Note: Content-Length is unknown for streaming, don't set it
+
+		// Get backend handler
+		var handler http.Handler
+		if backendName == "geolocation" {
+			handler = geoHandler(i.geolookup)
+		} else {
+			handler = i.getBackendHandler(backendName)
+		}
+
+		// Execute request
+		wr := httptest.NewRecorder()
+		handler.ServeHTTP(wr, httpReq)
+		resp := wr.Result()
+
+		// Apply auto-decompression if enabled
+		_ = applyAutoDecompression(resp, autoDecompress)
+
+		// Mark pending request as complete
+		pr.Complete(resp, nil)
+	}(i.ds_context, r.Request, pipeReader, backend, pendingReq, r.autoDecompressEncodings)
+
+	// Write pending request handle to guest memory
+	i.memory.PutUint32(uint32(phid), int64(ph_out))
+	i.abilog.Printf("req_send_async_streaming: pending handle=%d", phid)
+
+	return XqdStatusOK
 }
 
 func (i *Instance) xqd_req_send_async_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, streaming int32, ph_out int32) int32 {

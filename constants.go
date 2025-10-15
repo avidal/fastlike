@@ -129,6 +129,12 @@ const (
 	ContentEncodingsGzip uint32 = 1 << 0
 )
 
+// BodyWriteEnd represents the position where data should be written
+const (
+	BodyWriteEndBack  int32 = 0 // Append to the end (back)
+	BodyWriteEndFront int32 = 1 // Prepend to the front
+)
+
 // AclError represents ACL lookup errors
 const (
 	AclErrorUninitialized   uint32 = 0
