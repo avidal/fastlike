@@ -6,10 +6,25 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"strings"
 )
 
 func (i *Instance) xqd_init(abiv int64) int32 {
+	// Add explicit debug logging
+	i.log.Printf("xqd_init called with abiv=%d", abiv)
+
+	// Check if instance fields are nil
+	if i == nil {
+		panic("xqd_init: instance is nil")
+	}
+	if i.abilog == nil {
+		panic("xqd_init: abilog is nil")
+	}
+	if i.memory == nil {
+		i.log.Printf("WARNING: xqd_init called with nil memory")
+	}
+
 	i.abilog.Printf("init: version=%d\n", abiv)
 	if abiv != 1 {
 		return XqdErrUnsupported
@@ -19,6 +34,9 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 }
 
 func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) int32 {
+	// Add explicit debug logging
+	i.log.Printf("xqd_req_body_downstream_get called with handle_out=%d, body_out=%d", request_handle_out, body_handle_out)
+
 	// Check if memory is initialized
 	if i.memory == nil {
 		i.log.Printf("ERROR: xqd_req_body_downstream_get called with nil memory")
@@ -32,11 +50,22 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	}
 
 	// Convert the downstream request into a (request, body) handle pair
+	i.log.Printf("Creating new request handle...")
 	rhid, rh := i.requests.New()
+	i.log.Printf("Got request handle: rhid=%d, rh=%v", rhid, rh != nil)
+
+	i.log.Printf("Cloning ds_request...")
 	rh.Request = i.ds_request.Clone(context.Background())
+	i.log.Printf("Request cloned successfully")
 
 	// downstream requests don't have host or scheme on the URL, but we need it
+	i.log.Printf("Setting URL host, rh.URL=%v", rh.URL != nil)
+	if rh.URL == nil {
+		i.log.Printf("ERROR: rh.URL is nil after clone!")
+		return XqdError
+	}
 	rh.URL.Host = i.ds_request.Host
+	i.log.Printf("URL host set successfully")
 
 	if i.secureFn(i.ds_request) {
 		rh.URL.Scheme = "https"
@@ -46,10 +75,16 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	}
 
 	// Capture original header names in their original order for downstream_original_header_names
+	i.log.Printf("Capturing headers...")
+	if rh.Header == nil {
+		i.log.Printf("WARNING: rh.Header is nil")
+		rh.Header = make(http.Header)
+	}
 	rh.originalHeaders = make([]string, 0, len(i.ds_request.Header))
 	for name := range i.ds_request.Header {
 		rh.originalHeaders = append(rh.originalHeaders, name)
 	}
+	i.log.Printf("Headers captured")
 
 	// Capture TLS connection state if the request was over TLS
 	if i.ds_request.TLS != nil {
@@ -60,14 +95,25 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	// a bug when the *new* request (rh) is sent via subrequest where the subrequest target doesn't
 	// get the body. I don't know why. This "solves" the problem for fastlike, at least
 	// temporarily.
+	i.log.Printf("Creating body buffer...")
 	bhid, bh := i.bodies.NewBuffer()
-	_, _ = io.Copy(bh, i.ds_request.Body)
-	_ = i.ds_request.Body.Close()
+	i.log.Printf("Got body handle: bhid=%d, bh=%v", bhid, bh != nil)
+
+	i.log.Printf("Copying body from ds_request, Body=%v", i.ds_request.Body != nil)
+	if i.ds_request.Body != nil {
+		_, _ = io.Copy(bh, i.ds_request.Body)
+		_ = i.ds_request.Body.Close()
+	}
+	i.log.Printf("Body copy complete")
+
+	// Write handles to memory
+	i.log.Printf("Writing handles to memory: rhid=%d at %d, bhid=%d at %d", rhid, request_handle_out, bhid, body_handle_out)
 
 	i.memory.PutUint32(uint32(rhid), int64(request_handle_out))
 	i.memory.PutUint32(uint32(bhid), int64(body_handle_out))
 
 	i.abilog.Printf("req_body_downstream_get: rh=%d bh=%d", rhid, bhid)
+	i.log.Printf("xqd_req_body_downstream_get completed successfully")
 
 	return XqdStatusOK
 }
