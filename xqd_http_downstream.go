@@ -564,3 +564,156 @@ func (i *Instance) xqd_http_downstream_tls_ja4(
 	i.memory.PutUint32(0, int64(nwritten_out))
 	return XqdErrNone
 }
+
+// xqd_http_downstream_client_request_id returns the unique request ID for the downstream connection.
+// Returns XqdErrNone if the request ID is not available.
+// Note: This is a stub that returns a test request ID.
+//
+// Signature: (handle: RequestHandle, reqid_out: *mut u8, reqid_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_client_request_id(
+	req_handle int32,
+	reqid_out int32,
+	reqid_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_client_request_id: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_client_request_id: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Generate a test request ID
+	// In production, this would be a unique identifier from Fastly's infrastructure
+	requestID := "00000000-0000-0000-0000-000000000000"
+
+	// Check buffer size
+	if int32(len(requestID)) > reqid_max_len {
+		i.memory.PutUint32(uint32(len(requestID)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write request ID to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(requestID), int64(reqid_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_client_request_id: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_client_request_id: request_id=%s", requestID)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_client_ip_addr returns the client IP address for the downstream connection.
+// The buffer must be at least 16 bytes (for IPv6).
+//
+// Signature: (handle: RequestHandle, addr_octets_out: *mut u8) -> Result<num_bytes, FastlyStatus>
+func (i *Instance) xqd_http_downstream_client_ip_addr(req_handle int32, addr_octets_out int32) int32 {
+	i.abilog.Printf("http_downstream_client_ip_addr: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_client_ip_addr: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Use the existing implementation from xqd_request.go
+	// Get client IP from request's RemoteAddr
+	return i.xqd_req_downstream_client_ip_addr(addr_octets_out, 0)
+}
+
+// xqd_http_downstream_server_ip_addr returns the server IP address for the downstream connection.
+// The buffer must be at least 16 bytes (for IPv6).
+//
+// Signature: (handle: RequestHandle, addr_octets_out: *mut u8) -> Result<num_bytes, FastlyStatus>
+func (i *Instance) xqd_http_downstream_server_ip_addr(req_handle int32, addr_octets_out int32) int32 {
+	i.abilog.Printf("http_downstream_server_ip_addr: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_server_ip_addr: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Use the existing implementation from xqd_request.go
+	return i.xqd_req_downstream_server_ip_addr(addr_octets_out, 0)
+}
+
+// xqd_http_downstream_client_ddos_detected checks if DDoS attack was detected for this client.
+// Returns 0 (false) or 1 (true).
+//
+// Signature: (handle: RequestHandle) -> Result<ddos_detected, FastlyStatus>
+func (i *Instance) xqd_http_downstream_client_ddos_detected(req_handle int32) int32 {
+	i.abilog.Printf("http_downstream_client_ddos_detected: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_client_ddos_detected: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// DDoS detection is not implemented in local testing
+	// Always return 0 (false)
+	i.abilog.Printf("http_downstream_client_ddos_detected: DDoS detection not available (always returns false)")
+	return 0 // false
+}
+
+// xqd_http_downstream_compliance_region returns the compliance region for the downstream connection.
+// Returns XqdErrNone if compliance region is not available.
+//
+// Signature: (handle: RequestHandle, region_out: *mut u8, region_max_len: u32, nwritten_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_compliance_region(
+	req_handle int32,
+	region_out int32,
+	region_max_len int32,
+	nwritten_out int32,
+) int32 {
+	i.abilog.Printf("http_downstream_compliance_region: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_compliance_region: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// Use the configured compliance region
+	region := i.complianceRegion
+
+	// Check buffer size
+	if int32(len(region)) > region_max_len {
+		i.memory.PutUint32(uint32(len(region)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	// Write region to guest memory
+	nwritten, err := i.memory.WriteAt([]byte(region), int64(region_out))
+	if err != nil {
+		i.abilog.Printf("http_downstream_compliance_region: write error: %v", err)
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	i.abilog.Printf("http_downstream_compliance_region: region=%s", region)
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_fastly_key_is_valid checks if the request has a valid Fastly-Key for purging.
+// Returns 0 (false) or 1 (true).
+//
+// Signature: (handle: RequestHandle) -> Result<is_valid, FastlyStatus>
+func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32) int32 {
+	i.abilog.Printf("http_downstream_fastly_key_is_valid: req=%d", req_handle)
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		i.abilog.Printf("http_downstream_fastly_key_is_valid: invalid request handle")
+		return XqdErrInvalidHandle
+	}
+
+	// In local testing, we don't validate Fastly-Key headers
+	// Always return 1 (true) to allow purge operations
+	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns true)")
+	return 1 // true
+}

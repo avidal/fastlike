@@ -114,6 +114,25 @@ func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_
 	return XqdStatusOK
 }
 
+// xqd_req_downstream_server_ip_addr returns the server's IP address that received the downstream request
+// For local testing, this would be the listening address (e.g., 127.0.0.1 or 0.0.0.0)
+func (i *Instance) xqd_req_downstream_server_ip_addr(octets_out int32, nwritten_out int32) int32 {
+	i.abilog.Printf("req_downstream_server_ip_addr")
+
+	// For local testing, return localhost IPv4 address
+	// In production, this would be the actual server IP
+	ip := net.IPv4(127, 0, 0, 1)
+
+	// Write the IP to memory
+	nwritten, err := i.memory.WriteAt(ip, int64(octets_out))
+	if err != nil {
+		return XqdError
+	}
+
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_uap_parse(
 	addr int32, size int32,
 	family_out, family_maxlen, family_nwritten_out int32,
