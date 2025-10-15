@@ -148,7 +148,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.aclHandles = &AclHandles{}
 	i.asyncItems = &AsyncItemHandles{}
 
-	i.log = log.New(os.Stdout, "[fastlike] ", log.Lshortfile)
+	i.log = log.New(io.Discard, "[fastlike] ", log.Lshortfile)
 	i.abilog = log.New(io.Discard, "[fastlike abi] ", log.Lshortfile)
 
 	i.backends = map[string]*Backend{}
@@ -270,7 +270,7 @@ func (i *Instance) setup() {
 	i.store.SetWasi(wasicfg)
 
 	// Set epoch deadline for interruption
-	// Note: Temporarily disabled to debug nil pointer issue
+	// FIXME: Disabled due to wasmtime-go v37 bug causing nil pointer panics
 	// i.store.SetEpochDeadline(10000)
 
 	// Initialize memory early with a placeholder so functions don't crash
@@ -289,7 +289,6 @@ func (i *Instance) setup() {
 	var err error
 	i.wasm, err = linker.Instantiate(i.store, i.wasmctx.module)
 	if err != nil {
-		i.log.Printf("Failed to instantiate module: %v", err)
 		panic(err)
 	}
 
@@ -341,7 +340,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			// If the context cancels before we write to the donech it's a timeout/deadline/client
 			// hung up and we should interrupt the wasm program.
-			// Temporarily disabled epoch interruption to debug nil pointer issue
+			// FIXME: Disabled due to wasmtime-go v37 bug causing nil pointer panics
 			// i.wasmctx.engine.IncrementEpoch()
 		case <-donech:
 			// Otherwise, we're good and don't need to do anything else.
@@ -356,31 +355,9 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.startExecution()
 
 	// Get the "_start" export
-	if i.wasm == nil {
-		panic("i.wasm is nil")
-	}
-	if i.store == nil {
-		panic("i.store is nil")
-	}
-
 	startExport := i.wasm.GetExport(i.store, "_start")
 	if startExport == nil {
-		// Log all available exports for debugging
-		i.log.Printf("ERROR: '_start' export not found in wasm module")
-
-		// Try common alternative entry points
-		alternativeNames := []string{"main", "_main", "start"}
-		for _, name := range alternativeNames {
-			if export := i.wasm.GetExport(i.store, name); export != nil {
-				i.log.Printf("Found alternative export: %s", name)
-				startExport = export
-				break
-			}
-		}
-
-		if startExport == nil {
-			panic("no suitable entry point found in wasm module")
-		}
+		panic("_start export not found in wasm module")
 	}
 
 	entry := startExport.Func()
