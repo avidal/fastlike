@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sort"
 	"strings"
 )
 
@@ -34,10 +35,14 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	}
 
 	// Capture original header names in their original order for downstream_original_header_names
+	// Convert to lowercase to match HTTP/2 convention (headers are case-insensitive)
+	// Sort alphabetically since Go map iteration order is non-deterministic
 	rh.originalHeaders = make([]string, 0, len(i.ds_request.Header))
 	for name := range i.ds_request.Header {
-		rh.originalHeaders = append(rh.originalHeaders, name)
+		rh.originalHeaders = append(rh.originalHeaders, strings.ToLower(name))
 	}
+	// Sort to ensure consistent ordering
+	sort.Strings(rh.originalHeaders)
 
 	// Capture TLS connection state if the request was over TLS
 	if i.ds_request.TLS != nil {
@@ -105,7 +110,13 @@ func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_
 		return XqdStatusOK
 	}
 
-	// Otherwise, we can just write it to memory. net.IP is implemented a byte slice, which we can
+	// Convert to 4-byte representation if it's an IPv4 address
+	// This avoids writing IPv6-mapped IPv4 addresses (::ffff:x.x.x.x)
+	if ipv4 := ip.To4(); ipv4 != nil {
+		ip = ipv4
+	}
+
+	// Write the IP to memory. net.IP is implemented a byte slice, which we can
 	// write directly out
 	nwritten, err := i.memory.WriteAt(ip, int64(octets_out))
 	if err != nil {
@@ -124,7 +135,8 @@ func (i *Instance) xqd_req_downstream_server_ip_addr(octets_out int32, nwritten_
 
 	// For local testing, return localhost IPv4 address
 	// In production, this would be the actual server IP
-	ip := net.IPv4(127, 0, 0, 1)
+	// Use direct byte slice to ensure 4-byte IPv4 representation
+	ip := []byte{127, 0, 0, 1}
 
 	// Write the IP to memory
 	nwritten, err := i.memory.WriteAt(ip, int64(octets_out))
