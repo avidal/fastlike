@@ -263,9 +263,11 @@ func (i *Instance) setup() {
 	wasicfg.InheritStdout() // Allow guest to write to stdout
 	wasicfg.InheritStderr() // Allow guest to write to stderr
 	wasicfg.SetArgv([]string{"fastlike"}) // Set argv[0] to "fastlike"
-	// Set FASTLY_TRACE_ID environment variable for request correlation
-	// Using a fixed UUID since this is for local development/testing
-	wasicfg.SetEnv([]string{"FASTLY_TRACE_ID"}, []string{"00000000-0000-0000-0000-000000000000"})
+	// Set Fastly environment variables for local development/testing
+	wasicfg.SetEnv(
+		[]string{"FASTLY_TRACE_ID", "FASTLY_SERVICE_VERSION", "FASTLY_HOSTNAME"},
+		[]string{"00000000-0000-0000-0000-000000000000", "1", "localhost"},
+	)
 	i.store.SetWasi(wasicfg)
 
 	// Set epoch deadline for interruption

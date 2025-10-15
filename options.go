@@ -93,6 +93,13 @@ func WithKVStore(name string) Option {
 	}
 }
 
+// WithKVStoreData registers a pre-populated KV store with the given name
+func WithKVStoreData(name string, store *KVStore) Option {
+	return func(i *Instance) {
+		i.addKVStore(name, store)
+	}
+}
+
 // WithSecretStore registers a new secret store with a corresponding lookup function
 func WithSecretStore(name string, fn SecretLookupFunc) Option {
 	return func(i *Instance) {

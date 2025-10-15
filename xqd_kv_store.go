@@ -23,9 +23,8 @@ func (i *Instance) xqd_kv_store_open(
 	// Look up the store in the registry
 	store, exists := i.kvStoreRegistry[string(nameBuf)]
 	if !exists {
-		// Store not found - return invalid handle
-		i.memory.WriteUint32(kvStoreHandleOut, uint32(HandleInvalid))
-		return XqdStatusOK
+		// Store not found - return error
+		return XqdError
 	}
 
 	// Create a handle for the store
