@@ -492,6 +492,12 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	backend := string(buf)
 
+	// Check if URL is set
+	if r.URL == nil {
+		i.abilog.Printf("req_send: URL not set for request handle %d", rhandle)
+		return XqdErrHttpUserInvalid
+	}
+
 	i.abilog.Printf("req_send: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
 	req, err := http.NewRequestWithContext(i.ds_context, r.Method, r.URL.String(), b)
@@ -621,6 +627,12 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		return XqdError
 	}
 	backend := string(buf)
+
+	// Check if URL is set
+	if r.URL == nil {
+		i.abilog.Printf("req_send_async: URL not set for request handle %d", rhandle)
+		return XqdErrHttpUserInvalid
+	}
 
 	i.abilog.Printf("req_send_async: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
@@ -915,6 +927,14 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	}
 
 	backend := string(buf)
+
+	// Check if URL is set
+	if r.URL == nil {
+		i.abilog.Printf("req_send_v2: URL not set for request handle %d", rhandle)
+		errorDetail := createErrorDetailFromError(fmt.Errorf("URL not set"))
+		_ = i.writeSendErrorDetail(error_detail_out, errorDetail)
+		return XqdErrHttpUserInvalid
+	}
 
 	i.abilog.Printf("req_send_v2: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 

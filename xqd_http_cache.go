@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // xqd_http_cache_is_request_cacheable checks if a request is cacheable per RFC 9111
@@ -149,6 +150,11 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 
 	lookupOpts := &CacheLookupOptions{}
 	tx := i.cache.TransactionLookup(key, lookupOpts)
+
+	// Store the original request URL and method in the transaction
+	// so that get_suggested_backend_request can create a proper request
+	tx.RequestURL = url
+	tx.RequestMethod = req.Method
 
 	handleID := i.cacheHandles.New(tx)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
@@ -393,14 +399,24 @@ func (i *Instance) xqd_http_cache_get_suggested_backend_request(
 		return XqdErrInvalidHandle
 	}
 
-	// Create a new empty request
+	// Create a new request with the URL and method from the original request
 	// In a real implementation, this would be populated with cache validation headers
 	reqID, reqHandle := i.requests.New()
+
+	// Parse the URL from the stored string
+	reqURL, err := url.Parse(handle.Transaction.RequestURL)
+	if err != nil {
+		i.abilog.Printf("http_cache_get_suggested_backend_request: failed to parse URL %q: %v", handle.Transaction.RequestURL, err)
+		return XqdError
+	}
+
 	reqHandle.Request = &http.Request{
-		Method: "GET",
+		Method: handle.Transaction.RequestMethod,
+		URL:    reqURL,
 		Header: http.Header{},
 	}
 
+	i.abilog.Printf("http_cache_get_suggested_backend_request: created request url=%s method=%s", reqURL, reqHandle.Method)
 	i.memory.WriteUint32(req_handle_out, uint32(reqID))
 
 	return XqdStatusOK
