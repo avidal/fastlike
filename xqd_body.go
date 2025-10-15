@@ -13,8 +13,6 @@ func (i *Instance) xqd_body_new(handle_out int32) int32 {
 }
 
 func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) int32 {
-	// TODO: Figure out what we're supposed to do with `body_end` which can be 0 (back) or
-	// 1 (front)
 	i.abilog.Printf("body_write: handle=%d size=%d, body_end=%d", handle, size, body_end)
 
 	body := i.bodies.Get(int(handle))
@@ -22,11 +20,25 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdErrInvalidHandle
 	}
 
-	// Copy size bytes starting at addr into the body handle
-	nwritten, err := io.CopyN(body, bytes.NewReader(i.memory.Data()[addr:]), int64(size))
+	// Read the data from guest memory
+	data := make([]byte, size)
+	_, err := i.memory.ReadAt(data, int64(addr))
 	if err != nil {
-		// TODO: If err == EOF then there's a specific error code we can return (it means they
-		// didn't have `size` bytes in memory)
+		return XqdError
+	}
+
+	if body_end == 1 {
+		// Write to front (prepend)
+		// Replace the reader with a MultiReader that first reads the new data, then the existing reader
+		body.reader = io.MultiReader(bytes.NewReader(data), body.reader)
+		i.memory.PutUint32(uint32(size), int64(nwritten_out))
+		return XqdStatusOK
+	}
+
+	// Write to back (append) - default behavior
+	// Copy size bytes into the body handle's writer
+	nwritten, err := io.CopyN(body, bytes.NewReader(data), int64(size))
+	if err != nil {
 		return XqdError
 	}
 
@@ -41,6 +53,8 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
+
+	i.abilog.Printf("body_read: handle=%d addr=%d maxlen=%d", handle, addr, maxlen)
 
 	buf := bytes.NewBuffer(make([]byte, 0, maxlen))
 	ncopied, err := io.Copy(buf, io.LimitReader(body, int64(maxlen)))
@@ -60,7 +74,7 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 		return XqdError
 	}
 
-	i.abilog.Printf("body_read: handle=%d copied=%d", handle, ncopied)
+	i.abilog.Printf("body_read: handle=%d maxlen=%d copied=%d", handle, maxlen, ncopied)
 
 	// Write out how many bytes we copied
 	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
