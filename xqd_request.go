@@ -9,7 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/httptest"
+	"net/http/httptest"
 	"net/url"
 	"sort"
 	"strings"
