@@ -616,8 +616,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "downstream_client_oh_fingerprint", safeWrap4(i, "downstream_client_oh_fingerprint", func(req_handle int32, oh_out int32, oh_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_client_oh_fingerprint(req_handle, oh_out, oh_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja3_md5", safeWrap2(i, "downstream_tls_ja3_md5", func(req_handle int32, ja3_md5_out int32) int32 {
-		return i.xqd_http_downstream_tls_ja3_md5(req_handle, ja3_md5_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja3_md5", safeWrap3(i, "downstream_tls_ja3_md5", func(req_handle int32, ja3_md5_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_ja3_md5(req_handle, ja3_md5_out, nwritten_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja4", safeWrap4(i, "downstream_tls_ja4", func(req_handle int32, ja4_out int32, ja4_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_tls_ja4(req_handle, ja4_out, ja4_max_len, nwritten_out)
@@ -1011,8 +1011,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_raw_client_certificate", safeWrap4(i, "downstream_tls_raw_client_certificate", func(req_handle int32, cert_out int32, cert_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_tls_raw_client_certificate(req_handle, cert_out, cert_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_client_cert_verify_result", safeWrap1(i, "downstream_tls_client_cert_verify_result", func(req_handle int32) int32 {
-		return i.xqd_http_downstream_tls_client_cert_verify_result(req_handle)
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_client_cert_verify_result", safeWrap2(i, "downstream_tls_client_cert_verify_result", func(req_handle int32, verify_result_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_cert_verify_result(req_handle, verify_result_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_downstream", "downstream_client_h2_fingerprint", safeWrap4(i, "downstream_client_h2_fingerprint", func(req_handle int32, h2_out int32, h2_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_client_h2_fingerprint(req_handle, h2_out, h2_max_len, nwritten_out)
@@ -1020,8 +1020,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_downstream", "downstream_client_oh_fingerprint", safeWrap4(i, "downstream_client_oh_fingerprint", func(req_handle int32, oh_out int32, oh_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_client_oh_fingerprint(req_handle, oh_out, oh_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_ja3_md5", safeWrap2(i, "downstream_tls_ja3_md5", func(req_handle int32, ja3_md5_out int32) int32 {
-		return i.xqd_http_downstream_tls_ja3_md5(req_handle, ja3_md5_out)
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_ja3_md5", safeWrap3(i, "downstream_tls_ja3_md5", func(req_handle int32, ja3_md5_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_ja3_md5(req_handle, ja3_md5_out, nwritten_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_downstream", "downstream_tls_ja4", safeWrap4(i, "downstream_tls_ja4", func(req_handle int32, ja4_out int32, ja4_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_tls_ja4(req_handle, ja4_out, ja4_max_len, nwritten_out)
@@ -1035,11 +1035,11 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_downstream", "downstream_compliance_region", safeWrap4(i, "downstream_compliance_region", func(req_handle int32, region_out int32, region_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_compliance_region(req_handle, region_out, region_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_downstream", "downstream_client_ip_addr", safeWrap2(i, "downstream_client_ip_addr", func(req_handle int32, addr_octets_out int32) int32 {
-		return i.xqd_http_downstream_client_ip_addr(req_handle, addr_octets_out)
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_client_ip_addr", safeWrap3(i, "downstream_client_ip_addr", func(req_handle int32, addr_octets_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_client_ip_addr(req_handle, addr_octets_out, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_downstream", "downstream_server_ip_addr", safeWrap2(i, "downstream_server_ip_addr", func(req_handle int32, addr_octets_out int32) int32 {
-		return i.xqd_http_downstream_server_ip_addr(req_handle, addr_octets_out)
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_server_ip_addr", safeWrap3(i, "downstream_server_ip_addr", func(req_handle int32, addr_octets_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_server_ip_addr(req_handle, addr_octets_out, nwritten_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_downstream", "fastly_key_is_valid", safeWrap2(i, "fastly_key_is_valid", func(req_handle int32, is_valid_out int32) int32 {
 		return i.xqd_http_downstream_fastly_key_is_valid(req_handle, is_valid_out)
@@ -1198,9 +1198,9 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_servername", safeWrap4(i, "xqd_req_downstream_tls_client_servername", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_client_servername(a, b, c, d) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_hello", safeWrap4(i, "xqd_req_downstream_tls_client_hello", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_client_hello(a, b, c, d) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_raw_client_certificate", safeWrap4(i, "xqd_req_downstream_tls_raw_client_certificate", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_raw_client_certificate(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_cert_verify_result", safeWrap1(i, "xqd_req_downstream_tls_client_cert_verify_result", func(a int32) int32 { return i.xqd_http_downstream_tls_client_cert_verify_result(a) }))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_cert_verify_result", safeWrap2(i, "xqd_req_downstream_tls_client_cert_verify_result", func(a int32, b int32) int32 { return i.xqd_http_downstream_tls_client_cert_verify_result(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_client_h2_fingerprint", safeWrap4(i, "xqd_req_downstream_client_h2_fingerprint", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_client_h2_fingerprint(a, b, c, d) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_client_oh_fingerprint", safeWrap4(i, "xqd_req_downstream_client_oh_fingerprint", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_client_oh_fingerprint(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja3_md5", safeWrap2(i, "xqd_req_downstream_tls_ja3_md5", func(a int32, b int32) int32 { return i.xqd_http_downstream_tls_ja3_md5(a, b) }))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja3_md5", safeWrap3(i, "xqd_req_downstream_tls_ja3_md5", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_tls_ja3_md5(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja4", safeWrap4(i, "xqd_req_downstream_tls_ja4", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_ja4(a, b, c, d) }))
 }

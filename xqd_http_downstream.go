@@ -429,10 +429,10 @@ func (i *Instance) xqd_http_downstream_tls_raw_client_certificate(
 }
 
 // xqd_http_downstream_tls_client_cert_verify_result returns the result of client certificate verification.
-// Returns XqdErrNone if TLS metadata is not available or no client certificate was provided.
+// Writes the verification result to verify_result_out pointer.
 //
-// Signature: (handle: RequestHandle) -> Result<ClientCertVerifyResult, FastlyStatus>
-func (i *Instance) xqd_http_downstream_tls_client_cert_verify_result(req_handle int32) int32 {
+// Signature: (handle: RequestHandle, verify_result_out: *mut ClientCertVerifyResult) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_tls_client_cert_verify_result(req_handle int32, verify_result_out int32) int32 {
 	i.abilog.Printf("http_downstream_tls_client_cert_verify_result: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -441,24 +441,24 @@ func (i *Instance) xqd_http_downstream_tls_client_cert_verify_result(req_handle 
 		return XqdErrInvalidHandle
 	}
 
-	// Check if TLS state is available
-	if req.tlsState == nil {
-		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: TLS metadata not available")
-		return XqdErrNone
+	var result uint32
+
+	// Check if TLS state is available or if no client certificate was provided
+	if req.tlsState == nil || len(req.tlsState.PeerCertificates) == 0 {
+		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: No client certificate or TLS metadata not available")
+		// Write CertificateMissing if no certificate was provided or TLS not available
+		result = uint32(ClientCertVerifyResultCertificateMissing)
+	} else {
+		// In Go's TLS, if we reach here, the certificate was verified successfully
+		// (unless VerifyConnection or VerifyPeerCertificate callbacks were used)
+		// For simplicity, we return Ok if certificates are present and the connection succeeded
+		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: certificate verified")
+		result = uint32(ClientCertVerifyResultOk)
 	}
 
-	// Check if client certificates are available
-	if len(req.tlsState.PeerCertificates) == 0 {
-		i.abilog.Printf("http_downstream_tls_client_cert_verify_result: No client certificate provided")
-		// Return CertificateMissing if no certificate was provided
-		return int32(ClientCertVerifyResultCertificateMissing)
-	}
-
-	// In Go's TLS, if we reach here, the certificate was verified successfully
-	// (unless VerifyConnection or VerifyPeerCertificate callbacks were used)
-	// For simplicity, we return Ok if certificates are present and the connection succeeded
-	i.abilog.Printf("http_downstream_tls_client_cert_verify_result: certificate verified")
-	return int32(ClientCertVerifyResultOk)
+	// Write the result to the output pointer
+	i.memory.PutUint32(result, int64(verify_result_out))
+	return XqdStatusOK
 }
 
 // xqd_http_downstream_client_h2_fingerprint returns the HTTP/2 fingerprint for the downstream connection.
@@ -517,9 +517,9 @@ func (i *Instance) xqd_http_downstream_client_oh_fingerprint(
 // Returns XqdErrNone if fingerprinting data is not available.
 // Note: JA3 fingerprinting requires access to raw TLS handshake data which Go's crypto/tls does not expose.
 //
-// Signature: (handle: RequestHandle, ja3_md5_out: *mut u8) -> Result<num_bytes, FastlyStatus>
+// Signature: (handle: RequestHandle, ja3_md5_out: *mut u8, nwritten_out: *mut usize) -> FastlyStatus
 // The buffer must be at least 16 bytes (MD5 hash size)
-func (i *Instance) xqd_http_downstream_tls_ja3_md5(req_handle int32, ja3_md5_out int32) int32 {
+func (i *Instance) xqd_http_downstream_tls_ja3_md5(req_handle int32, ja3_md5_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("http_downstream_tls_ja3_md5: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -536,6 +536,7 @@ func (i *Instance) xqd_http_downstream_tls_ja3_md5(req_handle int32, ja3_md5_out
 	// - Elliptic curve formats
 	// Go's crypto/tls does not expose the raw Client Hello message needed to generate JA3
 	i.abilog.Printf("http_downstream_tls_ja3_md5: JA3 fingerprint not available (not implemented)")
+	i.memory.PutUint32(0, int64(nwritten_out))
 	return XqdErrNone
 }
 
@@ -609,8 +610,8 @@ func (i *Instance) xqd_http_downstream_client_request_id(
 // xqd_http_downstream_client_ip_addr returns the client IP address for the downstream connection.
 // The buffer must be at least 16 bytes (for IPv6).
 //
-// Signature: (handle: RequestHandle, addr_octets_out: *mut u8) -> Result<num_bytes, FastlyStatus>
-func (i *Instance) xqd_http_downstream_client_ip_addr(req_handle int32, addr_octets_out int32) int32 {
+// Signature: (handle: RequestHandle, addr_octets_out: *mut u8, nwritten_out: *mut usize) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_client_ip_addr(req_handle int32, addr_octets_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("http_downstream_client_ip_addr: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -621,14 +622,14 @@ func (i *Instance) xqd_http_downstream_client_ip_addr(req_handle int32, addr_oct
 
 	// Use the existing implementation from xqd_request.go
 	// Get client IP from request's RemoteAddr
-	return i.xqd_req_downstream_client_ip_addr(addr_octets_out, 0)
+	return i.xqd_req_downstream_client_ip_addr(addr_octets_out, nwritten_out)
 }
 
 // xqd_http_downstream_server_ip_addr returns the server IP address for the downstream connection.
 // The buffer must be at least 16 bytes (for IPv6).
 //
-// Signature: (handle: RequestHandle, addr_octets_out: *mut u8) -> Result<num_bytes, FastlyStatus>
-func (i *Instance) xqd_http_downstream_server_ip_addr(req_handle int32, addr_octets_out int32) int32 {
+// Signature: (handle: RequestHandle, addr_octets_out: *mut u8, nwritten_out: *mut usize) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_server_ip_addr(req_handle int32, addr_octets_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("http_downstream_server_ip_addr: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -638,7 +639,7 @@ func (i *Instance) xqd_http_downstream_server_ip_addr(req_handle int32, addr_oct
 	}
 
 	// Use the existing implementation from xqd_request.go
-	return i.xqd_req_downstream_server_ip_addr(addr_octets_out, 0)
+	return i.xqd_req_downstream_server_ip_addr(addr_octets_out, nwritten_out)
 }
 
 // xqd_http_downstream_client_ddos_detected checks if DDoS attack was detected for this client.
