@@ -273,6 +273,9 @@ func (i *Instance) setup() {
 	wasicfg.InheritStdout()
 	wasicfg.InheritStderr()
 	wasicfg.SetArgv([]string{"fastlike"})
+	// Set FASTLY_TRACE_ID environment variable to match the request ID we return
+	// This is used for request correlation/tracing
+	wasicfg.SetEnv([]string{"FASTLY_TRACE_ID"}, []string{"00000000-0000-0000-0000-000000000000"})
 	i.store.SetWasi(wasicfg)
 
 	// Set epoch deadline for interruption

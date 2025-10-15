@@ -136,7 +136,14 @@ func (i *Instance) xqd_http_downstream_original_header_names(
 	headers := req.originalHeaders
 	if len(headers) == 0 {
 		// No original headers captured (this shouldn't happen for downstream requests)
-		i.memory.PutUint32(0, int64(ending_cursor_out)) // -1 indicates end
+		i.memory.PutUint32(0xFFFFFFFF, int64(ending_cursor_out)) // -1 indicates end
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdStatusOK
+	}
+
+	// Check if cursor is -1 (0xFFFFFFFF) or out of bounds, indicating no more data
+	if cursor < 0 || int(cursor) >= len(headers) {
+		i.memory.PutUint32(0xFFFFFFFF, int64(ending_cursor_out)) // -1 indicates end
 		i.memory.PutUint32(0, int64(nwritten_out))
 		return XqdStatusOK
 	}
@@ -715,8 +722,8 @@ func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32, is_
 	}
 
 	// In local testing, we don't validate Fastly-Key headers
-	// Always write 1 (true) to allow purge operations
-	i.memory.WriteUint32(is_valid_out, 1)
-	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns true)")
+	// Return 0 (false) to match Viceroy's behavior in local testing
+	i.memory.WriteUint32(is_valid_out, 0)
+	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns false)")
 	return XqdStatusOK
 }
