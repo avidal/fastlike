@@ -1,83 +1,131 @@
-![fastlike logo](.media/logo.png)
+![Fastlike logo](.media/logo.png)
 
-# fastlike
+# Fastlike
 
-fastlike is a Go implementation of the Fastly Compute XQD ABI using `wasmtime` and exposes
-a `http.Handler` for you to use. It allows you to run Fastly Compute compatible WebAssembly
-programs locally for testing and development purposes.
+Fastlike is a local development server for Fastly Compute@Edge applications. It allows you to run and test your Fastly Compute WebAssembly programs locally without deploying to Fastly, making development faster and more efficient.
 
-## Building
+## What is Fastlike?
 
-Fastlike includes a Makefile for common tasks:
+Fastlike is a complete Go implementation of the Fastly Compute XQD ABI that runs locally using WebAssembly. It emulates Fastly's runtime environment, allowing you to:
+
+- Test Fastly Compute programs locally before deployment
+- Debug issues without the deployment cycle
+- Develop with hot-reloading capabilities
+- Simulate backend services and configurations
+
+## Features
+
+- Full ABI Compatibility: Implements 100% of the Fastly Compute XQD ABI
+- Local Development: Run Fastly Compute programs without deploying
+- Multiple Backend Support: Configure multiple named backends
+- Hot Reloading: Automatically reload WASM modules on file changes
+- Dictionaries & Config Stores: Support for key-value lookups
+- Caching: Full HTTP caching with surrogate keys
+- ACL & Rate Limiting: Access control and rate limiting support
+- Secure Secret Handling: Secure credential management
+- KV Store Support: Object storage with async operations
+- Image Optimization Hooks: Transform images on-the-fly
+
+## Installation
+
+### Prerequisites
+
+- Go 1.23 or later
+
+### Install via Go
 
 ```bash
-# Build the fastlike binary
+go install Fastlike.dev/cmd/Fastlike@latest
+```
+
+### Build from Source
+
+```bash
+# Clone the repository (if you have the source code)
+# If you just want to install, use: go install Fastlike.dev/cmd/Fastlike@latest
+git clone https://github.com/Fastlike/Fastlike.git
+cd Fastlike
+
+# Build and install
 make build
+# Binary will be available at ./bin/Fastlike
 
-# Run all tests
-make test
-
-# Run the fastlike proxy
-make run WASM=app.wasm BACKEND=localhost:8000
-
-# With named backend and verbosity
-make run WASM=app.wasm BACKEND=example=localhost:8000 ARGS='-v 2'
-
-# Build test wasm programs
-make build-test-wasm
-
-# Format and lint
-make fmt
-make lint
-
-# Clean build artifacts
-make clean
-
-# Display all available commands
-make help
+# Or install to GOPATH/bin
+make install
 ```
 
-Or build directly with Go:
+## Getting Started
+
+### 1. Get a Fastly Compute WASM Program
+
+You'll need a Fastly Compute compatible WebAssembly program. The easiest way is using [Fastly CLI](https://github.com/fastly/cli):
 
 ```bash
-go build ./cmd/fastlike
+# Create a new project
+fastly compute init my-project
+cd my-project
+
+# Build the WASM binary
+fastly compute build
+# WASM file will be at bin/main.wasm
 ```
 
-## Usage
+### 2. Run with a Backend
 
-The example proxy implementation in `cmd/fastlike` can be run with:
+Start Fastlike with your WASM program and a backend service:
 
 ```bash
-# Using Go directly
-go run ./cmd/fastlike -wasm <wasmfile> -backend <proxy address>
+# Run with a local backend on port 8000
+Fastlike -wasm bin/main.wasm -backend localhost:8000
 
-# Or using Make
-make run WASM=<wasmfile> BACKEND=<proxy address>
+# Or with a named backend
+Fastlike -wasm bin/main.wasm -backend api=localhost:8000 -bind localhost:5000
 ```
 
-### Command Line Options
+### 3. Test Your Application
 
-- `-wasm` - Required: path to the WASM program to execute
-- `-bind` - Address to bind to (default: localhost:5000)
-- `-v` - Verbosity level (0, 1, 2)
-- `-backend` or `-b` - Backend addresses (use empty name for catch-all backend)
-- `-dictionary` or `-d` - Dictionary files for key-value lookups (JSON format with string values)
-- `-reload` - Enable SIGHUP handler for hot-reloading the WASM module
+Once running, make requests to your local Fastlike server:
+
+```bash
+curl http://localhost:5000/
+```
+
+## Configuration Options
+
+### Basic Options
+
+```bash
+# Specify custom bind address
+Fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:8080
+
+# Enable verbose logging (0, 1, or 2 levels)
+Fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
+
+# Enable hot reloading on SIGHUP
+Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+```
 
 ### Multiple Backends
 
-You can specify multiple backends using the `-backend` flag multiple times:
+Configure multiple named backends for complex routing:
 
-```
-$ go run ./cmd/fastlike -wasm my-program.wasm -backend api=localhost:8000 -backend static=localhost:8080
+```bash
+Fastlike -wasm my-program.wasm \
+  -backend api=localhost:8000 \
+  -backend static=localhost:8080 \
+  -backend images=localhost:9000
 ```
 
 ### Dictionaries
 
-You can provide dictionary files (JSON format) for key-value lookups:
+Use JSON files for key-value lookups:
 
-```
-$ go run ./cmd/fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary mydict=data.json
+```bash
+# Create a dictionary file
+echo '{"api_key": "secret123", "version": "1.0.0"}' > config.json
+
+# Use the dictionary in your program
+Fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary config=config.json
 ```
 
 The dictionary file should contain a JSON object with string keys and values:
@@ -85,200 +133,129 @@ The dictionary file should contain a JSON object with string keys and values:
 ```json
 {
   "key1": "value1",
-  "key2": "value2"
+  "key2": "value2",
+  "api_endpoint": "https://api.example.com"
 }
 ```
 
 ### Hot Reloading
 
-Enable hot-reloading with the `-reload` flag, then send a SIGHUP signal to reload the WASM module
-without restarting the server:
-
-```
-$ go run ./cmd/fastlike -wasm my-program.wasm -backend localhost:8000 -reload
-# In another terminal:
-$ pkill -SIGHUP fastlike
-```
-
-## Using as a Go Library
-
-While the `cmd/fastlike` example provides a command-line proxy, fastlike is designed to be embedded
-in your own Go applications via its `http.Handler` interface. This gives you access to additional
-features not exposed through the command-line tool:
-
-- Config Stores: Modern alternative to dictionaries for key-value lookups
-- Secret Stores: Secure credential management with handle-based access
-- KV Stores: Object store API for key-value operations with async support
-- ACL (Access Control Lists): IP-based access control with CIDR matching
-- Edge Rate Limiting: Rate counters and penalty boxes for request throttling
-- Cache API: Full HTTP caching support with request collapsing and surrogate keys
-- Purge API: Cache invalidation with hard and soft purge support
-- Image Optimizer: Hook-based image transformation support
-- Device Detection: Provide device detection data based on user agents
-- Custom Loggers: Route guest logging to custom destinations
-- Geo Lookup: Custom geographic IP lookups
-- User Agent Parsing: Custom user agent parsing
-- Compliance Regions: Set compliance regions for GDPR and data locality
-- Security Functions: Custom logic to determine if requests are secure
-- Backend Configuration: Full backend configuration with timeouts, SSL settings, and TCP keepalive
-
-Example usage:
-
-```go
-import (
-    "net/http"
-    "net/http/httputil"
-    "net/url"
-
-    "fastlike.dev"
-)
-
-func main() {
-    // Create a backend handler that proxies to your API
-    apiURL, _ := url.Parse("http://localhost:8000")
-    apiHandler := httputil.NewSingleHostReverseProxy(apiURL)
-
-    // Parse ACL from JSON
-    aclData := []byte(`{"entries": [{"prefix": "192.168.1.0/24", "action": "ALLOW"}]}`)
-    acl, _ := fastlike.ParseACL(aclData)
-
-    // Config store lookup function
-    settingsLookup := func(key string) string {
-        // Return configuration values
-        if key == "api_endpoint" {
-            return "https://api.example.com"
-        }
-        return ""
-    }
-
-    // Secret store lookup function
-    secretsLookup := func(key string) ([]byte, bool) {
-        // Return secrets securely
-        if key == "api_key" {
-            return []byte("secret-key-here"), true
-        }
-        return nil, false
-    }
-
-    opts := []fastlike.Option{
-        fastlike.WithBackend("api", apiHandler),
-        fastlike.WithConfigStore("settings", settingsLookup),
-        fastlike.WithSecretStore("credentials", secretsLookup),
-        fastlike.WithKVStore("cache"),
-        fastlike.WithACL("allowed_ips", acl),
-        fastlike.WithRateCounter("requests", nil),
-        fastlike.WithPenaltyBox("ratelimited", nil),
-        fastlike.WithComplianceRegion("us-eu"),
-        fastlike.WithVerbosity(2),
-    }
-
-    fl := fastlike.New("path/to/program.wasm", opts...)
-    http.ListenAndServe(":8080", fl)
-}
-```
-
-See the [options.go](options.go) file for the complete list of available configuration options.
-
-## Getting WASM Programs
-
-You'll need a Fastly Compute compatible WASM program to run with fastlike. The simplest
-way to do that is via the [fastly cli](https://github.com/fastly/cli) and using one of the [starter
-kits](https://developer.fastly.com/solutions/starters/).
-
-After scaffolding your WASM program using a starter kit and modifying it to your liking, you'll need
-to build the WASM binary:
-
-```
-$ fastly compute init my-compute-project
-# answer the prompts, creating a rust or assemblyscript project
-$ fastly compute build
-```
-
-And then use the resulting WASM binary in fastlike:
-
-```
-$ go run ./cmd/fastlike -wasm my-compute-project/bin/main.wasm -backend <proxy address>
-```
-
-You don't need the fastly CLI to build the test program either, as long as you have rust installed
-and the wasm32-wasip1 target available:
-
-```
-# This example is using one of the guest implementations of the spec tests
-$ rustup target add wasm32-wasip1 # ensure we have the wasm32-wasip1 for the current toolchain
-# The wasm32-wasip1 target is configured as the default target via `specs/testdata/rust/.cargo/config.toml`
-$ cd specs/testdata/rust; cargo build; cd ../../..
-$ go run ./cmd/fastlike -wasm ./specs/testdata/rust/target/wasm32-wasip1/debug/example.wasm -backend <proxy address>
-```
-
-However, using the [fastly cli](https://github.com/fastly/cli) will help ensure your toolchains are
-properly up to date and your dependencies are in order.
-
-For a more full-featured example, using the default rust starter kit:
-
-```
-# in one terminal:
-$ go run ./cmd/fastlike -wasm ./my-compute-project/bin/main.wasm -backend localhost:8000 -bind localhost:5000
-
-# in another
-$ python3 -m http.server
-
-# in a third
-$ curl localhost:5000/backend
-```
-
-Go, running Rust, calling Go, proxying to Python.
-
-## Feature Completeness
-
-Fastlike implements the complete Fastly Compute XQD ABI, providing full compatibility with
-Fastly's runtime environment. This includes all major feature areas:
-
-- Async Operations: Parallel backend requests, async I/O select, pending request operations
-- HTTP Features: Request/response manipulation, header operations, body streaming, trailers
-- Caching: Full cache API with request collapsing, surrogate keys, and purge operations
-- Storage: KV stores, config stores, secret stores, dictionaries
-- Security: ACL, edge rate limiting, TLS introspection, device detection
-- Backends: Dynamic backend registration, backend introspection, auto-decompression
-- Advanced: Image optimizer hooks, compliance regions, client fingerprinting stubs
-
-The implementation matches Viceroy (Fastly's reference implementation) while optimizing for local
-development and testing workflows.
-
-## Testing
-
-Fastlike includes a comprehensive test suite with spec tests that verify XQD ABI compatibility:
+Enable hot reloading to automatically reload your WASM module when you make changes:
 
 ```bash
-# Run all tests
-make test
-# or
-go test ./...
+# Start with reload enabled
+Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
 
-# Run spec tests with default wasm program
-make test-spec
-# or
-cd specs && go test
-
-# Run spec tests with a custom wasm program
-make test-spec-custom WASM=path/to/app.wasm
-# or
-go test ./specs -wasm path/to/app.wasm
-
-# Build the spec runner binary
-make build-spec-runner
-# or
-cd specs && go test -c . -o spec-runner
-./spec-runner -test.v -wasm app.wasm
-
-# Build test wasm programs
-make build-test-wasm
+# In another terminal, send SIGHUP to reload
+kill -SIGHUP $(pgrep Fastlike)
+# Or if you know the process ID: kill -SIGHUP <pid>
 ```
 
-The spec tests use guest WebAssembly programs to verify that both the host implementation and guest
-integration work correctly together.
+## Testing and Development
 
-## Requirements
+### Make Commands
 
-- Go 1.23 or later
-- `github.com/bytecodealliance/wasmtime-go v37.0.0` for WebAssembly execution
+The project includes a Makefile with helpful commands:
+
+```bash
+# Build the binary
+make build
+
+# Run all tests
+make test
+
+# Build test WASM programs (for development)
+make build-test-wasm
+
+# Run with Make (requires WASM and BACKEND variables)
+make run WASM=my-program.wasm BACKEND=localhost:8000
+
+# Run with arguments
+make run WASM=my-program.wasm BACKEND=localhost:8000 ARGS='-v 2'
+```
+
+### Verbose Mode per Request
+
+For debugging specific requests, add the `Fastlike-verbose` header:
+
+```bash
+curl -H "Fastlike-verbose: 1" http://localhost:5000/
+```
+
+This enables verbose logging for just that request.
+
+## Example Usage
+
+### Simple Setup
+
+```bash
+# Start a simple backend server
+python3 -m http.server 8000 &
+
+# Run Fastlike with your WASM program
+Fastlike -wasm my-program.wasm -backend localhost:8000 -bind localhost:5000
+
+# Test it
+curl http://localhost:5000/
+```
+
+### Complex Multi-Backend Setup
+
+```bash
+# Start multiple backend services
+python3 -m http.server 8000 &  # Static files
+node app.js 8080 &             # API server
+npx serve public/ 9000 &       # Another service
+
+# Run Fastlike with multiple backends
+Fastlike -wasm my-program.wasm \
+  -backend static=localhost:8000 \
+  -backend api=localhost:8080 \
+  -backend images=localhost:9000 \
+  -dictionary config=config.json \
+  -bind localhost:5000
+
+# Now your WASM program can route to any of these backends by name
+```
+
+### Development Workflow with Hot Reloading
+
+```bash
+# Terminal 1: Start Fastlike with hot reload
+Fastlike -wasm my-program.wasm -backend localhost:8000 -reload
+
+# Terminal 2: Build and reload when changes occur
+while inotifywait -e modify my-project/src/*; do
+  cd my-project && fastly compute build
+  kill -SIGHUP $(pgrep Fastlike)
+done
+
+# Terminal 3: Test continuously
+watch -n 1 curl -s http://localhost:5000/
+```
+
+## Advanced Features
+
+### Custom Logging
+
+Enable verbose logging to see all ABI calls:
+
+```bash
+# Persistent verbose logging
+Fastlike -wasm my-program.wasm -backend localhost:8000 -v 2
+
+# Per-request verbose logging
+curl -H "Fastlike-verbose: 1" http://localhost:5000/
+```
+
+### Backend Configuration
+
+Support for named backend configurations. Complex backend configurations with timeouts, SSL, and more are available through the Go API but not through the CLI.
+
+### Cache Support
+
+Full HTTP caching support with request collapsing and surrogate key management - all working locally.
+
+### Request Loops Prevention
+
+Fastlike adds "Fastlike" to the `cdn-loop` header to prevent infinite request loops. If a loop is detected, it returns a 508 Loop Detected error.
