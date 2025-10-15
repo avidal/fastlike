@@ -102,7 +102,7 @@ func (i *Instance) xqd_acl_lookup(
 
 	// Create a body handle with the JSON data
 	bodyHandle, body := i.bodies.NewBuffer()
-	body.Write(jsonBytes)
+	_, _ = body.Write(jsonBytes)
 	body.length = int64(len(jsonBytes))
 
 	// Write the output parameters

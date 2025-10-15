@@ -14,18 +14,6 @@ type wasmContext struct {
 // safeWrap wraps a host function with panic recovery to work around wasmtime-go v37 bug
 // When host functions with *Caller panic, wasmtime-go v37 has a nil pointer dereference bug
 // This wrapper catches panics and converts them to proper error returns
-func safeWrap0(i *Instance, name string, fn func() int32) func(*wasmtime.Caller) int32 {
-	return func(caller *wasmtime.Caller) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn()
-	}
-}
-
 func safeWrap1(i *Instance, name string, fn func(int32) int32) func(*wasmtime.Caller, int32) int32 {
 	return func(caller *wasmtime.Caller, a int32) (ret int32) {
 		defer func() {
@@ -123,54 +111,6 @@ func safeWrap8(i *Instance, name string, fn func(int32, int32, int32, int32, int
 }
 
 // Additional wrappers for uint32 parameters (for cache functions)
-func safeWrap2u1(i *Instance, name string, fn func(int32, uint32) int32) func(*wasmtime.Caller, int32, uint32) int32 {
-	return func(caller *wasmtime.Caller, a int32, b uint32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b)
-	}
-}
-
-func safeWrap4u1(i *Instance, name string, fn func(int32, int32, uint32, int32) int32) func(*wasmtime.Caller, int32, int32, uint32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b int32, c uint32, d int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d)
-	}
-}
-
-func safeWrap5u1(i *Instance, name string, fn func(int32, int32, uint32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, uint32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b int32, c uint32, d, e int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e)
-	}
-}
-
-func safeWrap6u1(i *Instance, name string, fn func(int32, int32, uint32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, uint32, int32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b int32, c uint32, d, e, f int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f)
-	}
-}
-
 func safeWrap7u1(i *Instance, name string, fn func(int32, int32, int32, uint32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, uint32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c int32, d uint32, e, f, g int32) (ret int32) {
 		defer func() {
@@ -192,30 +132,6 @@ func safeWrap9(i *Instance, name string, fn func(int32, int32, int32, int32, int
 			}
 		}()
 		return fn(a, b, c, d, e, f, g, h, j)
-	}
-}
-
-func safeWrap9u1(i *Instance, name string, fn func(int32, int32, int32, int32, uint32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, uint32, int32, int32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d int32, e uint32, f, g, h, j int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f, g, h, j)
-	}
-}
-
-func safeWrap10(i *Instance, name string, fn func(int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f, g, h, j, k)
 	}
 }
 
@@ -253,90 +169,6 @@ func safeWrap1i64(i *Instance, name string, fn func(int64) int32) func(*wasmtime
 			}
 		}()
 		return fn(a)
-	}
-}
-
-func safeWrap3u1(i *Instance, name string, fn func(int32, uint32, int32) int32) func(*wasmtime.Caller, int32, uint32, int32) int32 {
-	return func(caller *wasmtime.Caller, a int32, b uint32, c int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c)
-	}
-}
-
-func safeWrap4u2(i *Instance, name string, fn func(int32, uint32, int32, int32) int32) func(*wasmtime.Caller, int32, uint32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a int32, b uint32, c, d int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d)
-	}
-}
-
-func safeWrap5u2(i *Instance, name string, fn func(int32, int32, int32, int32, uint32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, uint32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d int32, e uint32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e)
-	}
-}
-
-func safeWrap6u2(i *Instance, name string, fn func(int32, int32, int32, int32, uint32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, uint32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d int32, e uint32, f int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f)
-	}
-}
-
-func safeWrap5u3(i *Instance, name string, fn func(int32, uint32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, uint32, int32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a int32, b uint32, c, d, e int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e)
-	}
-}
-
-func safeWrap10u1(i *Instance, name string, fn func(int32, int32, int32, int32, int32, int32, int32, uint32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, uint32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g int32, h uint32, j, k int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f, g, h, j, k)
-	}
-}
-
-func safeWrap11u(i *Instance, name string, fn func(int32, int32, int32, int32, uint32, uint32, uint32, int32, int32, uint32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, uint32, uint32, uint32, int32, int32, uint32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c, d int32, e, f, g uint32, h, j int32, k uint32, l int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f, g, h, j, k, l)
 	}
 }
 
@@ -1124,27 +956,55 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_req_header_remove", safeWrap3(i, "xqd_req_header_remove", func(a int32, b int32, c int32) int32 { return i.xqd_req_header_remove(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_req_header_insert", safeWrap5(i, "xqd_req_header_insert", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_req_header_insert(a, b, c, d, e) }))
 	_ = linker.FuncWrap("env", "xqd_req_header_append", safeWrap5(i, "xqd_req_header_append", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_req_header_append(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_req_header_names_get", safeWrap6(i, "xqd_req_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_header_names_get(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_req_header_value_get", safeWrap6(i, "xqd_req_header_value_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_header_value_get(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_req_header_values_get", safeWrap8(i, "xqd_req_header_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 { return i.xqd_req_header_values_get(a, b, c, d, e, f, g, h) }))
-	_ = linker.FuncWrap("env", "xqd_req_header_values_set", safeWrap5(i, "xqd_req_header_values_set", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_req_header_values_set(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_req_send", safeWrap6(i, "xqd_req_send", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_send(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_req_send_v2", safeWrap7(i, "xqd_req_send_v2", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32) int32 { return i.xqd_req_send_v2(a, b, c, d, e, f, g) }))
-	_ = linker.FuncWrap("env", "xqd_req_send_v3", safeWrap7(i, "xqd_req_send_v3", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32) int32 { return i.xqd_req_send_v3(a, b, c, d, e, f, g) }))
+	_ = linker.FuncWrap("env", "xqd_req_header_names_get", safeWrap6(i, "xqd_req_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_header_names_get(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_header_value_get", safeWrap6(i, "xqd_req_header_value_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_header_value_get(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_header_values_get", safeWrap8(i, "xqd_req_header_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 {
+		return i.xqd_req_header_values_get(a, b, c, d, e, f, g, h)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_header_values_set", safeWrap5(i, "xqd_req_header_values_set", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_req_header_values_set(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_send", safeWrap6(i, "xqd_req_send", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_send(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_send_v2", safeWrap7(i, "xqd_req_send_v2", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32) int32 {
+		return i.xqd_req_send_v2(a, b, c, d, e, f, g)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_send_v3", safeWrap7(i, "xqd_req_send_v3", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32) int32 {
+		return i.xqd_req_send_v3(a, b, c, d, e, f, g)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_send_async", safeWrap5(i, "xqd_req_send_async", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_req_send_async(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_req_send_async_streaming", safeWrap5(i, "xqd_req_send_async_streaming", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_req_send_async_streaming(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_req_send_async_v2", safeWrap6(i, "xqd_req_send_async_v2", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_send_async_v2(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_req_send_async_streaming", safeWrap5(i, "xqd_req_send_async_streaming", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_req_send_async_streaming(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_send_async_v2", safeWrap6(i, "xqd_req_send_async_v2", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_send_async_v2(a, b, c, d, e, f)
+	}))
 	_ = linker.FuncWrap("env", "xqd_pending_req_poll", safeWrap4(i, "xqd_pending_req_poll", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_pending_req_poll(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_pending_req_poll_v2", safeWrap5(i, "xqd_pending_req_poll_v2", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_pending_req_poll_v2(a, b, c, d, e) }))
+	_ = linker.FuncWrap("env", "xqd_pending_req_poll_v2", safeWrap5(i, "xqd_pending_req_poll_v2", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_pending_req_poll_v2(a, b, c, d, e)
+	}))
 	_ = linker.FuncWrap("env", "xqd_pending_req_wait", safeWrap3(i, "xqd_pending_req_wait", func(a int32, b int32, c int32) int32 { return i.xqd_pending_req_wait(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_pending_req_wait_v2", safeWrap4(i, "xqd_pending_req_wait_v2", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_pending_req_wait_v2(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_pending_req_select", safeWrap5(i, "xqd_pending_req_select", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_pending_req_select(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_pending_req_select_v2", safeWrap6(i, "xqd_pending_req_select_v2", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_pending_req_select_v2(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_pending_req_select", safeWrap5(i, "xqd_pending_req_select", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_pending_req_select(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_pending_req_select_v2", safeWrap6(i, "xqd_pending_req_select_v2", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_pending_req_select_v2(a, b, c, d, e, f)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_cache_override_set", safeWrap4(i, "xqd_req_cache_override_set", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_req_cache_override_set(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_cache_override_v2_set", safeWrap6(i, "xqd_req_cache_override_v2_set", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_cache_override_v2_set(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_req_cache_override_v2_set", safeWrap6(i, "xqd_req_cache_override_v2_set", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_cache_override_v2_set(a, b, c, d, e, f)
+	}))
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
 	// we just use the same sorted order
-	_ = linker.FuncWrap("env", "xqd_req_original_header_names_get", safeWrap6(i, "xqd_req_original_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_header_names_get(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_req_original_header_names_get", safeWrap6(i, "xqd_req_original_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_header_names_get(a, b, c, d, e, f)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_close", safeWrap1(i, "xqd_req_close", func(a int32) int32 { return i.xqd_req_close(a) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_client_ddos_detected", safeWrap1(i, "xqd_req_downstream_client_ddos_detected", func(a int32) int32 { return i.xqd_req_downstream_client_ddos_detected(a) }))
 	_ = linker.FuncWrap("env", "xqd_req_fastly_key_is_valid", safeWrap1(i, "xqd_req_fastly_key_is_valid", func(a int32) int32 { return i.xqd_req_fastly_key_is_valid(a) }))
@@ -1152,7 +1012,9 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_req_on_behalf_of", safeWrap3(i, "xqd_req_on_behalf_of", func(a int32, b int32, c int32) int32 { return i.xqd_req_on_behalf_of(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_req_framing_headers_mode_set", safeWrap2(i, "xqd_req_framing_headers_mode_set", func(a int32, b int32) int32 { return i.xqd_req_framing_headers_mode_set(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_req_auto_decompress_response_set", safeWrap2(i, "xqd_req_auto_decompress_response_set", func(a int32, b int32) int32 { return i.xqd_req_auto_decompress_response_set(a, b) }))
-	_ = linker.FuncWrap("env", "xqd_req_register_dynamic_backend", safeWrap6(i, "xqd_req_register_dynamic_backend", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_req_register_dynamic_backend(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_req_register_dynamic_backend", safeWrap6(i, "xqd_req_register_dynamic_backend", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_req_register_dynamic_backend(a, b, c, d, e, f)
+	}))
 
 	// xqd_response.go
 	_ = linker.FuncWrap("env", "xqd_resp_new", safeWrap1(i, "xqd_resp_new", func(a int32) int32 { return i.xqd_resp_new(a) }))
@@ -1161,11 +1023,21 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_resp_version_get", safeWrap2(i, "xqd_resp_version_get", func(a int32, b int32) int32 { return i.xqd_resp_version_get(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_resp_version_set", safeWrap2(i, "xqd_resp_version_set", func(a int32, b int32) int32 { return i.xqd_resp_version_set(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_resp_header_remove", safeWrap3(i, "xqd_resp_header_remove", func(a int32, b int32, c int32) int32 { return i.xqd_resp_header_remove(a, b, c) }))
-	_ = linker.FuncWrap("env", "xqd_resp_header_insert", safeWrap5(i, "xqd_resp_header_insert", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_resp_header_insert(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_resp_header_append", safeWrap5(i, "xqd_resp_header_append", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_resp_header_append(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_resp_header_names_get", safeWrap6(i, "xqd_resp_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_resp_header_names_get(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_resp_header_values_get", safeWrap8(i, "xqd_resp_header_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 { return i.xqd_resp_header_values_get(a, b, c, d, e, f, g, h) }))
-	_ = linker.FuncWrap("env", "xqd_resp_header_values_set", safeWrap5(i, "xqd_resp_header_values_set", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_resp_header_values_set(a, b, c, d, e) }))
+	_ = linker.FuncWrap("env", "xqd_resp_header_insert", safeWrap5(i, "xqd_resp_header_insert", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_resp_header_insert(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_resp_header_append", safeWrap5(i, "xqd_resp_header_append", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_resp_header_append(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_resp_header_names_get", safeWrap6(i, "xqd_resp_header_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_resp_header_names_get(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_resp_header_values_get", safeWrap8(i, "xqd_resp_header_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 {
+		return i.xqd_resp_header_values_get(a, b, c, d, e, f, g, h)
+	}))
+	_ = linker.FuncWrap("env", "xqd_resp_header_values_set", safeWrap5(i, "xqd_resp_header_values_set", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_resp_header_values_set(a, b, c, d, e)
+	}))
 	_ = linker.FuncWrap("env", "xqd_resp_close", safeWrap1(i, "xqd_resp_close", func(a int32) int32 { return i.xqd_resp_close(a) }))
 	_ = linker.FuncWrap("env", "xqd_resp_framing_headers_mode_set", safeWrap2(i, "xqd_resp_framing_headers_mode_set", func(a int32, b int32) int32 { return i.xqd_resp_framing_headers_mode_set(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_resp_http_keepalive_mode_set", safeWrap2(i, "xqd_resp_http_keepalive_mode_set", func(a int32, b int32) int32 { return i.xqd_resp_http_keepalive_mode_set(a, b) }))
@@ -1179,29 +1051,51 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_body_append", safeWrap2(i, "xqd_body_append", func(a int32, b int32) int32 { return i.xqd_body_append(a, b) }))
 	_ = linker.FuncWrap("env", "xqd_body_abandon", safeWrap1(i, "xqd_body_abandon", func(a int32) int32 { return i.xqd_body_abandon(a) }))
 	_ = linker.FuncWrap("env", "xqd_body_known_length", safeWrap2(i, "xqd_body_known_length", func(a int32, b int32) int32 { return i.xqd_body_known_length(a, b) }))
-	_ = linker.FuncWrap("env", "xqd_body_trailer_append", safeWrap5(i, "xqd_body_trailer_append", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_body_trailer_append(a, b, c, d, e) }))
-	_ = linker.FuncWrap("env", "xqd_body_trailer_names_get", safeWrap6(i, "xqd_body_trailer_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_body_trailer_names_get(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_body_trailer_value_get", safeWrap6(i, "xqd_body_trailer_value_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_body_trailer_value_get(a, b, c, d, e, f) }))
-	_ = linker.FuncWrap("env", "xqd_body_trailer_values_get", safeWrap8(i, "xqd_body_trailer_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 { return i.xqd_body_trailer_values_get(a, b, c, d, e, f, g, h) }))
+	_ = linker.FuncWrap("env", "xqd_body_trailer_append", safeWrap5(i, "xqd_body_trailer_append", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_body_trailer_append(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_body_trailer_names_get", safeWrap6(i, "xqd_body_trailer_names_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_body_trailer_names_get(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_body_trailer_value_get", safeWrap6(i, "xqd_body_trailer_value_get", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_body_trailer_value_get(a, b, c, d, e, f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_body_trailer_values_get", safeWrap8(i, "xqd_body_trailer_values_get", func(a int32, b int32, c int32, d int32, e int32, f int32, g int32, h int32) int32 {
+		return i.xqd_body_trailer_values_get(a, b, c, d, e, f, g, h)
+	}))
 
 	// xqd_log.go
 	_ = linker.FuncWrap("env", "xqd_log_endpoint_get", safeWrap3(i, "xqd_log_endpoint_get", func(a int32, b int32, c int32) int32 { return i.xqd_log_endpoint_get(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_log_write", safeWrap4(i, "xqd_log_write", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_log_write(a, b, c, d) }))
 
 	// xqd_image_optimizer.go
-	_ = linker.FuncWrap("env", "xqd_image_optimizer_transform_request", safeWrap9(i, "xqd_image_optimizer_transform_request", func(a, b, c, d int32, e int32, f, g, h, j int32) int32 { return i.xqd_image_optimizer_transform_request(a, b, c, d, uint32(e), f, g, h, j) }))
+	_ = linker.FuncWrap("env", "xqd_image_optimizer_transform_request", safeWrap9(i, "xqd_image_optimizer_transform_request", func(a, b, c, d int32, e int32, f, g, h, j int32) int32 {
+		return i.xqd_image_optimizer_transform_request(a, b, c, d, uint32(e), f, g, h, j)
+	}))
 
 	// xqd_acl.go
 	_ = linker.FuncWrap("env", "xqd_acl_open", safeWrap3(i, "xqd_acl_open", func(a int32, b int32, c int32) int32 { return i.xqd_acl_open(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_acl_lookup", safeWrap5(i, "xqd_acl_lookup", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_acl_lookup(a, b, c, d, e) }))
 
 	// xqd_erl.go
-	_ = linker.FuncWrap("env", "xqd_erl_check_rate", safeWrap11(i, "xqd_erl_check_rate", func(rc_addr, rc_size, entry_addr, entry_size int32, delta, window, limit int32, pb_addr, pb_size int32, ttl int32, blocked_out int32) int32 { return i.xqd_erl_check_rate(rc_addr, rc_size, entry_addr, entry_size, uint32(delta), uint32(window), uint32(limit), pb_addr, pb_size, uint32(ttl), blocked_out) }))
-	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_increment", safeWrap5(i, "xqd_erl_ratecounter_increment", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_erl_ratecounter_increment(a, b, c, d, uint32(e)) }))
-	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_lookup_rate", safeWrap6(i, "xqd_erl_ratecounter_lookup_rate", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_erl_ratecounter_lookup_rate(a, b, c, d, uint32(e), f) }))
-	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_lookup_count", safeWrap6(i, "xqd_erl_ratecounter_lookup_count", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_erl_ratecounter_lookup_count(a, b, c, d, uint32(e), f) }))
-	_ = linker.FuncWrap("env", "xqd_erl_penaltybox_add", safeWrap5(i, "xqd_erl_penaltybox_add", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_erl_penaltybox_add(a, b, c, d, uint32(e)) }))
-	_ = linker.FuncWrap("env", "xqd_erl_penaltybox_has", safeWrap5(i, "xqd_erl_penaltybox_has", func(a int32, b int32, c int32, d int32, e int32) int32 { return i.xqd_erl_penaltybox_has(a, b, c, d, e) }))
+	_ = linker.FuncWrap("env", "xqd_erl_check_rate", safeWrap11(i, "xqd_erl_check_rate", func(rc_addr, rc_size, entry_addr, entry_size int32, delta, window, limit int32, pb_addr, pb_size int32, ttl int32, blocked_out int32) int32 {
+		return i.xqd_erl_check_rate(rc_addr, rc_size, entry_addr, entry_size, uint32(delta), uint32(window), uint32(limit), pb_addr, pb_size, uint32(ttl), blocked_out)
+	}))
+	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_increment", safeWrap5(i, "xqd_erl_ratecounter_increment", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_erl_ratecounter_increment(a, b, c, d, uint32(e))
+	}))
+	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_lookup_rate", safeWrap6(i, "xqd_erl_ratecounter_lookup_rate", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_erl_ratecounter_lookup_rate(a, b, c, d, uint32(e), f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_erl_ratecounter_lookup_count", safeWrap6(i, "xqd_erl_ratecounter_lookup_count", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_erl_ratecounter_lookup_count(a, b, c, d, uint32(e), f)
+	}))
+	_ = linker.FuncWrap("env", "xqd_erl_penaltybox_add", safeWrap5(i, "xqd_erl_penaltybox_add", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_erl_penaltybox_add(a, b, c, d, uint32(e))
+	}))
+	_ = linker.FuncWrap("env", "xqd_erl_penaltybox_has", safeWrap5(i, "xqd_erl_penaltybox_has", func(a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_erl_penaltybox_has(a, b, c, d, e)
+	}))
 
 	// xqd_compute_runtime.go
 	_ = linker.FuncWrap("env", "xqd_compute_runtime_get_vcpu_ms", safeWrap1(i, "xqd_compute_runtime_get_vcpu_ms", func(a int32) int32 { return i.xqd_compute_runtime_get_vcpu_ms(a) }))
@@ -1214,16 +1108,30 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request", safeWrap3(i, "xqd_http_downstream_next_request", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_next_request(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request_wait", safeWrap3(i, "xqd_http_downstream_next_request_wait", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_next_request_wait(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_next_request_abandon", safeWrap1(i, "xqd_http_downstream_next_request_abandon", func(a int32) int32 { return i.xqd_http_downstream_next_request_abandon(a) }))
-	_ = linker.FuncWrap("env", "xqd_http_downstream_original_header_names", safeWrap6(i, "xqd_http_downstream_original_header_names", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 { return i.xqd_http_downstream_original_header_names(a, b, c, d, e, f) }))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_original_header_names", safeWrap6(i, "xqd_http_downstream_original_header_names", func(a int32, b int32, c int32, d int32, e int32, f int32) int32 {
+		return i.xqd_http_downstream_original_header_names(a, b, c, d, e, f)
+	}))
 	_ = linker.FuncWrap("env", "xqd_http_downstream_original_header_count", safeWrap2(i, "xqd_http_downstream_original_header_count", func(a int32, b int32) int32 { return i.xqd_http_downstream_original_header_count(a, b) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_cipher_openssl_name", safeWrap4(i, "xqd_req_downstream_tls_cipher_openssl_name", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_cipher_openssl_name(a, b, c, d) }))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_cipher_openssl_name", safeWrap4(i, "xqd_req_downstream_tls_cipher_openssl_name", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_tls_cipher_openssl_name(a, b, c, d)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_protocol", safeWrap4(i, "xqd_req_downstream_tls_protocol", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_protocol(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_servername", safeWrap4(i, "xqd_req_downstream_tls_client_servername", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_client_servername(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_hello", safeWrap4(i, "xqd_req_downstream_tls_client_hello", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_client_hello(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_raw_client_certificate", safeWrap4(i, "xqd_req_downstream_tls_raw_client_certificate", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_raw_client_certificate(a, b, c, d) }))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_servername", safeWrap4(i, "xqd_req_downstream_tls_client_servername", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_tls_client_servername(a, b, c, d)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_hello", safeWrap4(i, "xqd_req_downstream_tls_client_hello", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_tls_client_hello(a, b, c, d)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_raw_client_certificate", safeWrap4(i, "xqd_req_downstream_tls_raw_client_certificate", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_tls_raw_client_certificate(a, b, c, d)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_client_cert_verify_result", safeWrap2(i, "xqd_req_downstream_tls_client_cert_verify_result", func(a int32, b int32) int32 { return i.xqd_http_downstream_tls_client_cert_verify_result(a, b) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_client_h2_fingerprint", safeWrap4(i, "xqd_req_downstream_client_h2_fingerprint", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_client_h2_fingerprint(a, b, c, d) }))
-	_ = linker.FuncWrap("env", "xqd_req_downstream_client_oh_fingerprint", safeWrap4(i, "xqd_req_downstream_client_oh_fingerprint", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_client_oh_fingerprint(a, b, c, d) }))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_client_h2_fingerprint", safeWrap4(i, "xqd_req_downstream_client_h2_fingerprint", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_client_h2_fingerprint(a, b, c, d)
+	}))
+	_ = linker.FuncWrap("env", "xqd_req_downstream_client_oh_fingerprint", safeWrap4(i, "xqd_req_downstream_client_oh_fingerprint", func(a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_client_oh_fingerprint(a, b, c, d)
+	}))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja3_md5", safeWrap3(i, "xqd_req_downstream_tls_ja3_md5", func(a int32, b int32, c int32) int32 { return i.xqd_http_downstream_tls_ja3_md5(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja4", safeWrap4(i, "xqd_req_downstream_tls_ja4", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_http_downstream_tls_ja4(a, b, c, d) }))
 }

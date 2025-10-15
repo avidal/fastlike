@@ -109,10 +109,10 @@ type BodyHandle struct {
 
 	// Streaming body support (for send_async_streaming)
 	isStreaming      bool
-	streamingWriter  *io.PipeWriter  // writes go here
-	streamingChan    chan []byte     // buffered channel for backpressure
-	streamingDone    chan struct{}   // closed when streaming completes
-	streamingWritten int64           // total bytes written to streaming body
+	streamingWriter  *io.PipeWriter // writes go here
+	streamingChan    chan []byte    // buffered channel for backpressure
+	streamingDone    chan struct{}  // closed when streaming completes
+	streamingWritten int64          // total bytes written to streaming body
 }
 
 // Close implements io.Closer for a BodyHandle

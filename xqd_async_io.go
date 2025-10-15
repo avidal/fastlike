@@ -206,28 +206,28 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 		return pr.done
 
 	case AsyncItemTypeKVLookup:
-		kv := i.kvStoreLookupHandles.Get(item.HandleID)
+		kv := i.kvLookups.Get(item.HandleID)
 		if kv == nil {
 			return nil
 		}
 		return kv.done
 
 	case AsyncItemTypeKVInsert:
-		kv := i.kvStoreInsertHandles.Get(item.HandleID)
+		kv := i.kvInserts.Get(item.HandleID)
 		if kv == nil {
 			return nil
 		}
 		return kv.done
 
 	case AsyncItemTypeKVDelete:
-		kv := i.kvStoreDeleteHandles.Get(item.HandleID)
+		kv := i.kvDeletes.Get(item.HandleID)
 		if kv == nil {
 			return nil
 		}
 		return kv.done
 
 	case AsyncItemTypeKVList:
-		kv := i.kvStoreListHandles.Get(item.HandleID)
+		kv := i.kvLists.Get(item.HandleID)
 		if kv == nil {
 			return nil
 		}

@@ -93,14 +93,15 @@ func normalizeIP(ip net.IP, mask uint8) net.IP {
 	}
 
 	ipLen := len(ip)
-	if ipLen == net.IPv4len {
+	switch ipLen {
+	case net.IPv4len:
 		// IPv4 - 4 bytes
 		ipBits := uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
 		maskBits := uint32(0xFFFFFFFF) << (32 - mask)
 		normalized := ipBits & maskBits
 		// Return as 4-byte slice
 		return net.IP{byte(normalized >> 24), byte(normalized >> 16), byte(normalized >> 8), byte(normalized)}
-	} else if ipLen == net.IPv6len {
+	case net.IPv6len:
 		// IPv6 - 16 bytes
 		var normalized [16]byte
 		bits := mask

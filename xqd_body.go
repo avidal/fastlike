@@ -39,7 +39,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 		// Handle end flag - close the streaming body when done
 		if body_end == BodyWriteEndBack || body_end == BodyWriteEndFront {
-			body.CloseStreaming()
+			_ = body.CloseStreaming()
 		}
 
 		return XqdStatusOK

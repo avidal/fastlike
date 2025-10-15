@@ -123,7 +123,7 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 			messageBytes := []byte(errorDetail.Message)
 			// We'll write the message inline after the struct (this is a simplification)
 			messagePtr := ioErrorDetailPtr + 12 // After the struct
-			i.memory.WriteAt(messageBytes, int64(messagePtr))
+			_, _ = i.memory.WriteAt(messageBytes, int64(messagePtr))
 			i.memory.PutUint32(uint32(messagePtr), int64(ioErrorDetailPtr+4))
 			i.memory.PutUint32(uint32(len(messageBytes)), int64(ioErrorDetailPtr+8))
 		} else {
@@ -166,7 +166,7 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 			i.abilog.Printf("xqd_image_optimizer_transform_request: failed to read response body: %v", err)
 			return XqdError
 		}
-		response.Body.Close()
+		_ = response.Body.Close()
 
 		bhid, _ := i.bodies.NewReader(io.NopCloser(bytes.NewReader(bodyBytes)))
 		bodyHandleNum = int32(bhid)

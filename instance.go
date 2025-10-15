@@ -34,15 +34,11 @@ type Instance struct {
 	requestPromises *RequestPromiseHandles
 
 	// KV Store handles for async operations
-	kvStores             *KVStoreHandles
-	kvLookups            *KVStoreLookupHandles
-	kvInserts            *KVStoreInsertHandles
-	kvDeletes            *KVStoreDeleteHandles
-	kvLists              *KVStoreListHandles
-	kvStoreLookupHandles *KVStoreLookupHandles
-	kvStoreInsertHandles *KVStoreInsertHandles
-	kvStoreDeleteHandles *KVStoreDeleteHandles
-	kvStoreListHandles   *KVStoreListHandles
+	kvStores  *KVStoreHandles
+	kvLookups *KVStoreLookupHandles
+	kvInserts *KVStoreInsertHandles
+	kvDeletes *KVStoreDeleteHandles
+	kvLists   *KVStoreListHandles
 
 	// Async item handles for generic async I/O operations
 	asyncItems *AsyncItemHandles
@@ -140,10 +136,6 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvInserts = &KVStoreInsertHandles{}
 	i.kvDeletes = &KVStoreDeleteHandles{}
 	i.kvLists = &KVStoreListHandles{}
-	i.kvStoreLookupHandles = &KVStoreLookupHandles{}
-	i.kvStoreInsertHandles = &KVStoreInsertHandles{}
-	i.kvStoreDeleteHandles = &KVStoreDeleteHandles{}
-	i.kvStoreListHandles = &KVStoreListHandles{}
 	i.secretStoreHandles = &SecretStoreHandles{}
 	i.secretHandles = &SecretHandles{}
 	i.cache = NewCache()
@@ -233,10 +225,6 @@ func (i *Instance) reset() {
 	*i.kvInserts = KVStoreInsertHandles{}
 	*i.kvDeletes = KVStoreDeleteHandles{}
 	*i.kvLists = KVStoreListHandles{}
-	*i.kvStoreLookupHandles = KVStoreLookupHandles{}
-	*i.kvStoreInsertHandles = KVStoreInsertHandles{}
-	*i.kvStoreDeleteHandles = KVStoreDeleteHandles{}
-	*i.kvStoreListHandles = KVStoreListHandles{}
 	*i.secretStoreHandles = SecretStoreHandles{}
 	*i.secretHandles = SecretHandles{}
 	*i.cacheHandles = CacheHandles{}
@@ -349,9 +337,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			// If the context cancels before we write to the donech it's a timeout/deadline/client
 			// hung up and we should interrupt the wasm program.
-			i.log.Printf("Context cancelled, incrementing epoch to interrupt wasm")
 			i.wasmctx.engine.IncrementEpoch()
-			i.log.Printf("Epoch incremented")
 		case <-donech:
 			// Otherwise, we're good and don't need to do anything else.
 		}
