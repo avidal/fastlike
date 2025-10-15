@@ -6,6 +6,7 @@ import (
 	"os"
 )
 
+// addLogger registers a named logger with the given writer.
 func (i *Instance) addLogger(name string, w io.Writer) {
 	if i.loggers == nil {
 		i.loggers = []logger{}
@@ -14,6 +15,9 @@ func (i *Instance) addLogger(name string, w io.Writer) {
 	i.loggers = append(i.loggers, logger{name, w})
 }
 
+// getLoggerHandle retrieves the handle for a named logger.
+// Returns the handle and true if found, or -1 and false if not found or reserved.
+// Reserved names (stdout, stderr, stdin) are not permitted as log endpoint names.
 func (i *Instance) getLoggerHandle(name string) (int, bool) {
 	// Reserved names that should not be used as log endpoint names
 	reservedNames := []string{"stdout", "stderr", "stdin"}
@@ -34,6 +38,7 @@ func (i *Instance) getLoggerHandle(name string) (int, bool) {
 	return -1, false
 }
 
+// getLogger retrieves a logger by handle. Returns nil if the handle is invalid.
 func (i *Instance) getLogger(handle int) io.Writer {
 	if handle < 0 || handle > len(i.loggers)-1 {
 		return nil
@@ -42,15 +47,19 @@ func (i *Instance) getLogger(handle int) io.Writer {
 	return i.loggers[handle]
 }
 
+// defaultLogger returns a writer that prefixes log messages with the logger name
+// and writes to stdout with each write on a single line.
 func defaultLogger(name string) io.Writer {
 	return NewPrefixWriter(name, LineWriter{os.Stdout})
 }
 
+// logger represents a named log endpoint with its writer.
 type logger struct {
 	name string
 	w    io.Writer
 }
 
+// Write implements io.Writer for logger by delegating to its underlying writer.
 func (l logger) Write(data []byte) (int, error) {
 	return l.w.Write(data)
 }

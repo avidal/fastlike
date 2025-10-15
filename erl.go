@@ -96,7 +96,9 @@ func (rc *RateCounter) LookupCount(entry string, duration uint32) uint32 {
 	return rc.countEventsInWindow(e, windowStart, now)
 }
 
-// countEventsInWindow counts events between start and end times
+// countEventsInWindow counts the total number of events for an entry that occurred
+// between the start and end times (inclusive). Returns the sum of all event deltas
+// within the time window.
 func (rc *RateCounter) countEventsInWindow(entry *RateCounterEntry, start, end time.Time) uint32 {
 	var count uint32
 
@@ -109,7 +111,9 @@ func (rc *RateCounter) countEventsInWindow(entry *RateCounterEntry, start, end t
 	return count
 }
 
-// cleanupOldEvents removes events older than the cutoff time
+// cleanupOldEvents removes events older than the cutoff time for a given entry.
+// This is called automatically during Increment to prevent unbounded memory growth.
+// Events are kept for up to 1 hour to support various time window calculations.
 func (rc *RateCounter) cleanupOldEvents(entry string, cutoff time.Time) {
 	e := rc.entries[entry]
 	if e == nil {

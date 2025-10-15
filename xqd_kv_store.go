@@ -520,7 +520,8 @@ func (i *Instance) xqd_kv_store_list_wait(
 	return XqdStatusOK
 }
 
-// addKVStore adds a KV store to the registry
+// addKVStore registers a KV store by name in the instance's KV store registry.
+// The registered store can be accessed by guest programs through xqd_kv_store_open.
 func (i *Instance) addKVStore(name string, store *KVStore) {
 	i.kvStoreRegistry[name] = store
 }

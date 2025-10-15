@@ -5,6 +5,9 @@ import (
 	"io"
 )
 
+// xqd_body_new creates a new empty body handle.
+// The newly created body handle is written to handle_out in guest memory.
+// Returns XqdStatusOK on success.
 func (i *Instance) xqd_body_new(handle_out int32) int32 {
 	bhid, _ := i.bodies.NewBuffer()
 	i.abilog.Printf("body_new: handle=%d", bhid)
@@ -12,6 +15,13 @@ func (i *Instance) xqd_body_new(handle_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_body_write writes data to a body handle from guest memory.
+// Reads size bytes from addr and writes them to the body identified by handle.
+// The body_end parameter controls write position: BodyWriteEndBack (0) appends to back,
+// BodyWriteEndFront (1) prepends to front. For streaming bodies, body_end also signals
+// when to close the stream. The number of bytes written is stored in nwritten_out.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// or XqdError if memory operations fail.
 func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) int32 {
 	i.abilog.Printf("body_write: handle=%d size=%d, body_end=%d", handle, size, body_end)
 
@@ -74,6 +84,12 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	return XqdStatusOK
 }
 
+// xqd_body_read reads up to maxlen bytes from a body handle into guest memory.
+// Copies data from the body identified by handle into guest memory starting at addr.
+// The actual number of bytes read is written to nread_out. This is a streaming operation
+// that consumes bytes from the body's reader.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// or XqdError if memory or I/O operations fail.
 func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -108,6 +124,10 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	return XqdStatusOK
 }
 
+// xqd_body_append appends the contents of one body to another.
+// Combines the src_handle body with dst_handle by creating a MultiReader that reads
+// from dst first, then src. Both handles must be valid body handles.
+// Returns XqdStatusOK on success or XqdErrInvalidHandle if either handle is invalid.
 func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
 
@@ -128,6 +148,10 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_body_close closes a body handle and releases its resources.
+// This properly finalizes the body, completing any pending operations.
+// Returns XqdStatusOK on success or XqdErrInvalidHandle if the handle is invalid
+// or the close operation fails.
 func (i *Instance) xqd_body_close(handle int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -141,6 +165,13 @@ func (i *Instance) xqd_body_close(handle int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_body_trailer_append adds a trailer header to a body.
+// Reads the trailer name from guest memory at name_addr (name_size bytes) and the value
+// from value_addr (value_size bytes), then appends it to the body's trailer map.
+// If a trailer with the same name already exists, the new value is appended to the list.
+// Trailers are HTTP headers sent after the body content in chunked transfer encoding.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -174,6 +205,13 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 	return XqdStatusOK
 }
 
+// xqd_body_trailer_names_get retrieves the list of trailer header names from a body.
+// Returns trailer names as a multi-value list written to guest memory at addr.
+// Uses cursor-based pagination to handle results that exceed maxlen buffer size.
+// The ending_cursor_out indicates the position for the next call, and nwritten_out
+// contains the number of bytes written. Call repeatedly with the ending cursor until
+// it equals -1 to retrieve all names.
+// Returns XqdStatusOK on success or XqdErrInvalidHandle if the body handle is invalid.
 func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("body_trailer_names_get: handle=%d cursor=%d", handle, cursor)
 
@@ -190,6 +228,12 @@ func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen i
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_body_trailer_value_get retrieves the first value of a trailer header.
+// Reads the trailer name from guest memory at name_addr (name_size bytes) and writes
+// the first value for that trailer to value_addr (up to value_maxlen bytes).
+// The value is null-terminated. If the trailer has no values, nwritten_out is set to 0.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -233,6 +277,13 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 	return XqdStatusOK
 }
 
+// xqd_body_trailer_values_get retrieves all values for a specific trailer header.
+// Reads the trailer name from guest memory at name_addr (name_size bytes) and writes
+// all values for that trailer to addr as a multi-value list. Uses cursor-based pagination
+// to handle results that exceed maxlen buffer size. The ending_cursor_out indicates the
+// position for the next call, and nwritten_out contains the number of bytes written.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -254,6 +305,12 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_body_abandon abandons a body without properly finishing it.
+// Closes and drops the body immediately, discarding any incomplete streaming operations.
+// This is used when a body is no longer needed or when an error occurs during streaming.
+// Unlike xqd_body_close which properly finalizes the body, this aborts the operation.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// or XqdError if the close operation fails.
 func (i *Instance) xqd_body_abandon(handle int32) int32 {
 	i.abilog.Printf("body_abandon: handle=%d", handle)
 
@@ -271,6 +328,12 @@ func (i *Instance) xqd_body_abandon(handle int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_body_known_length retrieves the known length of a body if available.
+// Writes the body's size in bytes to length_out in guest memory. If the body's length
+// is not known in advance (e.g., for streaming bodies), returns XqdErrNone.
+// This is useful for setting Content-Length headers or preallocating buffers.
+// Returns XqdStatusOK if the length is known, XqdErrNone if unknown,
+// or XqdErrInvalidHandle if the body handle is invalid.
 func (i *Instance) xqd_body_known_length(handle int32, length_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {

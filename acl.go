@@ -123,8 +123,8 @@ func normalizeIP(ip net.IP, mask uint8) net.IP {
 	return ip
 }
 
-// isMatch checks if the given IP matches this ACL entry's prefix.
-// Returns the mask length if there's a match, 0 if no match.
+// isMatch checks if the given IP matches this ACL entry's prefix and returns the mask length.
+// Returns 0 if there is no match.
 func (e *AclEntry) isMatch(ip net.IP) uint8 {
 	if ip == nil || e.ip == nil {
 		return 0

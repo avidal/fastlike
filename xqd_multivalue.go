@@ -1,8 +1,11 @@
 package fastlike
 
-// xqd_multivalue is not an actual ABI method, but it's an implementation of a mechanism used by
-// the guest to make multiple hostcalls via a cursor
-// For usage, see the abi methods for headers
+// xqd_multivalue implements a cursor-based mechanism for iterating over multiple values.
+// This is not an actual ABI method, but a helper used by the guest to retrieve multiple values
+// (such as multi-value headers) across multiple hostcalls using a cursor.
+// Writes the value at the cursor position to addr, the number of bytes written to nwritten_out,
+// and the next cursor position to ending_cursor_out (-1 if no more values).
+// Returns XqdErrBufferLength if the buffer is too small for the current value.
 func xqd_multivalue(memory *Memory, data []string, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	// If there's no data, return early
 	if len(data) == 0 {

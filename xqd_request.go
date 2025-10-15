@@ -120,6 +120,8 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 	return nil
 }
 
+// xqd_req_version_get retrieves the HTTP protocol version for the request.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK on success.
 func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -132,6 +134,9 @@ func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_version_set sets the HTTP protocol version for the request.
+// Only HTTP/0.9, HTTP/1.0, and HTTP/1.1 are supported.
+// Returns XqdErrInvalidHandle, XqdErrInvalidArgument, or XqdStatusOK.
 func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 	i.abilog.Printf("req_version_set: handle=%d version=%d", handle, version)
 
@@ -152,6 +157,9 @@ func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_cache_override_set sets cache override parameters for the request.
+// This is a no-op for local testing since we don't implement caching.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK otherwise.
 func (i *Instance) xqd_req_cache_override_set(handle int32, tag int32, ttl int32, swr int32) int32 {
 	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
 
@@ -163,6 +171,9 @@ func (i *Instance) xqd_req_cache_override_set(handle int32, tag int32, ttl int32
 	return XqdStatusOK
 }
 
+// xqd_req_cache_override_v2_set sets cache override parameters including surrogate keys.
+// This is a no-op for local testing since we don't implement caching.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK otherwise.
 func (i *Instance) xqd_req_cache_override_v2_set(handle int32, tag int32, ttl int32, swr int32, sk int32, sk_len int32) int32 {
 	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
 
@@ -174,6 +185,9 @@ func (i *Instance) xqd_req_cache_override_v2_set(handle int32, tag int32, ttl in
 	return XqdStatusOK
 }
 
+// xqd_req_method_get retrieves the HTTP method for the request.
+// Writes the method string to guest memory at addr and the number of bytes written to nwritten_out.
+// Returns XqdErrInvalidHandle if the handle is invalid, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_method_get(handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -196,6 +210,9 @@ func (i *Instance) xqd_req_method_get(handle int32, addr int32, maxlen int32, nw
 	return XqdStatusOK
 }
 
+// xqd_req_method_set sets the HTTP method for the request.
+// Reads the method string from guest memory at addr and validates it against standard HTTP methods.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrHttpParse if method is invalid, or XqdStatusOK on success.
 func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -232,6 +249,9 @@ func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int3
 	return XqdStatusOK
 }
 
+// xqd_req_uri_set sets the URI for the request.
+// Reads the URI string from guest memory at addr, parses it, and assigns it to the request.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdError if parsing fails, or XqdStatusOK on success.
 func (i *Instance) xqd_req_uri_set(handle int32, addr int32, size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -259,6 +279,9 @@ func (i *Instance) xqd_req_uri_set(handle int32, addr int32, size int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_header_names_get retrieves all header names for the request.
+// Uses cursor-based pagination to support large header sets. Header names are sorted alphabetically.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("req_header_names_get: handle=%d cursor=%d", handle, cursor)
 
@@ -278,6 +301,9 @@ func (i *Instance) xqd_req_header_names_get(handle int32, addr int32, maxlen int
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_req_header_remove removes a header from the request.
+// Reads the header name from guest memory and deletes it from the request headers.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrInvalidArgument if header name is too long or not found, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -309,6 +335,9 @@ func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_siz
 	return XqdStatusOK
 }
 
+// xqd_req_header_insert sets a header value, replacing any existing values.
+// Reads the header name and value from guest memory and sets the header using http.Header.Set.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrInvalidArgument if header name is too long, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -346,6 +375,9 @@ func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_siz
 	return XqdStatusOK
 }
 
+// xqd_req_header_append appends a header value to existing values.
+// Reads the header name and value from guest memory and adds the value using http.Header.Add.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrInvalidArgument if header name is too long, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -383,6 +415,9 @@ func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_siz
 	return XqdStatusOK
 }
 
+// xqd_req_header_value_get retrieves the first value of a header.
+// Reads the header name from guest memory and writes the first value to addr.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrInvalidArgument if header name is too long or not found, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -433,6 +468,9 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 	return XqdStatusOK
 }
 
+// xqd_req_header_values_get retrieves all values for a specific header.
+// Uses cursor-based pagination to support headers with multiple values. Values are sorted alphabetically.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -460,6 +498,9 @@ func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+// xqd_req_header_values_set sets multiple values for a header.
+// Reads null-terminated values from guest memory and adds them all to the specified header.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdError on memory read failure, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name_size int32, values_addr int32, values_size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -497,6 +538,9 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 	return XqdStatusOK
 }
 
+// xqd_req_uri_get retrieves the full URI for the request.
+// Writes the URI string to guest memory at addr and the number of bytes written to nwritten_out.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_uri_get(handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -523,6 +567,9 @@ func (i *Instance) xqd_req_uri_get(handle int32, addr int32, maxlen int32, nwrit
 	return XqdStatusOK
 }
 
+// xqd_req_new creates a new request handle.
+// Allocates a new request handle and writes its ID to guest memory at handle_out.
+// Always returns XqdStatusOK.
 func (i *Instance) xqd_req_new(handle_out int32) int32 {
 	rhid, _ := i.requests.New()
 	i.abilog.Printf("req_new: handle=%d", rhid)
@@ -530,6 +577,10 @@ func (i *Instance) xqd_req_new(handle_out int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_send sends a synchronous HTTP request to a backend.
+// Blocks until the backend responds, then writes response and body handles to guest memory.
+// Automatically adds cdn-loop header for loop detection and applies auto-decompression if configured.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdErrHttpUserInvalid if URL is not set, or XqdStatusOK on success.
 func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, backend_size int32, wh_out int32, bh_out int32) int32 {
 	// sends the request described by (rh, bh) to the backend
 	// expects a response handle and response body handle
@@ -654,6 +705,9 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	return XqdStatusOK
 }
 
+// xqd_req_close marks a request handle to close the connection after use.
+// Sets the Close flag on the request, indicating connection should not be reused.
+// Returns XqdErrInvalidHandle if handle is invalid, or XqdStatusOK on success.
 func (i *Instance) xqd_req_close(handle int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -666,6 +720,10 @@ func (i *Instance) xqd_req_close(handle int32) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_send_async sends an asynchronous HTTP request to a backend.
+// Initiates the request in a goroutine and immediately returns a pending request handle.
+// The guest can poll or wait on the pending handle to retrieve the response later.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdErrHttpUserInvalid if URL is not set, or XqdStatusOK on success.
 func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
 	// Validate request handle
 	r := i.requests.Get(int(rhandle))
@@ -752,6 +810,10 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	return XqdStatusOK
 }
 
+// xqd_req_send_async_streaming sends an asynchronous HTTP request with streaming body support.
+// Similar to xqd_req_send_async but allows the guest to continue writing to the body handle while the request is in flight.
+// Uses a pipe to stream data from guest writes to the backend request.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdErrHttpUserInvalid if URL is not set, or XqdStatusOK on success.
 func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, backend_addr, backend_size int32, ph_out int32) int32 {
 	// Validate request handle
 	r := i.requests.Get(int(rhandle))
@@ -878,6 +940,9 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	return XqdStatusOK
 }
 
+// xqd_req_send_async_v2 sends an asynchronous HTTP request with optional streaming.
+// Delegates to xqd_req_send_async_streaming if streaming is non-zero, otherwise calls xqd_req_send_async.
+// Returns the same status codes as the delegated function.
 func (i *Instance) xqd_req_send_async_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, streaming int32, ph_out int32) int32 {
 	if streaming != 0 {
 		return i.xqd_req_send_async_streaming(rhandle, bhandle, backend_addr, backend_size, ph_out)
@@ -885,6 +950,10 @@ func (i *Instance) xqd_req_send_async_v2(rhandle int32, bhandle int32, backend_a
 	return i.xqd_req_send_async(rhandle, bhandle, backend_addr, backend_size, ph_out)
 }
 
+// xqd_pending_req_poll checks if an async request has completed without blocking.
+// If complete, writes response and body handles to guest memory and sets is_done_out to 1.
+// If not complete, sets is_done_out to 0 and writes HandleInvalid for response handles.
+// Returns XqdErrInvalidHandle if pending handle is invalid, XqdError if request failed, or XqdStatusOK.
 func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
 	// Get the pending request
 	pr := i.pendingRequests.Get(int(phandle))
@@ -934,12 +1003,18 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 	return XqdStatusOK
 }
 
+// xqd_pending_req_poll_v2 checks if an async request has completed with error detail support.
+// Currently delegates to xqd_pending_req_poll, ignoring the error_detail_out parameter.
+// Returns the same status codes as xqd_pending_req_poll.
 func (i *Instance) xqd_pending_req_poll_v2(phandle int32, error_detail_out int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
 }
 
+// xqd_pending_req_wait blocks until an async request completes.
+// Pauses CPU time tracking while waiting, then writes response and body handles to guest memory.
+// Returns XqdErrInvalidHandle if pending handle is invalid, XqdError if request failed, or XqdStatusOK on success.
 func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int32) int32 {
 	// Get the pending request
 	pr := i.pendingRequests.Get(int(phandle))
@@ -982,12 +1057,19 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	return XqdStatusOK
 }
 
+// xqd_pending_req_wait_v2 blocks until an async request completes with error detail support.
+// Currently delegates to xqd_pending_req_wait, ignoring the error_detail_out parameter.
+// Returns the same status codes as xqd_pending_req_wait.
 func (i *Instance) xqd_pending_req_wait_v2(phandle int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_wait(phandle, wh_out, bh_out)
 }
 
+// xqd_pending_req_select blocks until the first of multiple async requests completes.
+// Takes an array of pending request handles and returns the index of the first one to complete.
+// Pauses CPU time tracking while waiting. Uses goroutines to monitor all pending requests simultaneously.
+// Returns XqdErrInvalidArgument if handle list is empty, XqdErrInvalidHandle if any handle is invalid, XqdError if request failed, or XqdStatusOK on success.
 func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
 	if phandles_len == 0 {
 		i.abilog.Printf("pending_req_select: empty handle list")
@@ -1077,12 +1159,19 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	return XqdStatusOK
 }
 
+// xqd_pending_req_select_v2 blocks until the first of multiple async requests completes with error detail support.
+// Currently delegates to xqd_pending_req_select, ignoring the error_detail_out parameter.
+// Returns the same status codes as xqd_pending_req_select.
 func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len int32, error_detail_out int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
 }
 
+// xqd_req_send_v2 sends a synchronous HTTP request with error detail support.
+// Similar to xqd_req_send but populates a SendErrorDetail struct in guest memory with error information.
+// Monitors context cancellation during the request and returns XqdError if cancelled.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdErrHttpUserInvalid if URL is not set, or XqdStatusOK on success.
 func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
 	// Validate request handle
 	r := i.requests.Get(int(rhandle))
@@ -1235,6 +1324,9 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	return XqdStatusOK
 }
 
+// xqd_req_send_v3 sends a synchronous HTTP request with error detail support.
+// Identical to xqd_req_send_v2 for local testing (the difference in production is cache override behavior).
+// Returns the same status codes as xqd_req_send_v2.
 func (i *Instance) xqd_req_send_v3(rhandle int32, bhandle int32, backend_addr, backend_size int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
 	// send_v3 is the same as send_v2 for now
 	// The main difference is that send_v3 skips cache override entirely,

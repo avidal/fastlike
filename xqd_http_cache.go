@@ -515,7 +515,8 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 	return XqdStatusOK
 }
 
-// splitCacheControl splits a Cache-Control header value into directives
+// splitCacheControl splits a Cache-Control header value into individual directives.
+// Directives are comma-separated and whitespace is trimmed from each directive.
 func splitCacheControl(s string) []string {
 	var directives []string
 	start := 0
@@ -537,7 +538,8 @@ func splitCacheControl(s string) []string {
 	return directives
 }
 
-// parseInt parses an integer from a string
+// parseInt parses a non-negative integer from a string without using strconv.
+// Returns an error if the string contains non-digit characters.
 func parseInt(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	var result int64
@@ -848,7 +850,8 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 	return XqdStatusOK
 }
 
-// Helper function to read HTTP cache write options from guest memory
+// readHttpCacheWriteOptions reads HTTP cache write options from guest memory.
+// The options structure contains max age, vary rules, surrogate keys, and other cache metadata.
 func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWriteOptions {
 	opts := &CacheWriteOptions{}
 

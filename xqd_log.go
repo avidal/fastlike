@@ -6,6 +6,9 @@ import (
 	"io"
 )
 
+// xqd_log_endpoint_get retrieves a handle to a named log endpoint.
+// Reads the log endpoint name from guest memory and writes the corresponding handle to addr.
+// Returns XqdErrInvalidArgument if the logger name is not found or is reserved.
 func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr int32) int32 {
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
@@ -30,6 +33,10 @@ func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr i
 	return XqdStatusOK
 }
 
+// xqd_log_write writes data to a log endpoint.
+// Copies size bytes from guest memory starting at addr to the logger identified by handle.
+// Writes the number of bytes successfully written to nwritten_out.
+// Returns XqdErrInvalidHandle if the handle does not refer to a valid logger.
 func (i *Instance) xqd_log_write(handle int32, addr int32, size int32, nwritten_out int32) int32 {
 	i.abilog.Printf("log_write: handle=%d size=%d", handle, size)
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+// xqd_init initializes the XQD ABI and verifies the protocol version.
+// Returns XqdErrUnsupported if the version is not supported, XqdStatusOK otherwise.
 func (i *Instance) xqd_init(abiv int64) int32 {
 	i.abilog.Printf("init: version=%d\n", abiv)
 	if abiv != 1 {
@@ -19,6 +21,9 @@ func (i *Instance) xqd_init(abiv int64) int32 {
 	return XqdStatusOK
 }
 
+// xqd_req_body_downstream_get converts the downstream HTTP request into a (request, body) handle pair.
+// Captures TLS state, original header names, and sets up the request URL with scheme and host.
+// Returns XqdStatusOK on success.
 func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_handle_out int32) int32 {
 	// Convert the downstream request into a (request, body) handle pair
 	rhid, rh := i.requests.New()
@@ -70,6 +75,9 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	return XqdStatusOK
 }
 
+// xqd_resp_send_downstream sends the response and body to the downstream client.
+// Copies response headers and body to the output stream. Streaming mode is not currently supported.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdErrUnsupported for streaming, XqdStatusOK on success.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
 	if stream != 0 {
 		i.abilog.Printf("resp_send_downstream: streaming unsupported")
@@ -101,6 +109,10 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	return XqdStatusOK
 }
 
+// xqd_req_downstream_client_ip_addr extracts the client IP address from the downstream request.
+// Parses the RemoteAddr field and writes the IP octets to guest memory.
+// IPv4 addresses are returned in 4-byte format, IPv6 in 16-byte format.
+// Returns XqdStatusOK on success or XqdError on failure.
 func (i *Instance) xqd_req_downstream_client_ip_addr(octets_out int32, nwritten_out int32) int32 {
 	ip := net.ParseIP(strings.SplitN(i.ds_request.RemoteAddr, ":", 2)[0])
 	i.abilog.Printf("req_downstream_client_ip_addr: remoteaddr=%s, ip=%q\n", i.ds_request.RemoteAddr, ip)
@@ -148,6 +160,9 @@ func (i *Instance) xqd_req_downstream_server_ip_addr(octets_out int32, nwritten_
 	return XqdStatusOK
 }
 
+// xqd_uap_parse parses a user agent string into its component parts.
+// Extracts family, major, minor, and patch version information and writes them to guest memory.
+// Returns XqdStatusOK on success or XqdError if memory operations fail.
 func (i *Instance) xqd_uap_parse(
 	addr int32, size int32,
 	family_out, family_maxlen, family_nwritten_out int32,
@@ -198,6 +213,8 @@ func (i *Instance) xqd_uap_parse(
 	return XqdStatusOK
 }
 
+// p logs stub function calls with their arguments for debugging purposes.
+// Used to track unimplemented or stubbed XQD ABI functions.
 func p(l *log.Logger, name string, args ...int32) {
 	xs := []string{}
 	for _, x := range args {
@@ -207,6 +224,8 @@ func p(l *log.Logger, name string, args ...int32) {
 	l.Printf("[STUB] %s: args=%q\n", name, xs)
 }
 
+// wasm1 creates a stub function that accepts one int32 argument.
+// Returns a function that logs the call and returns an unsupported status code.
 func (i *Instance) wasm1(name string) func(a int32) int32 {
 	return func(a int32) int32 {
 		p(i.abilog, name, a)
@@ -214,6 +233,8 @@ func (i *Instance) wasm1(name string) func(a int32) int32 {
 	}
 }
 
+// wasm6 creates a stub function that accepts six int32 arguments.
+// Returns a function that logs the call and returns an unsupported status code.
 func (i *Instance) wasm6(name string) func(a, b, c, d, e, f int32) int32 {
 	return func(a, b, c, d, e, f int32) int32 {
 		p(i.abilog, name, a, b, c, d, e, f)

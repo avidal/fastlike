@@ -271,7 +271,8 @@ func (i *Instance) xqd_erl_penaltybox_has(
 	return XqdStatusOK
 }
 
-// getRateCounter retrieves a rate counter by name from the instance
+// getRateCounter retrieves a rate counter by name from the instance's registry.
+// Returns nil if the rate counter is not found.
 func (i *Instance) getRateCounter(name string) *RateCounter {
 	for idx := range i.rateCounters {
 		if i.rateCounters[idx].name == name {
@@ -282,7 +283,8 @@ func (i *Instance) getRateCounter(name string) *RateCounter {
 	return nil
 }
 
-// getPenaltyBox retrieves a penalty box by name from the instance
+// getPenaltyBox retrieves a penalty box by name from the instance's registry.
+// Returns nil if the penalty box is not found.
 func (i *Instance) getPenaltyBox(name string) *PenaltyBox {
 	for idx := range i.penaltyBoxes {
 		if i.penaltyBoxes[idx].name == name {
@@ -293,7 +295,8 @@ func (i *Instance) getPenaltyBox(name string) *PenaltyBox {
 	return nil
 }
 
-// addRateCounter adds a rate counter to the instance
+// addRateCounter registers a rate counter by name in the instance's registry.
+// The registered counter can be accessed by guest programs through edge rate limiting APIs.
 func (i *Instance) addRateCounter(name string, counter *RateCounter) {
 	i.rateCounters = append(i.rateCounters, rateCounterEntry{
 		name:    name,
@@ -301,7 +304,8 @@ func (i *Instance) addRateCounter(name string, counter *RateCounter) {
 	})
 }
 
-// addPenaltyBox adds a penalty box to the instance
+// addPenaltyBox registers a penalty box by name in the instance's registry.
+// The registered penalty box can be accessed by guest programs through edge rate limiting APIs.
 func (i *Instance) addPenaltyBox(name string, box *PenaltyBox) {
 	i.penaltyBoxes = append(i.penaltyBoxes, penaltyBoxEntry{
 		name: name,
@@ -309,11 +313,15 @@ func (i *Instance) addPenaltyBox(name string, box *PenaltyBox) {
 	})
 }
 
+// rateCounterEntry represents a named rate counter stored in the instance's registry.
+// It associates a string name with a RateCounter implementation for edge rate limiting.
 type rateCounterEntry struct {
 	name    string
 	counter *RateCounter
 }
 
+// penaltyBoxEntry represents a named penalty box stored in the instance's registry.
+// It associates a string name with a PenaltyBox implementation for edge rate limiting.
 type penaltyBoxEntry struct {
 	name string
 	box  *PenaltyBox
