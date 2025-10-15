@@ -680,20 +680,20 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_kv_store", "insert", safeWrap7(i, "insert", func(store_handle int32, key_addr int32, key_size int32, body_handle int32, insert_config_mask int32, insert_config_buf int32, insert_handle_out int32) int32 {
 		return i.xqd_kv_store_insert(store_handle, key_addr, key_size, body_handle, insert_config_mask, insert_config_buf, insert_handle_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "insert_wait", safeWrap2(i, "insert_wait", func(insert_handle int32, generation_out int32) int32 {
-		return i.xqd_kv_store_insert_wait(insert_handle, generation_out)
+	_ = linker.FuncWrap("fastly_kv_store", "insert_wait", safeWrap2(i, "insert_wait", func(insert_handle int32, kv_error_out int32) int32 {
+		return i.xqd_kv_store_insert_wait(insert_handle, kv_error_out)
 	}))
 	_ = linker.FuncWrap("fastly_kv_store", "delete", safeWrap6(i, "delete", func(store_handle int32, key_addr int32, key_size int32, delete_config_mask int32, delete_config_buf int32, delete_handle_out int32) int32 {
 		return i.xqd_kv_store_delete(store_handle, key_addr, key_size, delete_config_mask, delete_config_buf, delete_handle_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "delete_wait", safeWrap1(i, "delete_wait", func(delete_handle int32) int32 {
-		return i.xqd_kv_store_delete_wait(delete_handle)
+	_ = linker.FuncWrap("fastly_kv_store", "delete_wait", safeWrap2(i, "delete_wait", func(delete_handle int32, kv_error_out int32) int32 {
+		return i.xqd_kv_store_delete_wait(delete_handle, kv_error_out)
 	}))
 	_ = linker.FuncWrap("fastly_kv_store", "list", safeWrap4(i, "list", func(store_handle int32, list_config_mask int32, list_config_buf int32, list_handle_out int32) int32 {
 		return i.xqd_kv_store_list(store_handle, uint32(list_config_mask), list_config_buf, list_handle_out)
 	}))
-	_ = linker.FuncWrap("fastly_kv_store", "list_wait", safeWrap5(i, "list_wait", func(list_handle int32, body_handle_out int32, metadata_out int32, metadata_max_len int32, metadata_len_out int32) int32 {
-		return i.xqd_kv_store_list_wait(list_handle, body_handle_out, metadata_out, metadata_max_len, metadata_len_out)
+	_ = linker.FuncWrap("fastly_kv_store", "list_wait", safeWrap3(i, "list_wait", func(list_handle int32, body_handle_out int32, kv_error_out int32) int32 {
+		return i.xqd_kv_store_list_wait(list_handle, body_handle_out, kv_error_out)
 	}))
 
 	// xqd_backend.go
