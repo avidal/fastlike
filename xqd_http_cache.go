@@ -26,16 +26,16 @@ func (i *Instance) xqd_http_cache_is_request_cacheable(
 		return XqdErrInvalidHandle
 	}
 
+	// TEMPORARY: Disable guest-side caching to avoid deadlock in transaction_insert_and_stream_back
+	// TODO: Fix the streaming cache implementation to properly handle concurrent read/write
 	// Per RFC 9111 conservative semantics: only GET and HEAD are cacheable
 	method := req.Method
 	var isCacheable uint32
-	if method == "GET" || method == "HEAD" {
-		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> cacheable", method)
-		isCacheable = 1
-	} else {
-		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable", method)
-		isCacheable = 0
-	}
+	_ = method // Suppress unused variable warning
+
+	// Always return not cacheable for now
+	i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable (guest-side caching disabled)", method)
+	isCacheable = 0
 
 	// Write result to guest memory
 	i.memory.WriteUint32(is_cacheable_out, isCacheable)
