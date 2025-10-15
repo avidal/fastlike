@@ -14,16 +14,24 @@ func (i *Instance) addLogger(name string, w io.Writer) {
 	i.loggers = append(i.loggers, logger{name, w})
 }
 
-func (i *Instance) getLoggerHandle(name string) int {
-	for j, l := range i.loggers {
-		if l.name == name {
-			return j
+func (i *Instance) getLoggerHandle(name string) (int, bool) {
+	// Reserved names that should not be used as log endpoint names
+	reservedNames := []string{"stdout", "stderr", "stdin"}
+	for _, reserved := range reservedNames {
+		if name == reserved {
+			return -1, false
 		}
 	}
 
-	// If there's no preconfigured logger by this name, create one using the default logger
-	i.addLogger(name, i.defaultLogger(name))
-	return len(i.loggers) - 1
+	// Only return handles for pre-configured loggers
+	for j, l := range i.loggers {
+		if l.name == name {
+			return j, true
+		}
+	}
+
+	// Logger not found
+	return -1, false
 }
 
 func (i *Instance) getLogger(handle int) io.Writer {

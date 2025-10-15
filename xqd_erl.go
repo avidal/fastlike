@@ -1,9 +1,8 @@
 package fastlike
 
-// xqd_erl_check_rate increments an entry in a rate counter and checks if the client has exceeded
-// the average number of requests per second (RPS) over the window.
-//
-// If the client is over the RPS limit for the window, adds to the penalty box for TTL.
+// xqd_erl_check_rate checks if adding delta to an entry would exceed the rate limit.
+// This is a stub implementation for local testing that always returns "not blocked" (0).
+// In production, this would check the rate counter and penalty box.
 // Returns 0 if not blocked, 1 if blocked.
 func (i *Instance) xqd_erl_check_rate(
 	rcPtr int32,
@@ -18,9 +17,9 @@ func (i *Instance) xqd_erl_check_rate(
 	ttl uint32,
 	blockedPtr int32, // out parameter
 ) int32 {
-	i.abilog.Printf("fastly_erl::check_rate")
+	i.abilog.Printf("fastly_erl::check_rate (stub)")
 
-	// Read rate counter name
+	// Read rate counter name (for validation)
 	rcBuf := make([]byte, rcLen)
 	_, err := i.memory.ReadAt(rcBuf, int64(rcPtr))
 	if err != nil {
@@ -28,15 +27,7 @@ func (i *Instance) xqd_erl_check_rate(
 	}
 	rcName := string(rcBuf)
 
-	// Read entry (e.g., IP address)
-	entryBuf := make([]byte, entryLen)
-	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
-	if err != nil {
-		return XqdError
-	}
-	entry := string(entryBuf)
-
-	// Read penalty box name
+	// Read penalty box name (for validation)
 	pbBuf := make([]byte, pbLen)
 	_, err = i.memory.ReadAt(pbBuf, int64(pbPtr))
 	if err != nil {
@@ -44,25 +35,23 @@ func (i *Instance) xqd_erl_check_rate(
 	}
 	pbName := string(pbBuf)
 
-	// Get or create rate counter
+	// Validate that rate counter exists
 	rc := i.getRateCounter(rcName)
 	if rc == nil {
 		i.abilog.Printf("rate counter '%s' not found", rcName)
 		return XqdErrInvalidArgument
 	}
 
-	// Get or create penalty box
+	// Validate that penalty box exists
 	pb := i.getPenaltyBox(pbName)
 	if pb == nil {
 		i.abilog.Printf("penalty box '%s' not found", pbName)
 		return XqdErrInvalidArgument
 	}
 
-	// Check rate and potentially block
-	blocked := CheckRate(rc, pb, entry, delta, window, limit, ttl)
-
-	// Write result
-	i.memory.PutUint32(blocked, int64(blockedPtr))
+	// Stub implementation: always return "not blocked" for local testing
+	// This matches Viceroy's behavior
+	i.memory.PutUint32(0, int64(blockedPtr))
 
 	return XqdStatusOK
 }
