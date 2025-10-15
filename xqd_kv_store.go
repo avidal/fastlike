@@ -110,8 +110,8 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 	result, err := lookup.Wait()
 	if err != nil {
 		// Write error code
-		i.memory.WriteUint32(kvErrorOut, uint32(1)) // KV_ERROR_UNKNOWN
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
 
 	// If key not found
@@ -119,8 +119,8 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 		i.memory.WriteUint32(bodyHandleOut, uint32(HandleInvalid))
 		i.memory.WriteUint32(metadataLenOut, 0)
 		i.memory.WriteUint32(generationOut, 0)
-		i.memory.WriteUint32(kvErrorOut, 0) // No error
-		return XqdErrNone
+		i.memory.WriteUint32(kvErrorOut, KvErrorNotFound)
+		return XqdStatusOK
 	}
 
 	// Create a body handle for the value
@@ -143,7 +143,7 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 	i.memory.WriteUint32(generationOut, 0)
 
 	// Write error code (success)
-	i.memory.WriteUint32(kvErrorOut, 0)
+	i.memory.WriteUint32(kvErrorOut, KvErrorOk)
 
 	return XqdStatusOK
 }
@@ -171,8 +171,8 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	result, err := lookup.Wait()
 	if err != nil {
 		// Write error code
-		i.memory.WriteUint32(kvErrorOut, uint32(1)) // KV_ERROR_UNKNOWN
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
 
 	// If key not found
@@ -180,8 +180,8 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 		i.memory.WriteUint32(bodyHandleOut, uint32(HandleInvalid))
 		i.memory.WriteUint32(metadataLenOut, 0)
 		i.memory.WriteUint64(generationOut, 0)
-		i.memory.WriteUint32(kvErrorOut, 0) // No error
-		return XqdErrNone
+		i.memory.WriteUint32(kvErrorOut, KvErrorNotFound)
+		return XqdStatusOK
 	}
 
 	// Create a body handle for the value
@@ -206,7 +206,7 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	i.memory.WriteUint64(generationOut, result.Generation)
 
 	// Write error code (success)
-	i.memory.WriteUint32(kvErrorOut, 0)
+	i.memory.WriteUint32(kvErrorOut, KvErrorOk)
 
 	return XqdStatusOK
 }
@@ -317,7 +317,7 @@ func (i *Instance) xqd_kv_store_insert(
 // xqd_kv_store_insert_wait waits for an insert to complete
 func (i *Instance) xqd_kv_store_insert_wait(
 	insertHandle int32,
-	generationOut int32, // u64
+	kvErrorOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_insert_wait")
 
@@ -328,13 +328,14 @@ func (i *Instance) xqd_kv_store_insert_wait(
 	}
 
 	// Wait for the insert to complete
-	generation, err := insert.Wait()
+	_, err := insert.Wait()
 	if err != nil {
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
 
-	// Write the generation number
-	i.memory.WriteUint64(generationOut, generation)
+	// Write success error code
+	i.memory.WriteUint32(kvErrorOut, KvErrorOk)
 
 	return XqdStatusOK
 }
@@ -391,6 +392,7 @@ func (i *Instance) xqd_kv_store_delete(
 // xqd_kv_store_delete_wait waits for a delete to complete
 func (i *Instance) xqd_kv_store_delete_wait(
 	deleteHandle int32,
+	kvErrorOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_delete_wait")
 
@@ -403,8 +405,12 @@ func (i *Instance) xqd_kv_store_delete_wait(
 	// Wait for the delete to complete
 	err := del.Wait()
 	if err != nil {
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
+
+	// Write success error code
+	i.memory.WriteUint32(kvErrorOut, KvErrorOk)
 
 	return XqdStatusOK
 }
@@ -486,9 +492,7 @@ func (i *Instance) xqd_kv_store_list(
 func (i *Instance) xqd_kv_store_list_wait(
 	listHandle int32,
 	bodyHandleOut int32,
-	metadataOut int32,
-	metadataMaxLen int32,
-	metadataLenOut int32,
+	kvErrorOut int32,
 ) int32 {
 	i.abilog.Println("xqd_kv_store_list_wait")
 
@@ -501,13 +505,15 @@ func (i *Instance) xqd_kv_store_list_wait(
 	// Wait for the list to complete
 	result, err := list.Wait()
 	if err != nil {
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
 
 	// Convert result to JSON
 	jsonBytes, err := result.ToJSON()
 	if err != nil {
-		return XqdError
+		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		return XqdStatusOK
 	}
 
 	// Create a body handle for the JSON result
@@ -517,8 +523,8 @@ func (i *Instance) xqd_kv_store_list_wait(
 	// Write body handle
 	i.memory.WriteUint32(bodyHandleOut, uint32(bodyID))
 
-	// Metadata is always empty for list operations
-	i.memory.WriteUint32(metadataLenOut, 0)
+	// Write success error code
+	i.memory.WriteUint32(kvErrorOut, KvErrorOk)
 
 	return XqdStatusOK
 }

@@ -205,3 +205,15 @@ const (
 	ImageOptimizerErrorTagError         uint32 = 2
 	ImageOptimizerErrorTagWarning       uint32 = 3
 )
+
+// KV store error codes (kv_error enum from compute-at-edge.witx)
+const (
+	KvErrorUninitialized      uint32 = 0
+	KvErrorOk                 uint32 = 1
+	KvErrorBadRequest         uint32 = 2
+	KvErrorNotFound           uint32 = 3
+	KvErrorPreconditionFailed uint32 = 4
+	KvErrorPayloadTooLarge    uint32 = 5
+	KvErrorInternalError      uint32 = 6
+	KvErrorTooManyRequests    uint32 = 7
+)
