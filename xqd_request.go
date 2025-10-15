@@ -406,7 +406,15 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 
 	i.abilog.Printf("req_header_value_get: handle=%d header=%q\n", handle, header)
 
-	value := r.Header.Get(header)
+	// Check if header exists (Go's Get() returns "" for both missing and empty values)
+	values, exists := r.Header[header]
+	if !exists || len(values) == 0 {
+		i.abilog.Printf("req_header_value_get: header %q not found\n", header)
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrInvalidArgument
+	}
+
+	value := values[0]
 
 	// Always write the length needed
 	i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
@@ -806,7 +814,7 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_pending_req_poll_v2(phandle int32, is_done_out int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+func (i *Instance) xqd_pending_req_poll_v2(phandle int32, error_detail_out int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
@@ -949,7 +957,7 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	return XqdStatusOK
 }
 
-func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32, error_detail_out int32) int32 {
+func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len int32, error_detail_out int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
