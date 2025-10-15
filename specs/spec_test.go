@@ -267,12 +267,13 @@ func TestFastlike(t *testing.T) {
 		st.Parallel()
 		w := httptest.NewRecorder()
 		r, _ := http.NewRequest("GET", "http://localhost:1337/proxy", io.NopCloser(bytes.NewBuffer(nil)))
+		r.Header.Set("fastlike-verbose", "1") // Enable verbose logging
 		ctx, cancel := context.WithTimeout(r.Context(), 50*time.Millisecond)
 		defer cancel()
 
 		r = r.WithContext(ctx)
 		r.RemoteAddr = "127.0.0.1:9999"
-		i := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+		i := f.Instantiate(fastlike.WithVerbosity(2), fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
 			<-time.After(100 * time.Millisecond)
 			w.WriteHeader(http.StatusTeapot)
 			_, _ = w.Write([]byte("i am a teapot"))

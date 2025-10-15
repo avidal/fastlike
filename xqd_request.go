@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 // SendErrorDetail represents the error details structure for send_v2/send_v3
@@ -532,9 +533,37 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	// Pause CPU time tracking during the blocking HTTP request
 	i.pauseExecution()
-	handler.ServeHTTP(wr, req)
-	// Resume CPU time tracking after the request completes
-	i.resumeExecution()
+
+	// Run the handler in a goroutine so we can monitor context cancellation
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(wr, req)
+		close(done)
+	}()
+
+	// Wait for either the request to complete or context to be cancelled
+	if i.ds_context != nil {
+		select {
+		case <-done:
+			// Request completed normally
+			i.resumeExecution()
+		case <-i.ds_context.Done():
+			// Context cancelled during request - return error and let epoch cause trap
+			i.abilog.Printf("req_send: context cancelled during request")
+			i.resumeExecution()
+			// Wait a bit for the handler to finish (best effort cleanup)
+			select {
+			case <-done:
+			case <-time.After(10 * time.Millisecond):
+			}
+			// Return error - wasm will trap on epoch when it continues executing
+			return XqdError
+		}
+	} else {
+		// No context, just wait for completion
+		<-done
+		i.resumeExecution()
+	}
 
 	w := wr.Result()
 
@@ -922,14 +951,58 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		handler = i.getBackendHandler(backend)
 	}
 
+	// Check if context is already cancelled before making the request
+	if i.ds_context != nil {
+		select {
+		case <-i.ds_context.Done():
+			// Context was cancelled (timeout/cancellation), panic to cause interrupt trap
+			i.abilog.Printf("req_send: context cancelled before request")
+			panic("wasm trap: interrupt")
+		default:
+			// Context not cancelled, proceed
+		}
+	}
+
 	// Execute the request
 	wr := httptest.NewRecorder()
 
 	// Pause CPU time tracking during the blocking HTTP request
 	i.pauseExecution()
-	handler.ServeHTTP(wr, req)
-	// Resume CPU time tracking after the request completes
-	i.resumeExecution()
+
+	// Run the handler in a goroutine so we can monitor context cancellation
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(wr, req)
+		close(done)
+	}()
+
+	// Wait for either the request to complete or context to be cancelled
+	if i.ds_context != nil {
+		i.abilog.Printf("req_send: waiting with context cancellation support")
+		select {
+		case <-done:
+			// Request completed normally
+			i.abilog.Printf("req_send: request completed normally")
+			i.resumeExecution()
+		case <-i.ds_context.Done():
+			// Context was cancelled during request
+			i.abilog.Printf("req_send: context cancelled during request")
+			i.resumeExecution()
+			// Wait a bit for the handler to finish (best effort cleanup)
+			select {
+			case <-done:
+				i.abilog.Printf("req_send: handler finished after cancel")
+			case <-time.After(10 * time.Millisecond):
+				i.abilog.Printf("req_send: handler still running after cancel timeout")
+			}
+			return XqdError
+		}
+	} else {
+		// No context, just wait for completion
+		i.abilog.Printf("req_send: waiting without context (ds_context is nil)")
+		<-done
+		i.resumeExecution()
+	}
 
 	w := wr.Result()
 
