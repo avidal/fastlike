@@ -56,6 +56,10 @@ type Instance struct {
 	// ds_context is the context from the downstream request, used for subrequests
 	ds_context context.Context
 
+	// downstreamRequestHandle stores the handle ID for the downstream request (created by body_downstream_get)
+	// This is used by implicit downstream request functions like original_header_names_get
+	downstreamRequestHandle int32
+
 	// backends is used to issue subrequests
 	backends       map[string]*Backend
 	defaultBackend func(name string) http.Handler
@@ -244,6 +248,7 @@ func (i *Instance) reset() {
 	i.ds_response = nil
 	i.ds_request = nil
 	i.ds_context = nil
+	i.downstreamRequestHandle = 0
 	i.wasm = nil
 	i.store = nil
 	i.memory = nil
