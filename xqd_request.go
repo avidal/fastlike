@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"net/http/httptest"
+	"net/httptest"
 	"net/url"
 	"sort"
 	"strings"
@@ -48,9 +50,8 @@ func (i *Instance) writeSendErrorDetail(addr int32, detail *SendErrorDetail) err
 }
 
 // createErrorDetailFromError converts a Go error to a SendErrorDetail struct.
-// Returns SendErrorDetailOk if err is nil, otherwise returns SendErrorDetailInternalError.
-// In a more sophisticated implementation, this could parse the error message to determine
-// specific error types (DNS errors, TLS alerts, etc.) and populate the appropriate fields.
+// Returns SendErrorDetailOk if err is nil, otherwise returns a specific error type
+// based on parsing the error (DNS errors, TLS errors, connection errors, etc.).
 func createErrorDetailFromError(err error) *SendErrorDetail {
 	if err == nil {
 		return &SendErrorDetail{
@@ -59,8 +60,81 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		}
 	}
 
-	// Return a generic internal error for all non-nil errors
-	// TODO: Parse error types to populate DNS/TLS specific fields
+	// Parse the error to determine the specific error type
+	errStr := err.Error()
+
+	// Check for DNS errors using type assertion
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsTimeout {
+			return &SendErrorDetail{
+				Tag:  SendErrorDetailDnsTimeout,
+				Mask: 0,
+			}
+		}
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailDnsError,
+			Mask: 0,
+		}
+	}
+
+	// Check for connection refused
+	if strings.Contains(errStr, "connection refused") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailConnectionRefused,
+			Mask: 0,
+		}
+	}
+
+	// Check for connection reset or terminated
+	if strings.Contains(errStr, "connection reset") || strings.Contains(errStr, "broken pipe") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailConnectionTerminated,
+			Mask: 0,
+		}
+	}
+
+	// Check for timeout errors (i/o timeout, deadline exceeded, context canceled)
+	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") || strings.Contains(errStr, "context deadline") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailConnectionTimeout,
+			Mask: 0,
+		}
+	}
+
+	// Check for TLS certificate errors
+	if strings.Contains(errStr, "certificate") || strings.Contains(errStr, "x509") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailTlsCertificateError,
+			Mask: 0,
+		}
+	}
+
+	// Check for TLS protocol errors
+	if strings.Contains(errStr, "tls:") || strings.Contains(errStr, "TLS") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailTlsProtocolError,
+			Mask: 0,
+		}
+	}
+
+	// Check for "no route to host" or unreachable destination
+	if strings.Contains(errStr, "no route to host") || strings.Contains(errStr, "unreachable") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailDestinationIpUnroutable,
+			Mask: 0,
+		}
+	}
+
+	// Check for "no such host" errors
+	if strings.Contains(errStr, "no such host") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailDestinationNotFound,
+			Mask: 0,
+		}
+	}
+
+	// Return generic internal error for unrecognized errors
 	return &SendErrorDetail{
 		Tag:  SendErrorDetailInternalError,
 		Mask: 0,

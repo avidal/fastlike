@@ -855,18 +855,20 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWriteOptions {
 	opts := &CacheWriteOptions{}
 
-	// HTTP cache write options structure (based on Viceroy):
-	// - max_age_ns: u64 (8 bytes) at offset 0
-	// - vary_rule_ptr: *u8 (4 bytes) at offset 8
-	// - vary_rule_len: usize (4 bytes) at offset 12
-	// - initial_age_ns: u64 (8 bytes) at offset 16
-	// - stale_while_revalidate_ns: u64 (8 bytes) at offset 24
-	// - surrogate_keys_ptr: *u8 (4 bytes) at offset 32
-	// - surrogate_keys_len: usize (4 bytes) at offset 36
-	// - length: u64 (8 bytes) at offset 40
+	// HTTP cache write options structure layout (from Viceroy ABI):
+	// Offset | Field                        | Size
+	// -------|------------------------------|------
+	//      0 | max_age_ns                   | 8 bytes (u64)
+	//      8 | vary_rule_ptr                | 4 bytes (*u8)
+	//     12 | vary_rule_len                | 4 bytes (usize)
+	//     16 | initial_age_ns               | 8 bytes (u64)
+	//     24 | stale_while_revalidate_ns    | 8 bytes (u64)
+	//     32 | surrogate_keys_ptr           | 4 bytes (*u8)
+	//     36 | surrogate_keys_len           | 4 bytes (usize)
+	//     40 | length                       | 8 bytes (u64)
 
-	// Read max_age_ns (always present)
-	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr + 0)
+	// Read max_age_ns (always present at offset 0)
+	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr)
 
 	// Mask bits for HTTP cache write options
 	const (

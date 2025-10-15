@@ -48,7 +48,10 @@ func (i *Instance) xqd_log_write(handle int32, addr int32, size int32, nwritten_
 	nwritten, err := io.CopyN(logger, bytes.NewReader(i.memory.Data()[addr:]), int64(size))
 	if err != nil {
 		i.abilog.Printf("log_write: error writing to logger, err=%q\n", err)
-		// TODO: Return XqdErrBufferLength if err == io.EOF (guest provided insufficient memory)
+		// If EOF, the guest's memory region doesn't have enough data
+		if err == io.EOF {
+			return XqdErrBufferLength
+		}
 		return XqdError
 	}
 
