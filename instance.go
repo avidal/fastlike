@@ -19,8 +19,16 @@ import (
 // Each instance handles exactly one HTTP request/response pair, as the XQD ABI is designed for
 // single-request semantics. After serving a request, instances are reset and can be reused.
 //
-// TODO: This has no public methods or public members. Should it even be public? The API could just
-// be New and Fastlike.ServeHTTP(w, r)?
+// API Design:
+// Instance is exported to support the Fastlike.Instantiate() method, which allows advanced users
+// to apply per-request configuration options. Most users should use Fastlike.ServeHTTP() directly,
+// which internally manages instance lifecycle. Use Instantiate() when you need:
+// - Per-request backend configuration
+// - Custom logging or dictionary setup for specific requests
+// - Fine-grained control over instance pooling and reuse
+//
+// The Instance type itself has no exported fields or methods (besides http.Handler), as all
+// configuration is done via functional options passed to NewInstance() or Instantiate().
 type Instance struct {
 	// wasmctx holds the compiled wasm module, shared across all instances
 	wasmctx *wasmContext

@@ -17,8 +17,32 @@ Guest programs should set their default response (for unhandled requests) to ret
 Implemented. This ensures that the spec runner marks those tests as skipped, instead of failing the
 test.
 
-TODO: Better document expectations for guest programs (should we list every endpoint and what it's
-supposed to do? Or just refer to a particular guest program?)
+#### Expected endpoints
+
+The spec test suite expects guest programs to implement the following endpoints:
+
+**Basic functionality:**
+- `GET /simple-response` - Return 200 OK with body "Hello, world!"
+- `GET /no-body` - Return 204 No Content with empty body
+- `GET /append-body` - Return 200 OK with body "original\nappended" (tests body append operations)
+
+**Request proxying:**
+- `GET /proxy` - Forward request to a backend and return the backend's response as-is
+- `GET /append-header` - Add a header "test-header: test-value" to a backend request
+
+**XQD ABI features:**
+- `GET /user-agent` - Parse User-Agent header and return formatted string like "Firefox 76.1.15"
+- `GET /geo` - Perform geolocation lookup on client IP and return JSON with geo data (at minimum `as_name` field)
+- `GET /log` - Write "Hello from fastlike!" to the "default" log endpoint, return 204
+- `GET /dictionary/testdict/testkey` - Look up "testkey" in "testdict" dictionary and return the value
+
+**Error handling:**
+- `GET /panic!` - Trigger a wasm panic/trap to test error handling
+
+**Default behavior:**
+- All other paths should return 502 Not Implemented
+
+See `testdata/rust/src/main.rs` for a reference implementation that passes all spec tests.
 
 ### Running specs against a guest program
 
