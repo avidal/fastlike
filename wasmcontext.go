@@ -111,18 +111,6 @@ func safeWrap8(i *Instance, name string, fn func(int32, int32, int32, int32, int
 }
 
 // Additional wrappers for uint32 parameters (for cache functions)
-func safeWrap7u1(i *Instance, name string, fn func(int32, int32, int32, uint32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, uint32, int32, int32, int32) int32 {
-	return func(caller *wasmtime.Caller, a, b, c int32, d uint32, e, f, g int32) (ret int32) {
-		defer func() {
-			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				ret = XqdError
-			}
-		}()
-		return fn(a, b, c, d, e, f, g)
-	}
-}
-
 func safeWrap9(i *Instance, name string, fn func(int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j int32) (ret int32) {
 		defer func() {
