@@ -1,8 +1,8 @@
 package fastlike
 
-// DeviceLookupFunc is a function that takes a user agent string and returns
-// device detection data as a JSON string. It returns an empty string if no
-// device detection data is available for the given user agent.
+// DeviceLookupFunc is a function that extracts device detection data from a user agent string.
+// Returns device information as a JSON string, or an empty string if no data is available.
+// The JSON typically includes fields like device type, OS, browser, etc.
 type DeviceLookupFunc func(userAgent string) string
 
 // defaultDeviceDetection returns an empty string for all user agents,

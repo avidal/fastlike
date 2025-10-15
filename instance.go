@@ -15,17 +15,20 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v37"
 )
 
-// Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it
+// Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it.
+// Each instance handles exactly one HTTP request/response pair, as the XQD ABI is designed for
+// single-request semantics. After serving a request, instances are reset and can be reused.
+//
 // TODO: This has no public methods or public members. Should it even be public? The API could just
 // be New and Fastlike.ServeHTTP(w, r)?
 type Instance struct {
+	// wasmctx holds the compiled wasm module, shared across all instances
 	wasmctx *wasmContext
 
-	// This is used to get a memory handle and call the entrypoint function
-	// Everything from here and below is reset on each incoming request
-	wasm   *wasmtime.Instance
-	store  *wasmtime.Store // Per-request store
-	memory *Memory
+	// Per-request wasm state (reset after each request)
+	wasm   *wasmtime.Instance // The instantiated wasm module
+	store  *wasmtime.Store    // Per-request store with its own linear memory
+	memory *Memory            // Wrapper for reading/writing guest memory
 
 	requests        *RequestHandles
 	responses       *ResponseHandles
@@ -43,82 +46,61 @@ type Instance struct {
 	// Async item handles for generic async I/O operations
 	asyncItems *AsyncItemHandles
 
-	// ds_request represents the downstream request, ie the one originated from the user agent
-	ds_request *http.Request
+	// Downstream request/response state
+	ds_request  *http.Request       // The incoming HTTP request from the client
+	ds_response http.ResponseWriter // Where we write the final HTTP response
+	ds_context  context.Context     // Request context, used for cancellation and timeouts
 
-	// ds_response represents the downstream response, where we're going to write the final output
-	ds_response http.ResponseWriter
-
-	// ds_context is the context from the downstream request, used for subrequests
-	ds_context context.Context
-
-	// downstreamRequestHandle stores the handle ID for the downstream request (created by body_downstream_get)
-	// This is used by implicit downstream request functions like original_header_names_get
+	// downstreamRequestHandle is the handle ID for the downstream request
+	// Created by body_downstream_get, used by functions like original_header_names_get
 	downstreamRequestHandle int32
 
-	// backends is used to issue subrequests
-	backends       map[string]*Backend
-	defaultBackend func(name string) http.Handler
+	// Backend configuration for subrequests
+	backends       map[string]*Backend      // Named backends registered by the user
+	defaultBackend func(name string) http.Handler // Fallback when backend not found (default: 502)
 
-	// loggers is used to write log output from the wasm program
-	loggers       []logger
-	defaultLogger func(name string) io.Writer
+	// Logging configuration
+	loggers       []logger                  // Named log endpoints
+	defaultLogger func(name string) io.Writer // Fallback logger (default: stdout with prefix)
 
-	// dictionaries are used to look up string values using string keys
-	dictionaries []dictionary
-
-	// configStores are used to look up string values using string keys (similar to dictionaries)
-	configStores []configStore
-
-	// kvStoreRegistry maps store names to KVStore instances
-	kvStoreRegistry map[string]*KVStore
-
-	// secretStores are used to look up secret values using string keys
-	secretStores []secretStore
+	// Key-value stores for configuration and data
+	dictionaries    []dictionary          // Legacy string key-value lookup
+	configStores    []configStore         // Modern alternative to dictionaries
+	kvStoreRegistry map[string]*KVStore   // Object storage with async operations
+	secretStores    []secretStore         // Secure credential storage
 
 	// Secret store handles
 	secretStoreHandles *SecretStoreHandles
 	secretHandles      *SecretHandles
 
-	// acls are used to perform IP address lookups against access control lists
-	acls       map[string]*Acl
-	aclHandles *AclHandles
+	// Access Control Lists and Rate Limiting
+	acls         map[string]*Acl       // Named ACLs for IP-based filtering
+	aclHandles   *AclHandles           // Handle tracking for ACL operations
+	rateCounters []rateCounterEntry    // Rate counters for ERL
+	penaltyBoxes []penaltyBoxEntry     // Penalty boxes for ERL
 
-	// Edge Rate Limiting
-	rateCounters []rateCounterEntry
-	penaltyBoxes []penaltyBoxEntry
+	// Cache state
+	cache               *Cache               // In-memory cache implementation
+	cacheHandles        *CacheHandles        // Handle tracking for cache lookups
+	cacheBusyHandles    *CacheBusyHandles    // Handle tracking for async cache operations
+	cacheReplaceHandles *CacheReplaceHandles // Handle tracking for cache replace operations
 
-	// Cache handles
-	cache               *Cache
-	cacheHandles        *CacheHandles
-	cacheBusyHandles    *CacheBusyHandles
-	cacheReplaceHandles *CacheReplaceHandles
+	// Request processing functions
+	geolookup       func(net.IP) Geo                    // Geographic lookup from IP address
+	uaparser        UserAgentParser                     // User agent parsing
+	deviceDetection DeviceLookupFunc                    // Device detection from user agent string
+	imageOptimizer  ImageOptimizerTransformFunc         // Image transformation hook
+	secureFn        func(*http.Request) bool            // Determines if request is "secure" (default: checks TLS)
+	complianceRegion string                             // GDPR/data locality region (e.g., "none", "us-eu", "us")
 
-	// geolookup is a function that accepts a net.IP and returns a Geo
-	geolookup func(net.IP) Geo
-
-	uaparser UserAgentParser
-
-	// deviceDetection is a function that accepts a user agent string and returns device detection data as JSON
-	deviceDetection DeviceLookupFunc
-
-	// imageOptimizer is a function that transforms images according to provided configuration
-	imageOptimizer ImageOptimizerTransformFunc
-
-	// secureFn is used to determine if a request should be considered secure
-	secureFn func(*http.Request) bool
-
-	// complianceRegion is the compliance region for the request (e.g., "none", "us-eu", "us")
-	complianceRegion string
-
-	log    *log.Logger
-	abilog *log.Logger
+	// Logging
+	log    *log.Logger // General fastlike logging
+	abilog *log.Logger // ABI call logging (verbose mode only)
 
 	// CPU time tracking for compute runtime introspection
-	// activeCpuTimeUs tracks the accumulated CPU time in microseconds (not wall clock time)
-	activeCpuTimeUs atomic.Uint64
-	// executionStartTime is the time when execution started or resumed (zero when paused)
-	executionStartTime time.Time
+	// Note: This tracks active CPU time in microseconds, NOT wall clock time
+	activeCpuTimeUs    atomic.Uint64 // Accumulated CPU time excluding I/O waits
+	executionStartTime time.Time     // When execution started/resumed (zero when paused)
 }
 
 // NewInstance returns an http.Handler that can handle a single request.
@@ -196,17 +178,21 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 // reset cleans up an instance after serving a request, preparing it for reuse.
 // It closes all open handles, releases resources, and resets state to initial values.
 func (i *Instance) reset() {
-	// once i is done, drop everything off of it
+	// Close all HTTP request bodies
 	for _, r := range i.requests.handles {
 		if r.Body != nil {
 			_ = r.Body.Close()
 		}
 	}
+
+	// Close all HTTP response bodies
 	for _, w := range i.responses.handles {
 		if w.Body != nil {
 			_ = w.Body.Close()
 		}
 	}
+
+	// Close all body handles and release buffers
 	for _, b := range i.bodies.handles {
 		if b.closer != nil {
 			_ = b.closer.Close()
@@ -216,7 +202,8 @@ func (i *Instance) reset() {
 		}
 	}
 
-	// reset the handles, but we can reuse the already allocated space
+	// Reset all handle trackers to empty state
+	// The underlying memory is reused to avoid allocations
 	*i.requests = RequestHandles{}
 	*i.responses = ResponseHandles{}
 	*i.bodies = BodyHandles{}
@@ -235,15 +222,18 @@ func (i *Instance) reset() {
 	*i.aclHandles = AclHandles{}
 	*i.asyncItems = AsyncItemHandles{}
 
+	// Clear downstream request/response state
 	i.ds_response = nil
 	i.ds_request = nil
 	i.ds_context = nil
 	i.downstreamRequestHandle = 0
+
+	// Clear wasm state (will be re-initialized on next request)
 	i.wasm = nil
 	i.store = nil
 	i.memory = nil
 
-	// Reset CPU time tracking
+	// Reset CPU time tracking to zero
 	i.activeCpuTimeUs.Store(0)
 	i.executionStartTime = time.Time{}
 }
@@ -260,13 +250,13 @@ func (i *Instance) setup() {
 	// Each wasm instance needs its own store to avoid state conflicts
 	i.store = wasmtime.NewStore(i.wasmctx.engine)
 
-	// Set up WASI configuration for this store
+	// Configure WASI (WebAssembly System Interface) for this store
 	wasicfg := wasmtime.NewWasiConfig()
-	wasicfg.InheritStdout()
-	wasicfg.InheritStderr()
-	wasicfg.SetArgv([]string{"fastlike"})
-	// Set FASTLY_TRACE_ID environment variable to match the request ID we return
-	// This is used for request correlation/tracing
+	wasicfg.InheritStdout() // Allow guest to write to stdout
+	wasicfg.InheritStderr() // Allow guest to write to stderr
+	wasicfg.SetArgv([]string{"fastlike"}) // Set argv[0] to "fastlike"
+	// Set FASTLY_TRACE_ID environment variable for request correlation
+	// Using a fixed UUID since this is for local development/testing
 	wasicfg.SetEnv([]string{"FASTLY_TRACE_ID"}, []string{"00000000-0000-0000-0000-000000000000"})
 	i.store.SetWasi(wasicfg)
 
@@ -310,21 +300,23 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.setup()
 	defer i.reset()
 
+	// Check for request loops using the cdn-loop header
+	// We add "fastlike" to this header on each subrequest
 	loops, ok := r.Header[http.CanonicalHeaderKey("cdn-loop")]
 	if !ok {
 		loops = []string{""}
 	}
 
+	// Enable verbose ABI logging if requested via header
 	_, yeslog := r.Header[http.CanonicalHeaderKey("fastlike-verbose")]
 	if yeslog {
 		i.abilog.SetOutput(os.Stdout)
 	}
 
+	// Detect infinite request loops and fail fast
 	if strings.Contains(strings.Join(loops, "\x00"), "fastlike") {
-		// immediately respond with a loop detection
 		w.WriteHeader(http.StatusLoopDetected)
-		_, _ = w.Write([]byte("Loop detected! This request has already come through your fastly program."))
-		_, _ = w.Write([]byte("\n"))
+		_, _ = w.Write([]byte("Loop detected! This request has already come through your fastly program.\n"))
 		_, _ = w.Write([]byte("You probably have a non-exhaustive backend handler?"))
 		return
 	}
@@ -333,28 +325,29 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.ds_response = w
 	i.ds_context = r.Context()
 
-	// Start a goroutine which will wait for the context to cancel or wait until the wasm calls are
-	// complete
+	// Start a goroutine to handle request cancellation (timeout/deadline/client disconnect)
+	// If the context cancels before execution completes, we interrupt the wasm program
 	donech := make(chan struct{}, 1)
 	go func(ctx context.Context) {
 		select {
 		case <-ctx.Done():
-			// If the context cancels before we write to the donech it's a timeout/deadline/client
-			// hung up and we should interrupt the wasm program.
+			// Context cancelled - interrupt the wasm execution
 			i.wasmctx.engine.IncrementEpoch()
 		case <-donech:
-			// Otherwise, we're good and don't need to do anything else.
+			// Execution completed normally - nothing to do
 		}
 	}(r.Context())
 
-	// The entrypoint for a fastly compute program takes no arguments and returns nothing or an
-	// error. The program itself is responsible for getting a handle on the downstream request
-	// and sending a response downstream.
+	// Call the wasm program's entrypoint
+	// The guest program is responsible for:
+	// 1. Getting a handle to the downstream request (via body_downstream_get)
+	// 2. Processing the request (making subrequests, manipulating headers, etc.)
+	// 3. Sending a response downstream (via resp_send_downstream)
 
 	// Start tracking CPU time before entering guest code
 	i.startExecution()
 
-	// Get the "_start" export
+	// Look up the "_start" function export
 	startExport := i.wasm.GetExport(i.store, "_start")
 	if startExport == nil {
 		panic("_start export not found in wasm module")
@@ -365,12 +358,16 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic("'_start' export is not a function")
 	}
 
+	// Execute the guest program
 	_, err := entry.Call(i.store)
 
 	// Stop tracking CPU time after guest code completes
 	i.stopExecution()
 
+	// Signal that execution is complete
 	donech <- struct{}{}
+
+	// Handle wasm execution errors
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("Error running wasm program.\n"))
@@ -380,11 +377,11 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Workaround for wasmtime-go v37 epoch interruption bugs:
-	// If the context was cancelled but the wasm completed successfully,
+	// If the context was cancelled but the wasm completed "successfully",
 	// we need to override the response to indicate an interrupt occurred.
 	// This only works with httptest.ResponseRecorder (used in tests).
+	// TODO: Remove this workaround when upgrading to a fixed wasmtime-go version
 	if i.ds_context.Err() != nil {
-		// Try to cast to *httptest.ResponseRecorder
 		if rec, ok := w.(*httptest.ResponseRecorder); ok {
 			// Override the response to indicate an interrupt
 			rec.Code = http.StatusInternalServerError
@@ -403,22 +400,22 @@ func (i *Instance) startExecution() {
 }
 
 // pauseExecution pauses CPU time tracking and accumulates the elapsed time.
-// This should be called before blocking operations (e.g., HTTP requests to backends).
-// The caller must ensure resumeExecution() is called after the blocking operation.
+// This should be called before blocking I/O operations (e.g., HTTP requests to backends).
+// The caller MUST call resumeExecution() after the blocking operation completes.
 func (i *Instance) pauseExecution() {
-	// If not currently executing, nothing to pause
+	// If not currently executing (already paused), nothing to do
 	if i.executionStartTime.IsZero() {
 		return
 	}
 
-	// Calculate elapsed time since execution started/resumed
+	// Calculate elapsed CPU time since execution started/resumed
 	elapsed := time.Since(i.executionStartTime)
 	microseconds := elapsed.Microseconds()
 
-	// Add to accumulated time
+	// Add to accumulated CPU time
 	i.activeCpuTimeUs.Add(uint64(microseconds))
 
-	// Mark as not executing by zeroing the start time
+	// Mark as paused by zeroing the start time
 	i.executionStartTime = time.Time{}
 }
 

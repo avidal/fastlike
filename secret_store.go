@@ -1,7 +1,7 @@
 package fastlike
 
-// SecretLookupFunc is a function that retrieves a secret value by name from a secret store.
-// It returns the secret's plaintext bytes and a boolean indicating whether the secret was found.
+// SecretLookupFunc is a function that retrieves a secret value by key from a secret store.
+// Returns (plaintext_bytes, true) if the secret exists, or (nil, false) if not found.
 type SecretLookupFunc func(key string) ([]byte, bool)
 
 // secretStore represents a named secret store with a lookup function
@@ -15,7 +15,9 @@ func (i *Instance) addSecretStore(name string, lookup SecretLookupFunc) {
 	i.secretStores = append(i.secretStores, secretStore{name: name, lookup: lookup})
 }
 
-// getSecretStoreHandle returns the handle for a secret store by name, or HandleInvalid if not found
+// getSecretStoreHandle returns a new handle for a secret store by name.
+// Returns HandleInvalid if the secret store is not registered.
+// Note: Each call creates a new handle, as secret stores support multiple concurrent opens.
 func (i *Instance) getSecretStoreHandle(name string) int {
 	for idx, store := range i.secretStores {
 		if store.name == name {

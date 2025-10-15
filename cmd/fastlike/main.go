@@ -72,18 +72,21 @@ func main() {
 	}
 }
 
+// backend represents a configured backend with its address and reverse proxy handler
 type backend struct {
 	address string
 	proxy   http.Handler
 }
+
+// backendFlags implements flag.Value for parsing -backend flags
 type backendFlags map[string]backend
 
 func (f *backendFlags) String() string {
-	rv := make([]string, len(*f))
+	results := make([]string, 0, len(*f))
 	for name, b := range *f {
-		rv = append(rv, fmt.Sprintf("%s=%s", name, b.address))
+		results = append(results, fmt.Sprintf("%s=%s", name, b.address))
 	}
-	return strings.Join(rv, ", ")
+	return strings.Join(results, ", ")
 }
 
 func (f *backendFlags) Set(v string) error {
@@ -115,19 +118,22 @@ func (f *backendFlags) Set(v string) error {
 	return nil
 }
 
+// dictionary represents a configured dictionary with its lookup function
 type dictionary struct {
 	name     string
 	filename string
 	fn       fastlike.LookupFunc
 }
+
+// dictionaryFlags implements flag.Value for parsing -dictionary flags
 type dictionaryFlags map[string]dictionary
 
 func (f *dictionaryFlags) String() string {
-	rv := make([]string, len(*f))
-	for name, b := range *f {
-		rv = append(rv, fmt.Sprintf("%s=%s", name, b.filename))
+	results := make([]string, 0, len(*f))
+	for name, dict := range *f {
+		results = append(results, fmt.Sprintf("%s=%s", name, dict.filename))
 	}
-	return strings.Join(rv, ", ")
+	return strings.Join(results, ", ")
 }
 
 func (f *dictionaryFlags) Set(v string) error {
@@ -150,12 +156,14 @@ func (f *dictionaryFlags) Set(v string) error {
 		return fmt.Errorf("error parsing dictionary file %s, got %s", filename, err.Error())
 	}
 
-	(*f)[name] = dictionary{name: name, filename: filename, fn: func(key string) string {
-		if v, ok := content[key]; !ok {
-			return ""
-		} else {
-			return v
+	// Create a lookup function that returns the value for a key, or empty string if not found
+	lookupFunc := func(key string) string {
+		if value, exists := content[key]; exists {
+			return value
 		}
-	}}
+		return ""
+	}
+
+	(*f)[name] = dictionary{name: name, filename: filename, fn: lookupFunc}
 	return nil
 }

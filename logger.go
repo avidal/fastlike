@@ -15,9 +15,9 @@ func (i *Instance) addLogger(name string, w io.Writer) {
 	i.loggers = append(i.loggers, logger{name, w})
 }
 
-// getLoggerHandle retrieves the handle for a named logger.
-// Returns the handle and true if found, or -1 and false if not found or reserved.
-// Reserved names (stdout, stderr, stdin) are not permitted as log endpoint names.
+// getLoggerHandle retrieves the handle ID for a named logger endpoint.
+// Returns (handle_id, true) if found, or (-1, false) if not found or the name is reserved.
+// Reserved names (stdout, stderr, stdin) cannot be used as log endpoint names.
 func (i *Instance) getLoggerHandle(name string) (int, bool) {
 	// Reserved names that should not be used as log endpoint names
 	reservedNames := []string{"stdout", "stderr", "stdin"}
@@ -64,26 +64,29 @@ func (l logger) Write(data []byte) (int, error) {
 	return l.w.Write(data)
 }
 
-// LineWriter takes a writer and returns a new writer that ensures each Write call ends with
-// a newline
+// LineWriter wraps an io.Writer to ensure each Write call ends with exactly one newline.
+// Internal newlines are escaped to keep each log entry on a single line.
 type LineWriter struct{ io.Writer }
 
-// Write implements io.Writer for LineWriter
+// Write implements io.Writer for LineWriter.
+// It strips trailing newlines, escapes internal newlines, and appends a single newline.
 func (lw LineWriter) Write(data []byte) (int, error) {
-	l := len(data)
-	// Ensure that all newlines in data are escaped, after stripping any trailing newlines
+	originalLen := len(data)
+
+	// Strip trailing newlines and escape internal newlines
 	data = bytes.TrimRight(data, "\n")
 	data = bytes.ReplaceAll(data, []byte("\n"), []byte("\\n"))
+
 	if n, err := lw.Writer.Write(data); err != nil {
 		return n, err
 	}
 
 	if n, err := lw.Writer.Write([]byte("\n")); err != nil {
 		return n, err
-	} else {
-		// only return the length of the "original" bytes if everything goes fine
-		return l, err
 	}
+
+	// Return the original length to satisfy io.Writer semantics
+	return originalLen, nil
 }
 
 // PrefixWriter wraps an io.Writer and prepends a prefix to each write operation.

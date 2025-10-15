@@ -44,10 +44,9 @@ func (i *Instance) xqd_http_cache_is_request_cacheable(
 	return XqdStatusOK
 }
 
-// xqd_http_cache_get_suggested_cache_key generates a cache key based on the request
-//
-// The cache key is a 32-byte SHA256 hash derived from the request URL.
-// If the provided buffer is too small, returns XqdErrBufferLength with the required size.
+// xqd_http_cache_get_suggested_cache_key generates a suggested cache key for an HTTP request.
+// The cache key is a 32-byte SHA256 hash of the request URL.
+// Returns XqdErrBufferLength if the provided buffer is too small (writes required size to nwritten_out).
 func (i *Instance) xqd_http_cache_get_suggested_cache_key(
 	req_handle int32,
 	key_out_ptr int32,
@@ -61,14 +60,12 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_key(
 		return XqdErrInvalidHandle
 	}
 
-	// Generate cache key from request URL
-	// Use SHA256 hash of the full URL (including scheme, host, path, query)
+	// Generate cache key: SHA256 hash of the full URL (scheme, host, path, query)
 	url := req.URL.String()
 	hash := sha256.Sum256([]byte(url))
 	cacheKey := hash[:]
 
-	// Cache keys are always 32 bytes (SHA256)
-	const cacheKeySize = 32
+	const cacheKeySize = 32 // SHA256 produces 32 bytes
 
 	// Check if buffer is large enough
 	if key_out_len < cacheKeySize {
@@ -463,15 +460,17 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 		return XqdErrInvalidHandle
 	}
 
-	// HTTP cache write options structure (based on Viceroy):
-	// - max_age_ns: u64 (8 bytes) at offset 0
-	// - vary_rule_ptr: *u8 (4 bytes) at offset 8
-	// - vary_rule_len: usize (4 bytes) at offset 12
-	// - initial_age_ns: u64 (8 bytes) at offset 16
-	// - stale_while_revalidate_ns: u64 (8 bytes) at offset 24
-	// - surrogate_keys_ptr: *u8 (4 bytes) at offset 32
-	// - surrogate_keys_len: usize (4 bytes) at offset 36
-	// - length: u64 (8 bytes) at offset 40
+	// HTTP cache write options structure layout (from Viceroy ABI):
+	// Offset | Field                        | Size
+	// -------|------------------------------|------
+	//      0 | max_age_ns                   | 8 bytes (u64)
+	//      8 | vary_rule_ptr                | 4 bytes (*u8)
+	//     12 | vary_rule_len                | 4 bytes (usize)
+	//     16 | initial_age_ns               | 8 bytes (u64)
+	//     24 | stale_while_revalidate_ns    | 8 bytes (u64)
+	//     32 | surrogate_keys_ptr           | 4 bytes (*u8)
+	//     36 | surrogate_keys_len           | 4 bytes (usize)
+	//     40 | length                       | 8 bytes (u64)
 
 	const (
 		HttpCacheWriteOptionsMaskMaxAgeNs               = 1 << 0
@@ -571,10 +570,11 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 		return XqdErrInvalidHandle
 	}
 
-	// Storage action: 0=Insert, 1=Update, 2=DoNotStore, 3=RecordUncacheable
-	storageAction := uint32(0) // Insert
+	// Determine storage action based on response status code
+	// Actions: 0=Insert, 1=Update, 2=DoNotStore, 3=RecordUncacheable
+	storageAction := uint32(0) // Default: Insert
 
-	// Check if response is cacheable
+	// Only cache successful responses (2xx and 3xx status codes)
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		storageAction = 2 // DoNotStore
 	}

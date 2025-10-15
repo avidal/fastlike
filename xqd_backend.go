@@ -1,27 +1,27 @@
 package fastlike
 
 import (
-	"strings"
+	"strconv"
 )
 
 // xqd_backend_exists checks if a backend with the given name exists
 // Returns 1 if exists, 0 if not
-func (i *Instance) xqd_backend_exists(backend_addr int32, backend_size int32, exists_out int32) int32 {
+func (i *Instance) xqd_backend_exists(backendNamePtr int32, backendNameLen int32, existsOut int32) int32 {
 	// Read backend name from guest memory
-	buf := make([]byte, backend_size)
-	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	backendNameBuf := make([]byte, backendNameLen)
+	_, err := i.memory.ReadAt(backendNameBuf, int64(backendNamePtr))
 	if err != nil {
 		return XqdError
 	}
 
-	backendName := string(buf)
+	backendName := string(backendNameBuf)
 	i.abilog.Printf("backend_exists: name=%q", backendName)
 
 	// Check if backend exists
 	if i.backendExists(backendName) {
-		i.memory.PutUint32(1, int64(exists_out))
+		i.memory.PutUint32(1, int64(existsOut))
 	} else {
-		i.memory.PutUint32(0, int64(exists_out))
+		i.memory.PutUint32(0, int64(existsOut))
 	}
 
 	return XqdStatusOK
@@ -29,15 +29,12 @@ func (i *Instance) xqd_backend_exists(backend_addr int32, backend_size int32, ex
 
 // xqd_backend_is_healthy checks if a backend is healthy
 // For now, we always return "unknown" health status
-func (i *Instance) xqd_backend_is_healthy(backend_addr int32, backend_size int32, health_out int32) int32 {
-	// Read backend name from guest memory
-	buf := make([]byte, backend_size)
-	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+func (i *Instance) xqd_backend_is_healthy(backendNamePtr int32, backendNameLen int32, healthOut int32) int32 {
+	backendName, err := i.readBackendName(backendNamePtr, backendNameLen)
 	if err != nil {
 		return XqdError
 	}
 
-	backendName := string(buf)
 	i.abilog.Printf("backend_is_healthy: name=%q", backendName)
 
 	// Check if backend exists
@@ -46,35 +43,31 @@ func (i *Instance) xqd_backend_is_healthy(backend_addr int32, backend_size int32
 	}
 
 	// Return BackendHealthUnknown (we don't track health)
-	i.memory.PutUint32(BackendHealthUnknown, int64(health_out))
+	i.memory.PutUint32(BackendHealthUnknown, int64(healthOut))
 	return XqdStatusOK
 }
 
 // xqd_backend_is_dynamic checks if a backend is dynamically registered
 // Returns 1 if dynamic, 0 if static
-func (i *Instance) xqd_backend_is_dynamic(backend_addr int32, backend_size int32, is_dynamic_out int32) int32 {
-	// Read backend name from guest memory
-	buf := make([]byte, backend_size)
-	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+func (i *Instance) xqd_backend_is_dynamic(backendNamePtr int32, backendNameLen int32, isDynamicOut int32) int32 {
+	backendName, err := i.readBackendName(backendNamePtr, backendNameLen)
 	if err != nil {
 		return XqdError
 	}
 
-	backendName := string(buf)
 	i.abilog.Printf("backend_is_dynamic: name=%q", backendName)
 
-	// Get backend
-	b := i.getBackend(backendName)
-	if b == nil {
+	backend := i.getBackend(backendName)
+	if backend == nil {
 		return XqdErrInvalidArgument
 	}
 
 	// Return 1 if dynamic, 0 if static
-	if b.IsDynamic {
-		i.memory.PutUint32(1, int64(is_dynamic_out))
-	} else {
-		i.memory.PutUint32(0, int64(is_dynamic_out))
+	var isDynamic uint32
+	if backend.IsDynamic {
+		isDynamic = 1
 	}
+	i.memory.PutUint32(isDynamic, int64(isDynamicOut))
 
 	return XqdStatusOK
 }
@@ -167,37 +160,27 @@ func (i *Instance) xqd_backend_get_override_host(backend_addr int32, backend_siz
 }
 
 // xqd_backend_get_port gets the port of a backend
-func (i *Instance) xqd_backend_get_port(backend_addr int32, backend_size int32, port_out int32) int32 {
-	// Read backend name from guest memory
-	buf := make([]byte, backend_size)
-	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+func (i *Instance) xqd_backend_get_port(backendNamePtr int32, backendNameLen int32, portOut int32) int32 {
+	backendName, err := i.readBackendName(backendNamePtr, backendNameLen)
 	if err != nil {
 		return XqdError
 	}
 
-	backendName := string(buf)
 	i.abilog.Printf("backend_get_port: name=%q", backendName)
 
-	// Get backend
-	b := i.getBackend(backendName)
-	if b == nil {
+	backend := i.getBackend(backendName)
+	if backend == nil {
 		return XqdErrInvalidArgument
 	}
 
-	// Determine port
+	// Determine port from URL
 	var port uint16
-	if b.URL.Port() != "" {
-		// Parse explicit port
-		var p int
-		_, err := strings.NewReader(b.URL.Port()).Read(make([]byte, 0))
-		if err == nil {
-			p = 0
-			for _, ch := range b.URL.Port() {
-				p = p*10 + int(ch-'0')
-			}
+	if portStr := backend.URL.Port(); portStr != "" {
+		// Parse explicit port from URL
+		if p, err := strconv.Atoi(portStr); err == nil {
 			port = uint16(p)
 		}
-	} else if b.URL.Scheme == "https" {
+	} else if backend.URL.Scheme == "https" {
 		port = 443
 	} else {
 		port = 80
@@ -205,8 +188,7 @@ func (i *Instance) xqd_backend_get_port(backend_addr int32, backend_size int32, 
 
 	i.abilog.Printf("backend_get_port: name=%q port=%d", backendName, port)
 
-	// Write port to guest memory
-	i.memory.PutUint16(port, int64(port_out))
+	i.memory.PutUint16(port, int64(portOut))
 	return XqdStatusOK
 }
 

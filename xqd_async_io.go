@@ -4,8 +4,12 @@ import (
 	"time"
 )
 
-// xqd_async_io_select waits for one of multiple async operations to complete
-// Returns the index of the first ready item, or u32::MAX (0xFFFFFFFF) on timeout
+// xqd_async_io_select waits for one of multiple async operations to complete.
+// Monitors a list of async handles and returns the index of the first one that becomes ready.
+// Returns the index (0-based) of the ready item, or u32::MAX (0xFFFFFFFF) on timeout.
+//
+// The function supports async items (KV operations, cache operations), pending requests, and body handles.
+// It uses goroutines to monitor each handle's completion channel concurrently.
 func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, timeout_ms int32, ready_idx_out int32) int32 {
 	i.abilog.Printf("async_io_select: handles_len=%d timeout_ms=%d", handles_len, timeout_ms)
 
@@ -42,42 +46,7 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 
 	cases := make([]selectCase, 0, len(handles))
 	for idx, handle := range handles {
-		var ch <-chan struct{}
-
-		// Try as async item handle first
-		asyncItem := i.asyncItems.Get(int(handle))
-		if asyncItem != nil {
-			ch = i.getAsyncItemChannel(asyncItem)
-		} else {
-			// Try as pending request handle
-			pr := i.pendingRequests.Get(int(handle))
-			if pr != nil {
-				ch = pr.done
-			} else {
-				// Try as body handle (for streaming writes)
-				body := i.bodies.Get(int(handle))
-				if body != nil {
-					if body.IsStreaming() {
-						// For streaming bodies, check if channel has capacity
-						if body.IsStreamingReady() {
-							bodyCh := make(chan struct{})
-							close(bodyCh)
-							ch = bodyCh
-						} else {
-							// Not ready - create a channel that never closes
-							// In practice, the guest should poll is_ready
-							ch = make(chan struct{})
-						}
-					} else {
-						// Non-streaming bodies are always ready
-						bodyCh := make(chan struct{})
-						close(bodyCh)
-						ch = bodyCh
-					}
-				}
-			}
-		}
-
+		ch := i.getHandleChannel(int(handle))
 		if ch == nil {
 			i.abilog.Printf("async_io_select: invalid handle=%d at index=%d", handle, idx)
 			return XqdErrInvalidHandle
@@ -101,7 +70,9 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 		}
 	}
 
-	// None are ready yet, use select with timeout
+	// None are ready yet, use select with timeout.
+	// We spawn a goroutine for each handle to monitor its channel.
+	// The first one to complete sends its index to doneCh.
 	doneCh := make(chan int, len(cases))
 
 	// Spawn goroutines to monitor each channel
@@ -138,61 +109,29 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 	}
 }
 
-// xqd_async_io_is_ready checks if an async operation is ready (non-blocking)
-// Returns 1 if ready, 0 if not
-// Handles can be: async item handles, pending request handles, or body handles
+// xqd_async_io_is_ready checks if an async operation is ready (non-blocking).
+// Returns 1 if ready, 0 if not ready.
+// Handles can be: async item handles, pending request handles, or body handles.
 func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32 {
 	i.abilog.Printf("async_io_is_ready: handle=%d", handle)
 
-	// Try as async item handle first
-	asyncItem := i.asyncItems.Get(int(handle))
-	if asyncItem != nil {
-		ready := i.isAsyncItemReady(asyncItem)
-		i.abilog.Printf("async_io_is_ready: async item handle=%d ready=%v", handle, ready)
-		if ready {
-			i.memory.PutUint32(1, int64(is_ready_out))
-		} else {
-			i.memory.PutUint32(0, int64(is_ready_out))
-		}
-		return XqdStatusOK
+	ch := i.getHandleChannel(int(handle))
+	if ch == nil {
+		i.abilog.Printf("async_io_is_ready: invalid handle=%d (not found in any registry)", handle)
+		return XqdErrInvalidHandle
 	}
 
-	// Try as pending request handle
-	pr := i.pendingRequests.Get(int(handle))
-	if pr != nil {
-		ready := pr.IsReady()
-		i.abilog.Printf("async_io_is_ready: pending request handle=%d ready=%v", handle, ready)
-		if ready {
-			i.memory.PutUint32(1, int64(is_ready_out))
-		} else {
-			i.memory.PutUint32(0, int64(is_ready_out))
-		}
-		return XqdStatusOK
+	// Non-blocking check if channel is ready
+	select {
+	case <-ch:
+		i.abilog.Printf("async_io_is_ready: handle=%d ready=true", handle)
+		i.memory.PutUint32(1, int64(is_ready_out))
+	default:
+		i.abilog.Printf("async_io_is_ready: handle=%d ready=false", handle)
+		i.memory.PutUint32(0, int64(is_ready_out))
 	}
 
-	// Try as body handle (for streaming writes)
-	body := i.bodies.Get(int(handle))
-	if body != nil {
-		if body.IsStreaming() {
-			// For streaming bodies, check if channel has capacity
-			if body.IsStreamingReady() {
-				i.abilog.Printf("async_io_is_ready: streaming body handle=%d ready=true", handle)
-				i.memory.PutUint32(1, int64(is_ready_out))
-			} else {
-				i.abilog.Printf("async_io_is_ready: streaming body handle=%d ready=false (backpressure)", handle)
-				i.memory.PutUint32(0, int64(is_ready_out))
-			}
-		} else {
-			// Non-streaming bodies are always ready
-			i.abilog.Printf("async_io_is_ready: body handle=%d ready=true (non-streaming)", handle)
-			i.memory.PutUint32(1, int64(is_ready_out))
-		}
-		return XqdStatusOK
-	}
-
-	// Handle not found in any registry
-	i.abilog.Printf("async_io_is_ready: invalid handle=%d (not found in any registry)", handle)
-	return XqdErrInvalidHandle
+	return XqdStatusOK
 }
 
 // getAsyncItemChannel returns a channel that closes when the async item is ready.
@@ -247,23 +186,7 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 		if body == nil {
 			return nil
 		}
-		if body.IsStreaming() {
-			// For streaming bodies, check if channel has capacity
-			// We create a channel that closes immediately if ready, or blocks if not
-			if body.IsStreamingReady() {
-				ch := make(chan struct{})
-				close(ch)
-				return ch
-			} else {
-				// Return a channel that never closes (indicating not ready)
-				// In practice, the caller should re-check is_ready periodically
-				return make(chan struct{})
-			}
-		}
-		// Non-streaming bodies are always ready
-		ch := make(chan struct{})
-		close(ch)
-		return ch
+		return i.getBodyChannel(body)
 
 	default:
 		return nil
@@ -285,4 +208,51 @@ func (i *Instance) isAsyncItemReady(item *AsyncItemHandle) bool {
 	default:
 		return false
 	}
+}
+
+// getHandleChannel returns a completion channel for any type of handle.
+// Tries to resolve the handle as: async item, pending request, or body handle.
+// Returns nil if the handle is invalid or not recognized.
+func (i *Instance) getHandleChannel(handle int) <-chan struct{} {
+	// Try as async item handle first
+	asyncItem := i.asyncItems.Get(handle)
+	if asyncItem != nil {
+		return i.getAsyncItemChannel(asyncItem)
+	}
+
+	// Try as pending request handle
+	pr := i.pendingRequests.Get(handle)
+	if pr != nil {
+		return pr.done
+	}
+
+	// Try as body handle (for streaming writes)
+	body := i.bodies.Get(handle)
+	if body != nil {
+		return i.getBodyChannel(body)
+	}
+
+	return nil
+}
+
+// getBodyChannel returns a completion channel for a body handle.
+// For streaming bodies, the channel closes when the body has capacity.
+// For non-streaming bodies, returns an already-closed channel (always ready).
+func (i *Instance) getBodyChannel(body *BodyHandle) <-chan struct{} {
+	if body.IsStreaming() {
+		// For streaming bodies, check if channel has capacity
+		if body.IsStreamingReady() {
+			ch := make(chan struct{})
+			close(ch)
+			return ch
+		}
+		// Not ready - return a channel that never closes
+		// In practice, the guest should poll is_ready
+		return make(chan struct{})
+	}
+
+	// Non-streaming bodies are always ready
+	ch := make(chan struct{})
+	close(ch)
+	return ch
 }

@@ -19,33 +19,31 @@ func (i *Instance) xqd_erl_check_rate(
 ) int32 {
 	i.abilog.Printf("fastly_erl::check_rate (stub)")
 
-	// Read rate counter name (for validation)
-	rcBuf := make([]byte, rcLen)
-	_, err := i.memory.ReadAt(rcBuf, int64(rcPtr))
+	// Read and validate rate counter name
+	rateCounterNameBuf := make([]byte, rcLen)
+	_, err := i.memory.ReadAt(rateCounterNameBuf, int64(rcPtr))
 	if err != nil {
 		return XqdError
 	}
-	rcName := string(rcBuf)
+	rateCounterName := string(rateCounterNameBuf)
 
-	// Read penalty box name (for validation)
-	pbBuf := make([]byte, pbLen)
-	_, err = i.memory.ReadAt(pbBuf, int64(pbPtr))
-	if err != nil {
-		return XqdError
-	}
-	pbName := string(pbBuf)
-
-	// Validate that rate counter exists
-	rc := i.getRateCounter(rcName)
-	if rc == nil {
-		i.abilog.Printf("rate counter '%s' not found", rcName)
+	rateCounter := i.getRateCounter(rateCounterName)
+	if rateCounter == nil {
+		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
 		return XqdErrInvalidArgument
 	}
 
-	// Validate that penalty box exists
-	pb := i.getPenaltyBox(pbName)
-	if pb == nil {
-		i.abilog.Printf("penalty box '%s' not found", pbName)
+	// Read and validate penalty box name
+	penaltyBoxNameBuf := make([]byte, pbLen)
+	_, err = i.memory.ReadAt(penaltyBoxNameBuf, int64(pbPtr))
+	if err != nil {
+		return XqdError
+	}
+	penaltyBoxName := string(penaltyBoxNameBuf)
+
+	penaltyBox := i.getPenaltyBox(penaltyBoxName)
+	if penaltyBox == nil {
+		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
 		return XqdErrInvalidArgument
 	}
 
@@ -67,14 +65,14 @@ func (i *Instance) xqd_erl_ratecounter_increment(
 	i.abilog.Printf("fastly_erl::ratecounter_increment")
 
 	// Read rate counter name
-	rcBuf := make([]byte, rcLen)
-	_, err := i.memory.ReadAt(rcBuf, int64(rcPtr))
+	rateCounterNameBuf := make([]byte, rcLen)
+	_, err := i.memory.ReadAt(rateCounterNameBuf, int64(rcPtr))
 	if err != nil {
 		return XqdError
 	}
-	rcName := string(rcBuf)
+	rateCounterName := string(rateCounterNameBuf)
 
-	// Read entry
+	// Read entry name
 	entryBuf := make([]byte, entryLen)
 	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
 	if err != nil {
@@ -82,15 +80,13 @@ func (i *Instance) xqd_erl_ratecounter_increment(
 	}
 	entry := string(entryBuf)
 
-	// Get rate counter
-	rc := i.getRateCounter(rcName)
-	if rc == nil {
-		i.abilog.Printf("rate counter '%s' not found", rcName)
+	rateCounter := i.getRateCounter(rateCounterName)
+	if rateCounter == nil {
+		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
 		return XqdErrInvalidArgument
 	}
 
-	// Increment
-	rc.Increment(entry, delta)
+	rateCounter.Increment(entry, delta)
 
 	return XqdStatusOK
 }
@@ -108,14 +104,14 @@ func (i *Instance) xqd_erl_ratecounter_lookup_rate(
 	i.abilog.Printf("fastly_erl::ratecounter_lookup_rate")
 
 	// Read rate counter name
-	rcBuf := make([]byte, rcLen)
-	_, err := i.memory.ReadAt(rcBuf, int64(rcPtr))
+	rateCounterNameBuf := make([]byte, rcLen)
+	_, err := i.memory.ReadAt(rateCounterNameBuf, int64(rcPtr))
 	if err != nil {
 		return XqdError
 	}
-	rcName := string(rcBuf)
+	rateCounterName := string(rateCounterNameBuf)
 
-	// Read entry
+	// Read entry name
 	entryBuf := make([]byte, entryLen)
 	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
 	if err != nil {
@@ -123,17 +119,14 @@ func (i *Instance) xqd_erl_ratecounter_lookup_rate(
 	}
 	entry := string(entryBuf)
 
-	// Get rate counter
-	rc := i.getRateCounter(rcName)
-	if rc == nil {
-		i.abilog.Printf("rate counter '%s' not found", rcName)
+	rateCounter := i.getRateCounter(rateCounterName)
+	if rateCounter == nil {
+		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
 		return XqdErrInvalidArgument
 	}
 
-	// Lookup rate
-	rate := rc.LookupRate(entry, window)
+	rate := rateCounter.LookupRate(entry, window)
 
-	// Write result
 	i.memory.PutUint32(rate, int64(ratePtr))
 
 	return XqdStatusOK
@@ -151,14 +144,14 @@ func (i *Instance) xqd_erl_ratecounter_lookup_count(
 	i.abilog.Printf("fastly_erl::ratecounter_lookup_count")
 
 	// Read rate counter name
-	rcBuf := make([]byte, rcLen)
-	_, err := i.memory.ReadAt(rcBuf, int64(rcPtr))
+	rateCounterNameBuf := make([]byte, rcLen)
+	_, err := i.memory.ReadAt(rateCounterNameBuf, int64(rcPtr))
 	if err != nil {
 		return XqdError
 	}
-	rcName := string(rcBuf)
+	rateCounterName := string(rateCounterNameBuf)
 
-	// Read entry
+	// Read entry name
 	entryBuf := make([]byte, entryLen)
 	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
 	if err != nil {
@@ -166,17 +159,14 @@ func (i *Instance) xqd_erl_ratecounter_lookup_count(
 	}
 	entry := string(entryBuf)
 
-	// Get rate counter
-	rc := i.getRateCounter(rcName)
-	if rc == nil {
-		i.abilog.Printf("rate counter '%s' not found", rcName)
+	rateCounter := i.getRateCounter(rateCounterName)
+	if rateCounter == nil {
+		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
 		return XqdErrInvalidArgument
 	}
 
-	// Lookup count
-	count := rc.LookupCount(entry, duration)
+	count := rateCounter.LookupCount(entry, duration)
 
-	// Write result
 	i.memory.PutUint32(count, int64(countPtr))
 
 	return XqdStatusOK
@@ -194,14 +184,14 @@ func (i *Instance) xqd_erl_penaltybox_add(
 	i.abilog.Printf("fastly_erl::penaltybox_add")
 
 	// Read penalty box name
-	pbBuf := make([]byte, pbLen)
-	_, err := i.memory.ReadAt(pbBuf, int64(pbPtr))
+	penaltyBoxNameBuf := make([]byte, pbLen)
+	_, err := i.memory.ReadAt(penaltyBoxNameBuf, int64(pbPtr))
 	if err != nil {
 		return XqdError
 	}
-	pbName := string(pbBuf)
+	penaltyBoxName := string(penaltyBoxNameBuf)
 
-	// Read entry
+	// Read entry name
 	entryBuf := make([]byte, entryLen)
 	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
 	if err != nil {
@@ -209,15 +199,13 @@ func (i *Instance) xqd_erl_penaltybox_add(
 	}
 	entry := string(entryBuf)
 
-	// Get penalty box
-	pb := i.getPenaltyBox(pbName)
-	if pb == nil {
-		i.abilog.Printf("penalty box '%s' not found", pbName)
+	penaltyBox := i.getPenaltyBox(penaltyBoxName)
+	if penaltyBox == nil {
+		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
 		return XqdErrInvalidArgument
 	}
 
-	// Add to penalty box
-	pb.Add(entry, ttl)
+	penaltyBox.Add(entry, ttl)
 
 	return XqdStatusOK
 }
@@ -234,14 +222,14 @@ func (i *Instance) xqd_erl_penaltybox_has(
 	i.abilog.Printf("fastly_erl::penaltybox_has")
 
 	// Read penalty box name
-	pbBuf := make([]byte, pbLen)
-	_, err := i.memory.ReadAt(pbBuf, int64(pbPtr))
+	penaltyBoxNameBuf := make([]byte, pbLen)
+	_, err := i.memory.ReadAt(penaltyBoxNameBuf, int64(pbPtr))
 	if err != nil {
 		return XqdError
 	}
-	pbName := string(pbBuf)
+	penaltyBoxName := string(penaltyBoxNameBuf)
 
-	// Read entry
+	// Read entry name
 	entryBuf := make([]byte, entryLen)
 	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
 	if err != nil {
@@ -249,15 +237,13 @@ func (i *Instance) xqd_erl_penaltybox_has(
 	}
 	entry := string(entryBuf)
 
-	// Get penalty box
-	pb := i.getPenaltyBox(pbName)
-	if pb == nil {
-		i.abilog.Printf("penalty box '%s' not found", pbName)
+	penaltyBox := i.getPenaltyBox(penaltyBoxName)
+	if penaltyBox == nil {
+		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
 		return XqdErrInvalidArgument
 	}
 
-	// Check if in penalty box
-	has := pb.Has(entry)
+	has := penaltyBox.Has(entry)
 
 	// Write result (1 if present, 0 if not)
 	var result uint32

@@ -2,7 +2,6 @@ package fastlike
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 )
 
@@ -23,7 +22,7 @@ func (i *Instance) xqd_log_endpoint_get(name_addr int32, name_size int32, addr i
 	// Get the logger handle
 	handle, ok := i.getLoggerHandle(name)
 	if !ok {
-		i.abilog.Printf("log_endpoint_get: logger '%s' not found or is reserved", name)
+		i.abilog.Printf("log_endpoint_get: logger '%s' not found or is reserved\n", name)
 		return XqdErrInvalidArgument
 	}
 
@@ -48,9 +47,8 @@ func (i *Instance) xqd_log_write(handle int32, addr int32, size int32, nwritten_
 	// Copy size bytes starting at addr into the logger
 	nwritten, err := io.CopyN(logger, bytes.NewReader(i.memory.Data()[addr:]), int64(size))
 	if err != nil {
-		fmt.Printf("got error writing to logger, err=%q\n", err)
-		// TODO: If err == EOF then there's a specific error code we can return (it means they
-		// didn't have `size` bytes in memory)
+		i.abilog.Printf("log_write: error writing to logger, err=%q\n", err)
+		// TODO: Return XqdErrBufferLength if err == io.EOF (guest provided insufficient memory)
 		return XqdError
 	}
 

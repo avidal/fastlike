@@ -41,7 +41,13 @@ func NewKVStore(name string) *KVStore {
 	}
 }
 
-// ValidateKey checks if a key meets Fastly's validation rules
+// ValidateKey checks if a key meets Fastly's KV store validation rules.
+// Rules:
+//   - Length must be 1-1024 bytes
+//   - Cannot contain: \r, \n, #, ;, ?, ^, |
+//   - Cannot start with: .well-known/acme-challenge/
+//   - Cannot be: "." or ".."
+//   - Cannot be single control characters or Unicode non-characters
 func ValidateKey(key string) error {
 	if len(key) == 0 || len(key) > 1024 {
 		return fmt.Errorf("key length must be 1-1024 bytes")
@@ -110,7 +116,14 @@ const (
 	InsertModePrepend   InsertMode = 3
 )
 
-// Insert stores a value in the store
+// Insert stores a value in the KV store with optional metadata, TTL, and conditional semantics.
+//
+// Parameters:
+//   - mode: controls how the value is inserted (overwrite, add, append, prepend)
+//   - ifGenerationMatch: if non-nil, insert only succeeds if the current generation matches (optimistic locking)
+//   - ttl: if non-nil, the value expires after this duration
+//
+// Returns the new generation number (timestamp in nanoseconds) or an error.
 func (kvs *KVStore) Insert(key string, value []byte, metadata string, ttl *time.Duration, mode InsertMode, ifGenerationMatch *uint64) (uint64, error) {
 	if err := ValidateKey(key); err != nil {
 		return 0, err
@@ -200,7 +213,14 @@ type ListMetaResult struct {
 	NextCursor *string `json:"next_cursor,omitempty"`
 }
 
-// List returns a list of keys in the store
+// List returns a paginated list of keys in the store.
+//
+// Parameters:
+//   - prefix: filter keys starting with this prefix (empty string matches all)
+//   - limit: maximum number of keys to return (default 100)
+//   - cursor: opaque pagination token from a previous List call (nil for first page)
+//
+// Returns a ListResult with keys, metadata, and an optional next_cursor for pagination.
 func (kvs *KVStore) List(prefix string, limit uint32, cursor *string) (*ListResult, error) {
 	kvs.mu.RLock()
 	defer kvs.mu.RUnlock()

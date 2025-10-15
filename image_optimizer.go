@@ -2,12 +2,11 @@ package fastlike
 
 import "net/http"
 
-// ImageOptimizerTransformConfig represents the configuration for image transformation
+// ImageOptimizerTransformConfig represents the configuration for image transformation.
 type ImageOptimizerTransformConfig struct {
-	// SdkClaimsOpts contains any Image Optimizer API parameters that were set
-	// as well as the Image Optimizer region the request is meant for.
-	// This is typically a JSON string with transformation parameters like:
-	// {"resize": {"width": 200, "height": 200}, "format": "webp", "quality": 80}
+	// SdkClaimsOpts contains Image Optimizer API parameters and target region.
+	// This is a JSON string with transformation parameters, for example:
+	//   {"resize": {"width": 200, "height": 200}, "format": "webp", "quality": 80}
 	SdkClaimsOpts string
 }
 
@@ -17,21 +16,22 @@ type ImageOptimizerErrorDetail struct {
 	Message string // Error or warning message
 }
 
-// ImageOptimizerTransformFunc is a function that transforms images according to
-// the provided configuration. It receives:
-// - originRequest: the HTTP request for the original image
-// - originBody: the body of the original image (may be nil if not provided)
-// - backend: the backend name to fetch the image from
-// - config: transformation configuration (SDK claims, region, etc.)
+// ImageOptimizerTransformFunc is a function that transforms images according to config.
 //
-// It returns:
-// - response: the HTTP response containing the transformed image
-// - errorDetail: error details if transformation failed
-// - err: Go error if something went wrong at the infrastructure level
+// Inputs:
+//   - originRequest: HTTP request for the original image
+//   - originBody: body bytes of the original image (may be nil if not yet fetched)
+//   - backend: backend name to fetch the image from (if originBody is nil)
+//   - config: transformation configuration (resize, format, quality, etc.)
 //
-// If the function returns a non-nil error, XqdError will be returned to the guest.
-// If errorDetail.Tag is ImageOptimizerErrorTagError or ImageOptimizerErrorTagWarning,
-// the message will be passed back to the guest.
+// Outputs:
+//   - response: HTTP response containing the transformed image
+//   - errorDetail: structured error/warning information
+//   - err: Go error if infrastructure-level failure occurred
+//
+// Error handling:
+//   - If err is non-nil, XqdError is returned to the guest
+//   - If errorDetail.Tag indicates error/warning, the message is passed to the guest
 type ImageOptimizerTransformFunc func(
 	originRequest *http.Request,
 	originBody []byte,
@@ -39,8 +39,9 @@ type ImageOptimizerTransformFunc func(
 	config ImageOptimizerTransformConfig,
 ) (*http.Response, ImageOptimizerErrorDetail, error)
 
-// defaultImageOptimizer returns an unsupported error, as image transformation
-// requires external libraries and is not implemented by default.
+// defaultImageOptimizer returns an error indicating image optimization is not configured.
+// Image transformation requires external libraries (e.g., libvips) and must be
+// explicitly configured via WithImageOptimizer().
 func defaultImageOptimizer(
 	originRequest *http.Request,
 	originBody []byte,

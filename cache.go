@@ -108,14 +108,16 @@ func NewCache() *Cache {
 	}
 }
 
-// cacheKey creates a string key from a byte slice for use as a map key.
+// cacheKey converts a byte slice key into a string suitable for use as a Go map key.
 func cacheKey(key []byte) string {
 	return string(key)
 }
 
-// varyKey creates a unique cache key that incorporates the vary rule and request headers.
+// varyKey creates a variant-specific cache key that incorporates the vary rule and request headers.
+// Content negotiation with Vary creates multiple cached versions (variants) of the same resource.
 // If no vary rule is specified, returns the base cache key unchanged.
-// Otherwise, returns a SHA256 hash of the base key, vary rule, and request headers.
+// Otherwise, returns a SHA256 hash of (base key + vary rule + request headers) to uniquely
+// identify this variant.
 func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) string {
 	if varyRule == "" {
 		return cacheKey(baseKey)
@@ -130,9 +132,11 @@ func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) 
 }
 
 // findMatchingVariant finds a cached object that matches the vary rule and request headers.
-// If no vary rule is provided, returns the most recently inserted variant.
-// Otherwise, returns the variant whose vary key matches the computed vary key for the request.
-// Returns nil if no matching variant is found.
+//
+// Behavior:
+//   - If no vary rule is provided: returns the most recently inserted variant
+//   - If vary rule is provided: returns the variant whose vary key matches the request
+//   - Returns nil if no matching variant is found
 func (c *Cache) findMatchingVariant(key []byte, varyRule string, requestHeaders []byte) *CachedObject {
 	keyStr := cacheKey(key)
 	variants, ok := c.objects[keyStr]
@@ -204,7 +208,9 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	}
 }
 
-// TransactionLookup performs a transactional lookup with request collapsing
+// TransactionLookup performs a transactional cache lookup with request collapsing support.
+// If another transaction is already in progress for the same key, this call blocks until
+// that transaction completes, preventing thundering herd on cache misses.
 func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *CacheTransaction {
 	keyStr := cacheKey(key)
 
@@ -368,8 +374,9 @@ func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
 	delete(c.transactions, keyStr)
 }
 
-// PurgeSurrogateKey purges all cache entries with the given surrogate key
-// Returns the number of cache keys that were purged
+// PurgeSurrogateKey performs a hard purge of all cache entries tagged with the surrogate key.
+// Surrogate keys enable bulk cache invalidation by tagging related cache entries.
+// Returns the number of cache keys that were purged.
 func (c *Cache) PurgeSurrogateKey(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -385,8 +392,9 @@ func (c *Cache) PurgeSurrogateKey(key string) int {
 	return 0
 }
 
-// SoftPurgeSurrogateKey marks entries as stale without removing them
-// Returns the number of cached objects that were marked stale
+// SoftPurgeSurrogateKey performs a soft purge by marking entries as stale without removing them.
+// Stale entries can still be served with stale-while-revalidate, allowing graceful revalidation.
+// Returns the number of cached objects that were marked stale.
 func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -416,7 +424,9 @@ func (obj *CachedObject) GetAge() uint64 {
 	return age
 }
 
-// ReadBody reads from the cache body, waiting for data if needed (for streaming)
+// ReadBody reads from the cached body at the specified offset.
+// For streaming cache writes, this will block until data becomes available at the requested offset.
+// This enables concurrent readers during cache insertion.
 func (obj *CachedObject) ReadBody(p []byte, offset int64) (int, error) {
 	obj.WriteCond.L.Lock()
 	defer obj.WriteCond.L.Unlock()
@@ -440,7 +450,8 @@ func (obj *CachedObject) ReadBody(p []byte, offset int64) (int, error) {
 	}
 }
 
-// WriteBody writes to the cache body and notifies waiting readers
+// WriteBody appends data to the cached body and notifies waiting readers.
+// This enables streaming cache insertion with concurrent reads.
 func (obj *CachedObject) WriteBody(p []byte) (int, error) {
 	obj.WriteCond.L.Lock()
 	n, err := obj.Body.Write(p)

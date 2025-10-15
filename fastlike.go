@@ -21,8 +21,9 @@ type Fastlike struct {
 	instances  chan *Instance
 	instancefn func(opts ...Option) *Instance
 
-	// wasmfile and instanceOpts are stored for reload purposes
-	wasmfile     string
+	// wasmfile is the path to the wasm file, stored for hot reload
+	wasmfile string
+	// instanceOpts are the original options passed to New(), applied to all instances
 	instanceOpts []Option
 }
 
@@ -33,23 +34,27 @@ func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 		instanceOpts: instanceOpts,
 	}
 
-	// read in the file and store the bytes
+	// Read the wasm file from disk
 	wasmbytes, err := os.ReadFile(wasmfile)
 	check(err)
 
+	// Calculate pool size: cap at 16 to avoid excessive memory usage
+	// while still benefiting from instance reuse
 	size := runtime.NumCPU()
-
 	if size > 16 {
 		size = 16
 	} else if size < 0 {
 		size = 0
 	}
 
+	// Create a buffered channel as the instance pool
 	f.instances = make(chan *Instance, size)
+
+	// instancefn creates new instances on demand when the pool is empty
 	f.instancefn = func(opts ...Option) *Instance {
-		// merge the original options with any supplied options
-		opts = append(instanceOpts, opts...)
-		return NewInstance(wasmbytes, opts...)
+		// Merge the base options with any additional per-request options
+		allOpts := append(instanceOpts, opts...)
+		return NewInstance(wasmbytes, allOpts...)
 	}
 
 	return f
@@ -58,17 +63,23 @@ func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 // ServeHTTP implements http.Handler for a Fastlike module. It's a convenience function over
 // `Instantiate()` followed by `.ServeHTTP` on the returned instance.
 func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Get an instance from the pool (or create a new one if pool is empty)
 	i := f.Instantiate()
 
+	// Serve the request
 	i.ServeHTTP(w, r)
 
+	// Try to return the instance to the pool for reuse
+	// If the pool is full, the instance is discarded (handled by default case)
 	f.mu.RLock()
 	instances := f.instances
 	f.mu.RUnlock()
 
 	select {
 	case instances <- i:
+		// Successfully returned to pool
 	default:
+		// Pool is full, instance will be garbage collected
 	}
 }
 
@@ -115,27 +126,28 @@ func (f *Fastlike) Reload() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Drain the old instances channel
+	// Close and drain the old instance pool
+	// Old instances will be garbage collected once drained
 	oldInstances := f.instances
 	close(oldInstances)
 	for range oldInstances {
-		// Drain all instances (they will be garbage collected)
+		// Discard each old instance
 	}
 
-	// Calculate pool size (same as in New)
-	size := runtime.NumCPU()
-	if size > 16 {
-		size = 16
-	} else if size < 0 {
-		size = 0
+	// Recalculate pool size (same logic as New())
+	poolSize := runtime.NumCPU()
+	if poolSize > 16 {
+		poolSize = 16
+	} else if poolSize < 0 {
+		poolSize = 0
 	}
 
-	// Create new instances channel and instancefn
-	f.instances = make(chan *Instance, size)
+	// Create a new instance pool with the fresh wasm bytes
+	f.instances = make(chan *Instance, poolSize)
 	f.instancefn = func(opts ...Option) *Instance {
-		// merge the original options with any supplied options
-		opts = append(f.instanceOpts, opts...)
-		return NewInstance(wasmbytes, opts...)
+		// Merge the base options with any additional per-request options
+		allOpts := append(f.instanceOpts, opts...)
+		return NewInstance(wasmbytes, allOpts...)
 	}
 
 	return nil
@@ -161,10 +173,12 @@ func (f *Fastlike) EnableReloadOnSIGHUP() {
 	}()
 }
 
-// Instantiate returns an Instance ready to serve requests. This may come from the instance pool if
-// one is available, but otherwise will be constructed fresh.
-// This *must* be called for each request, as the XQD runtime is designed around a single
-// request/response pair for each instance.
+// Instantiate returns an Instance ready to serve requests. It first tries to reuse
+// an instance from the pool. If the pool is empty, it creates a new instance on-demand.
+//
+// IMPORTANT: This must be called for each request, as the XQD ABI is designed around
+// a single request/response pair per instance. Never reuse an instance for multiple
+// concurrent requests.
 func (f *Fastlike) Instantiate(opts ...Option) *Instance {
 	f.mu.RLock()
 	instances := f.instances
@@ -173,11 +187,13 @@ func (f *Fastlike) Instantiate(opts ...Option) *Instance {
 
 	select {
 	case i := <-instances:
+		// Reuse an instance from the pool and apply any additional options
 		for _, opt := range opts {
 			opt(i)
 		}
 		return i
 	default:
+		// Pool is empty, create a new instance on-demand
 		return instancefn(opts...)
 	}
 }
