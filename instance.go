@@ -278,6 +278,8 @@ func (i *Instance) setup() {
 	i.memory = &Memory{nil}
 
 	// Create a new linker for this store and link all host functions
+	// IMPORTANT: Each request needs its own linker to ensure closures
+	// capture the correct instance state for this specific request
 	linker := wasmtime.NewLinker(i.wasmctx.engine)
 	check(linker.DefineWasi())
 	i.link(i.store, linker)
@@ -386,27 +388,6 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic("'_start' export is not a function")
 	}
 
-	i.log.Printf("About to call entry function, store: %v, entry: %v", i.store != nil, entry != nil)
-
-	// Additional checks
-	if i.store == nil {
-		panic("store is nil before calling entry")
-	}
-	if entry == nil {
-		panic("entry is nil")
-	}
-
-	// Wrap the call in a defer/recover to get more information about the panic
-	defer func() {
-		if r := recover(); r != nil {
-			i.log.Printf("Panic during entry.Call: %v", r)
-			// Re-panic to preserve original behavior
-			panic(r)
-		}
-	}()
-
-	// Try to identify the exact issue
-	i.log.Printf("Calling entry.Call with store=%p", i.store)
 	_, err := entry.Call(i.store)
 
 	// Stop tracking CPU time after guest code completes
