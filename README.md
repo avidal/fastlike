@@ -2,8 +2,8 @@
 
 # fastlike
 
-fastlike is a Go implementation of the Fastly Compute@Edge XQD ABI using `wasmtime` and exposes
-a `http.Handler` for you to use. It allows you to run Fastly Compute@Edge compatible WebAssembly
+fastlike is a Go implementation of the Fastly Compute XQD ABI using `wasmtime` and exposes
+a `http.Handler` for you to use. It allows you to run Fastly Compute compatible WebAssembly
 programs locally for testing and development purposes.
 
 ## Building
@@ -181,7 +181,7 @@ See the [options.go](options.go) file for the complete list of available configu
 
 ## Getting WASM Programs
 
-You'll need a Fastly Compute@Edge compatible WASM program to run with fastlike. The simplest
+You'll need a Fastly Compute compatible WASM program to run with fastlike. The simplest
 way to do that is via the [fastly cli](https://github.com/fastly/cli) and using one of the [starter
 kits](https://developer.fastly.com/solutions/starters/).
 
@@ -231,7 +231,7 @@ Go, running Rust, calling Go, proxying to Python.
 
 ## Feature Completeness
 
-Fastlike implements the complete Fastly Compute@Edge XQD ABI, providing full compatibility with
+Fastlike implements the complete Fastly Compute XQD ABI, providing full compatibility with
 Fastly's runtime environment. This includes all major feature areas:
 
 - Async Operations: Parallel backend requests, async I/O select, pending request operations
