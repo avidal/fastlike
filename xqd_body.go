@@ -20,6 +20,32 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdErrInvalidHandle
 	}
 
+	// Check if this is a streaming body
+	if body.IsStreaming() {
+		// Use streaming write
+		data := make([]byte, size)
+		_, err := i.memory.ReadAt(data, int64(addr))
+		if err != nil {
+			return XqdError
+		}
+
+		n, err := body.WriteStreaming(data)
+		if err != nil {
+			i.abilog.Printf("body_write: streaming write error: %v", err)
+			return XqdError
+		}
+
+		i.memory.PutUint32(uint32(n), int64(nwritten_out))
+
+		// Handle end flag - close the streaming body when done
+		if body_end == BodyWriteEndBack || body_end == BodyWriteEndFront {
+			body.CloseStreaming()
+		}
+
+		return XqdStatusOK
+	}
+
+	// Original non-streaming logic continues...
 	// Read the data from guest memory
 	data := make([]byte, size)
 	_, err := i.memory.ReadAt(data, int64(addr))

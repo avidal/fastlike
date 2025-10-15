@@ -106,6 +106,13 @@ type BodyHandle struct {
 
 	// trailers are HTTP trailers that come after the body in chunked encoding
 	trailers http.Header
+
+	// Streaming body support (for send_async_streaming)
+	isStreaming      bool
+	streamingWriter  *io.PipeWriter  // writes go here
+	streamingChan    chan []byte     // buffered channel for backpressure
+	streamingDone    chan struct{}   // closed when streaming completes
+	streamingWritten int64           // total bytes written to streaming body
 }
 
 // Close implements io.Closer for a BodyHandle
@@ -133,6 +140,65 @@ func (b *BodyHandle) Size() int64 {
 		return -1
 	}
 	return b.length
+}
+
+// IsStreaming returns true if this body handle is a streaming body
+func (b *BodyHandle) IsStreaming() bool {
+	return b.isStreaming
+}
+
+// IsStreamingReady checks if the streaming body has capacity for writes (non-blocking)
+// Returns true if writes will not block, false if buffer is full (backpressure) or done
+func (b *BodyHandle) IsStreamingReady() bool {
+	if !b.isStreaming || b.streamingChan == nil {
+		return false
+	}
+	// Check if done (pipe closed on remote end)
+	select {
+	case <-b.streamingDone:
+		return false
+	default:
+	}
+	// Check if channel has capacity using len and cap
+	return len(b.streamingChan) < cap(b.streamingChan)
+}
+
+// WriteStreaming writes data to a streaming body (non-blocking check, may block on channel send)
+func (b *BodyHandle) WriteStreaming(p []byte) (int, error) {
+	if !b.isStreaming {
+		return 0, io.ErrClosedPipe
+	}
+
+	// Check if done
+	select {
+	case <-b.streamingDone:
+		return 0, io.ErrClosedPipe
+	default:
+	}
+
+	// Make a copy of the data since it might be reused by the caller
+	data := make([]byte, len(p))
+	copy(data, p)
+
+	// Send to channel (may block if buffer is full)
+	select {
+	case b.streamingChan <- data:
+		b.streamingWritten += int64(len(p))
+		return len(p), nil
+	case <-b.streamingDone:
+		return 0, io.ErrClosedPipe
+	}
+}
+
+// CloseStreaming closes the streaming body writer
+func (b *BodyHandle) CloseStreaming() error {
+	if !b.isStreaming {
+		return nil
+	}
+	if b.streamingWriter != nil {
+		return b.streamingWriter.Close()
+	}
+	return nil
 }
 
 // BodyHandles is a slice of BodyHandle with methods to get and create

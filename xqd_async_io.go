@@ -54,14 +54,26 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 			if pr != nil {
 				ch = pr.done
 			} else {
-				// Try as body handle (for streaming writes - always ready)
+				// Try as body handle (for streaming writes)
 				body := i.bodies.Get(int(handle))
 				if body != nil {
-					// Body handles are always ready (no backpressure in our implementation)
-					// Create a closed channel to indicate immediate readiness
-					bodyCh := make(chan struct{})
-					close(bodyCh)
-					ch = bodyCh
+					if body.IsStreaming() {
+						// For streaming bodies, check if channel has capacity
+						if body.IsStreamingReady() {
+							bodyCh := make(chan struct{})
+							close(bodyCh)
+							ch = bodyCh
+						} else {
+							// Not ready - create a channel that never closes
+							// In practice, the guest should poll is_ready
+							ch = make(chan struct{})
+						}
+					} else {
+						// Non-streaming bodies are always ready
+						bodyCh := make(chan struct{})
+						close(bodyCh)
+						ch = bodyCh
+					}
 				}
 			}
 		}
@@ -158,14 +170,23 @@ func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32
 		return XqdStatusOK
 	}
 
-	// Try as body handle (for streaming writes - always ready in our implementation)
+	// Try as body handle (for streaming writes)
 	body := i.bodies.Get(int(handle))
 	if body != nil {
-		// For body handles, we don't implement true async streaming with backpressure
-		// In a real implementation, this would check if the body can accept more writes
-		// For now, we report bodies as always ready
-		i.abilog.Printf("async_io_is_ready: body handle=%d ready=true (always ready)", handle)
-		i.memory.PutUint32(1, int64(is_ready_out))
+		if body.IsStreaming() {
+			// For streaming bodies, check if channel has capacity
+			if body.IsStreamingReady() {
+				i.abilog.Printf("async_io_is_ready: streaming body handle=%d ready=true", handle)
+				i.memory.PutUint32(1, int64(is_ready_out))
+			} else {
+				i.abilog.Printf("async_io_is_ready: streaming body handle=%d ready=false (backpressure)", handle)
+				i.memory.PutUint32(0, int64(is_ready_out))
+			}
+		} else {
+			// Non-streaming bodies are always ready
+			i.abilog.Printf("async_io_is_ready: body handle=%d ready=true (non-streaming)", handle)
+			i.memory.PutUint32(1, int64(is_ready_out))
+		}
 		return XqdStatusOK
 	}
 
@@ -221,8 +242,24 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 		return cb.Transaction.ready
 
 	case AsyncItemTypeBody:
-		// For bodies, we don't implement true streaming with backpressure
-		// For simplicity, we'll create a channel that's already closed (always ready)
+		body := i.bodies.Get(item.HandleID)
+		if body == nil {
+			return nil
+		}
+		if body.IsStreaming() {
+			// For streaming bodies, check if channel has capacity
+			// We create a channel that closes immediately if ready, or blocks if not
+			if body.IsStreamingReady() {
+				ch := make(chan struct{})
+				close(ch)
+				return ch
+			} else {
+				// Return a channel that never closes (indicating not ready)
+				// In practice, the caller should re-check is_ready periodically
+				return make(chan struct{})
+			}
+		}
+		// Non-streaming bodies are always ready
 		ch := make(chan struct{})
 		close(ch)
 		return ch
