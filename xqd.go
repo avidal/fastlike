@@ -57,6 +57,9 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	i.memory.PutUint32(uint32(rhid), int64(request_handle_out))
 	i.memory.PutUint32(uint32(bhid), int64(body_handle_out))
 
+	// Store the downstream request handle for implicit downstream request operations
+	i.downstreamRequestHandle = int32(rhid)
+
 	i.abilog.Printf("req_body_downstream_get: rh=%d bh=%d", rhid, bhid)
 
 	return XqdStatusOK

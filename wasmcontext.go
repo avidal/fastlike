@@ -366,8 +366,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	// TODO: All of these XQD methods are stubbed. As they are implemented, they'll be removed from
 	// here and explicitly linked in the section below.
 	// Note: In wasmtime-go v37, we must wrap instance methods in closures to avoid nil pointer issues
-	_ = linker.FuncWrap("fastly_http_req", "original_header_count", safeWrap1(i, "original_header_count", func(a int32) int32 {
-		return i.wasm1("original_header_count")(a)
+	_ = linker.FuncWrap("fastly_http_req", "original_header_count", safeWrap1(i, "original_header_count", func(count_out int32) int32 {
+		return i.xqd_http_downstream_original_header_count(i.downstreamRequestHandle, count_out)
 	}))
 
 	_ = linker.FuncWrap("fastly_http_resp", "header_value_get", safeWrap6(i, "header_value_get", func(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, nwritten_out int32) int32 {
@@ -578,8 +578,8 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	}))
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
 	// we just use the same sorted order
-	_ = linker.FuncWrap("fastly_http_req", "original_header_names_get", safeWrap6(i, "original_header_names_get", func(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
-		return i.xqd_req_header_names_get(handle, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "original_header_names_get", safeWrap5(i, "original_header_names_get", func(addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_original_header_names(i.downstreamRequestHandle, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 	}))
 	// Try using FuncWrap instead of DefineFunc for v37 compatibility
 	_ = linker.FuncWrap("fastly_http_req", "close", safeWrap1(i, "close", func(handle int32) int32 {
@@ -610,35 +610,35 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 		return i.xqd_req_register_dynamic_backend(backend_addr, backend_size, target_addr, target_size, options_mask, options_ptr)
 	}))
 	// DEPRECATED: use fastly_http_downstream versions
-	_ = linker.FuncWrap("fastly_http_req", "downstream_client_h2_fingerprint", safeWrap4(i, "downstream_client_h2_fingerprint", func(req_handle int32, h2_out int32, h2_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_client_h2_fingerprint(req_handle, h2_out, h2_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_client_h2_fingerprint", safeWrap3(i, "downstream_client_h2_fingerprint", func(h2_out int32, h2_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_client_h2_fingerprint(i.downstreamRequestHandle, h2_out, h2_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_client_oh_fingerprint", safeWrap4(i, "downstream_client_oh_fingerprint", func(req_handle int32, oh_out int32, oh_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_client_oh_fingerprint(req_handle, oh_out, oh_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_client_oh_fingerprint", safeWrap3(i, "downstream_client_oh_fingerprint", func(oh_out int32, oh_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_client_oh_fingerprint(i.downstreamRequestHandle, oh_out, oh_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja3_md5", safeWrap3(i, "downstream_tls_ja3_md5", func(req_handle int32, ja3_md5_out int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_ja3_md5(req_handle, ja3_md5_out, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja3_md5", safeWrap2(i, "downstream_tls_ja3_md5", func(ja3_md5_out int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_ja3_md5(i.downstreamRequestHandle, ja3_md5_out, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja4", safeWrap4(i, "downstream_tls_ja4", func(req_handle int32, ja4_out int32, ja4_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_ja4(req_handle, ja4_out, ja4_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_ja4", safeWrap3(i, "downstream_tls_ja4", func(ja4_out int32, ja4_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_ja4(i.downstreamRequestHandle, ja4_out, ja4_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_protocol", safeWrap4(i, "downstream_tls_protocol", func(req_handle int32, protocol_out int32, protocol_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_protocol(req_handle, protocol_out, protocol_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_protocol", safeWrap3(i, "downstream_tls_protocol", func(protocol_out int32, protocol_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_protocol(i.downstreamRequestHandle, protocol_out, protocol_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_cipher_openssl_name", safeWrap4(i, "downstream_tls_cipher_openssl_name", func(req_handle int32, cipher_out int32, cipher_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_cipher_openssl_name(req_handle, cipher_out, cipher_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_cipher_openssl_name", safeWrap3(i, "downstream_tls_cipher_openssl_name", func(cipher_out int32, cipher_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_cipher_openssl_name(i.downstreamRequestHandle, cipher_out, cipher_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_hello", safeWrap4(i, "downstream_tls_client_hello", func(req_handle int32, client_hello_out int32, client_hello_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_client_hello(req_handle, client_hello_out, client_hello_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_hello", safeWrap3(i, "downstream_tls_client_hello", func(client_hello_out int32, client_hello_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_hello(i.downstreamRequestHandle, client_hello_out, client_hello_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_servername", safeWrap4(i, "downstream_tls_client_servername", func(req_handle int32, servername_out int32, servername_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_client_servername(req_handle, servername_out, servername_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_servername", safeWrap3(i, "downstream_tls_client_servername", func(servername_out int32, servername_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_servername(i.downstreamRequestHandle, servername_out, servername_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_raw_client_certificate", safeWrap4(i, "downstream_tls_raw_client_certificate", func(req_handle int32, cert_out int32, cert_max_len int32, nwritten_out int32) int32 {
-		return i.xqd_http_downstream_tls_raw_client_certificate(req_handle, cert_out, cert_max_len, nwritten_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_raw_client_certificate", safeWrap3(i, "downstream_tls_raw_client_certificate", func(cert_out int32, cert_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_tls_raw_client_certificate(i.downstreamRequestHandle, cert_out, cert_max_len, nwritten_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_cert_verify_result", safeWrap2(i, "downstream_tls_client_cert_verify_result", func(req_handle int32, verify_result_out int32) int32 {
-		return i.xqd_http_downstream_tls_client_cert_verify_result(req_handle, verify_result_out)
+	_ = linker.FuncWrap("fastly_http_req", "downstream_tls_client_cert_verify_result", safeWrap1(i, "downstream_tls_client_cert_verify_result", func(verify_result_out int32) int32 {
+		return i.xqd_http_downstream_tls_client_cert_verify_result(i.downstreamRequestHandle, verify_result_out)
 	}))
 
 	// xqd_response.go
