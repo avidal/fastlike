@@ -6,12 +6,53 @@ fastlike is a Go implementation of the Fastly Compute@Edge XQD ABI using `wasmti
 a `http.Handler` for you to use. It allows you to run Fastly Compute@Edge compatible WebAssembly
 programs locally for testing and development purposes.
 
+## Building
+
+Fastlike includes a Makefile for common tasks:
+
+```bash
+# Build the fastlike binary
+make build
+
+# Run all tests
+make test
+
+# Run the fastlike proxy
+make run WASM=app.wasm BACKEND=localhost:8000
+
+# With named backend and verbosity
+make run WASM=app.wasm BACKEND=example=localhost:8000 ARGS='-v 2'
+
+# Build test wasm programs
+make build-test-wasm
+
+# Format and lint
+make fmt
+make lint
+
+# Clean build artifacts
+make clean
+
+# Display all available commands
+make help
+```
+
+Or build directly with Go:
+
+```bash
+go build ./cmd/fastlike
+```
+
 ## Usage
 
 The example proxy implementation in `cmd/fastlike` can be run with:
 
-```
-$ go run ./cmd/fastlike -wasm <wasmfile> -backend <proxy address>
+```bash
+# Using Go directly
+go run ./cmd/fastlike -wasm <wasmfile> -backend <proxy address>
+
+# Or using Make
+make run WASM=<wasmfile> BACKEND=<proxy address>
 ```
 
 ### Command Line Options
@@ -210,19 +251,28 @@ Fastlike includes a comprehensive test suite with spec tests that verify XQD ABI
 
 ```bash
 # Run all tests
+make test
+# or
 go test ./...
 
 # Run spec tests with default wasm program
-cd specs
-go test
+make test-spec
+# or
+cd specs && go test
 
 # Run spec tests with a custom wasm program
+make test-spec-custom WASM=path/to/app.wasm
+# or
 go test ./specs -wasm path/to/app.wasm
 
-# Build the spec runner
-cd specs
-go test -c . -o spec-runner
+# Build the spec runner binary
+make build-spec-runner
+# or
+cd specs && go test -c . -o spec-runner
 ./spec-runner -test.v -wasm app.wasm
+
+# Build test wasm programs
+make build-test-wasm
 ```
 
 The spec tests use guest WebAssembly programs to verify that both the host implementation and guest
@@ -231,4 +281,4 @@ integration work correctly together.
 ## Requirements
 
 - Go 1.23 or later
-- `github.com/bytecodealliance/wasmtime-go v1.0.0` for WebAssembly execution
+- `github.com/bytecodealliance/wasmtime-go v37.0.0` for WebAssembly execution
