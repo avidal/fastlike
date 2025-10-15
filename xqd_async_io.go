@@ -42,16 +42,32 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 
 	cases := make([]selectCase, 0, len(handles))
 	for idx, handle := range handles {
+		var ch <-chan struct{}
+
+		// Try as async item handle first
 		asyncItem := i.asyncItems.Get(int(handle))
-		if asyncItem == nil {
-			i.abilog.Printf("async_io_select: invalid async item handle=%d at index=%d", handle, idx)
-			return XqdErrInvalidHandle
+		if asyncItem != nil {
+			ch = i.getAsyncItemChannel(asyncItem)
+		} else {
+			// Try as pending request handle
+			pr := i.pendingRequests.Get(int(handle))
+			if pr != nil {
+				ch = pr.done
+			} else {
+				// Try as body handle (for streaming writes - always ready)
+				body := i.bodies.Get(int(handle))
+				if body != nil {
+					// Body handles are always ready (no backpressure in our implementation)
+					// Create a closed channel to indicate immediate readiness
+					bodyCh := make(chan struct{})
+					close(bodyCh)
+					ch = bodyCh
+				}
+			}
 		}
 
-		// Get the channel to wait on based on the item type
-		ch := i.getAsyncItemChannel(asyncItem)
 		if ch == nil {
-			i.abilog.Printf("async_io_select: unable to get channel for handle=%d at index=%d", handle, idx)
+			i.abilog.Printf("async_io_select: invalid handle=%d at index=%d", handle, idx)
 			return XqdErrInvalidHandle
 		}
 
@@ -112,27 +128,50 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 
 // xqd_async_io_is_ready checks if an async operation is ready (non-blocking)
 // Returns 1 if ready, 0 if not
+// Handles can be: async item handles, pending request handles, or body handles
 func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32 {
 	i.abilog.Printf("async_io_is_ready: handle=%d", handle)
 
+	// Try as async item handle first
 	asyncItem := i.asyncItems.Get(int(handle))
-	if asyncItem == nil {
-		i.abilog.Printf("async_io_is_ready: invalid async item handle=%d", handle)
-		return XqdErrInvalidHandle
+	if asyncItem != nil {
+		ready := i.isAsyncItemReady(asyncItem)
+		i.abilog.Printf("async_io_is_ready: async item handle=%d ready=%v", handle, ready)
+		if ready {
+			i.memory.PutUint32(1, int64(is_ready_out))
+		} else {
+			i.memory.PutUint32(0, int64(is_ready_out))
+		}
+		return XqdStatusOK
 	}
 
-	// Check readiness based on the item type
-	ready := i.isAsyncItemReady(asyncItem)
+	// Try as pending request handle
+	pr := i.pendingRequests.Get(int(handle))
+	if pr != nil {
+		ready := pr.IsReady()
+		i.abilog.Printf("async_io_is_ready: pending request handle=%d ready=%v", handle, ready)
+		if ready {
+			i.memory.PutUint32(1, int64(is_ready_out))
+		} else {
+			i.memory.PutUint32(0, int64(is_ready_out))
+		}
+		return XqdStatusOK
+	}
 
-	i.abilog.Printf("async_io_is_ready: handle=%d ready=%v", handle, ready)
-
-	if ready {
+	// Try as body handle (for streaming writes - always ready in our implementation)
+	body := i.bodies.Get(int(handle))
+	if body != nil {
+		// For body handles, we don't implement true async streaming with backpressure
+		// In a real implementation, this would check if the body can accept more writes
+		// For now, we report bodies as always ready
+		i.abilog.Printf("async_io_is_ready: body handle=%d ready=true (always ready)", handle)
 		i.memory.PutUint32(1, int64(is_ready_out))
-	} else {
-		i.memory.PutUint32(0, int64(is_ready_out))
+		return XqdStatusOK
 	}
 
-	return XqdStatusOK
+	// Handle not found in any registry
+	i.abilog.Printf("async_io_is_ready: invalid handle=%d (not found in any registry)", handle)
+	return XqdErrInvalidHandle
 }
 
 // getAsyncItemChannel returns a channel that closes when the async item is ready
