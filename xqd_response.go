@@ -21,6 +21,12 @@ func (i *Instance) xqd_resp_status_set(handle int32, status int32) int32 {
 		return XqdErrInvalidHandle
 	}
 
+	// Validate HTTP status code (must be in range 100-999)
+	if status < 100 || status > 999 {
+		i.abilog.Printf("resp_status_set: invalid status code %d (must be 100-999)", status)
+		return XqdErrInvalidArgument
+	}
+
 	i.abilog.Printf("resp_status_set: handle=%d status=%d", handle, status)
 
 	w.StatusCode = int(status)
@@ -40,27 +46,33 @@ func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 }
 
 func (i *Instance) xqd_resp_version_set(handle int32, version int32) int32 {
-	i.abilog.Printf("resp_version_set: handle=%d version=%d", handle, version)
-
-	if i.responses.Get(int(handle)) == nil {
+	w := i.responses.Get(int(handle))
+	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	if int32(version) != Http11 {
-		i.abilog.Printf("resp_version_set: unsupported version=%d", version)
+	// Validate that the version is one of the supported HTTP versions
+	if version != Http09 && version != Http10 && version != Http11 {
+		i.abilog.Printf("resp_version_set: invalid version %d", version)
+		return XqdErrInvalidArgument
 	}
 
+	i.abilog.Printf("resp_version_set: handle=%d version=%d", handle, version)
+
+	// Store the version in the response handle
+	w.version = version
 	return XqdStatusOK
 }
 
 func (i *Instance) xqd_resp_version_get(handle int32, version_out int32) int32 {
-	if i.responses.Get(int(handle)) == nil {
+	w := i.responses.Get(int(handle))
+	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	i.abilog.Printf("resp_version_get: handle=%d version=%d", handle, Http11)
+	i.abilog.Printf("resp_version_get: handle=%d version=%d", handle, w.version)
 
-	i.memory.PutUint32(uint32(Http11), int64(version_out))
+	i.memory.PutUint32(uint32(w.version), int64(version_out))
 	return XqdStatusOK
 }
 
@@ -83,10 +95,58 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
+func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		return XqdErrInvalidHandle
+	}
+
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("resp_header_value_get: header name too long: %d bytes (max 65535)\n", name_size)
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrInvalidArgument
+	}
+
+	buf := make([]byte, name_size)
+	_, err := i.memory.ReadAt(buf, int64(name_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	header := http.CanonicalHeaderKey(string(buf))
+
+	i.abilog.Printf("resp_header_value_get: handle=%d header=%q\n", handle, header)
+
+	value := w.Header.Get(header)
+
+	// Always write the length needed
+	i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
+
+	// Check if buffer is large enough
+	if int(maxlen) < len(value) {
+		return XqdErrBufferLength
+	}
+
+	// Write the value to memory
+	_, err = i.memory.WriteAt([]byte(value), int64(addr))
+	if err != nil {
+		return XqdError
+	}
+
+	return XqdStatusOK
+}
+
 func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_size int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
+	}
+
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("resp_header_remove: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
 	}
 
 	name := make([]byte, name_size)
@@ -95,7 +155,15 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 		return XqdError
 	}
 
-	w.Header.Del(string(name))
+	header := http.CanonicalHeaderKey(string(name))
+
+	// Check if the header exists before removing
+	if w.Header.Get(header) == "" {
+		i.abilog.Printf("resp_header_remove: header %q not found\n", header)
+		return XqdErrInvalidArgument
+	}
+
+	w.Header.Del(header)
 
 	return XqdStatusOK
 }
@@ -104,6 +172,12 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
+	}
+
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("resp_header_insert: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
 	}
 
 	name := make([]byte, name_size)
@@ -135,6 +209,12 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
+	}
+
+	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
+	if name_size > 65535 {
+		i.abilog.Printf("resp_header_append: header name too long: %d bytes (max 65535)\n", name_size)
+		return XqdErrInvalidArgument
 	}
 
 	name := make([]byte, name_size)

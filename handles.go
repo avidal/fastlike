@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // RequestHandle is an http.Request with extra metadata
@@ -38,8 +39,14 @@ func (rhs *RequestHandles) Get(id int) *RequestHandle {
 
 // New creates a new RequestHandle and returns its handle id and the handle itself.
 func (rhs *RequestHandles) New() (int, *RequestHandle) {
+	// Parse "/" as the default URL
+	defaultURL, _ := url.Parse("/")
 	rh := &RequestHandle{
-		Request: &http.Request{},
+		Request: &http.Request{
+			Method: http.MethodGet, // Default method is GET
+			URL:    defaultURL,
+			Header: http.Header{},
+		},
 		version: 2, // Http11 = 2
 	}
 	rhs.handles = append(rhs.handles, rh)
@@ -52,6 +59,8 @@ type ResponseHandle struct {
 	*http.Response
 	// RemoteAddr is the remote address of the backend that handled the request
 	RemoteAddr string
+	// version stores the HTTP version (Http09, Http10, or Http11), defaults to Http11
+	version int32
 }
 
 // ResponseHandles is a slice of ResponseHandle with functions to get and create
@@ -70,7 +79,10 @@ func (rhs *ResponseHandles) Get(id int) *ResponseHandle {
 
 // New creates a new ResponseHandle and returns its handle id and the handle itself.
 func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
-	rh := &ResponseHandle{Response: &http.Response{StatusCode: 200}}
+	rh := &ResponseHandle{
+		Response: &http.Response{StatusCode: 200},
+		version:  2, // Http11 = 2
+	}
 	rhs.handles = append(rhs.handles, rh)
 	return len(rhs.handles) - 1, rh
 }

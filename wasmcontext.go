@@ -371,10 +371,10 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	}))
 
 	_ = linker.FuncWrap("fastly_http_resp", "header_value_get", safeWrap6(i, "header_value_get", func(handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, nwritten_out int32) int32 {
-		return i.wasm6("header_value_get")(handle, name_addr, name_size, value_addr, value_size, nwritten_out)
+		return i.xqd_resp_header_value_get(handle, name_addr, name_size, value_addr, value_size, nwritten_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_resp", "header_remove", safeWrap3(i, "header_remove", func(handle int32, name_addr int32, name_size int32) int32 {
-		return i.wasm3("header_remove")(handle, name_addr, name_size)
+		return i.xqd_resp_header_remove(handle, name_addr, name_size)
 	}))
 
 	// End XQD Stubbing -}}}
