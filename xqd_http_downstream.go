@@ -642,10 +642,10 @@ func (i *Instance) xqd_http_downstream_server_ip_addr(req_handle int32, addr_oct
 }
 
 // xqd_http_downstream_client_ddos_detected checks if DDoS attack was detected for this client.
-// Returns 0 (false) or 1 (true).
+// Writes 0 (false) or 1 (true) to ddos_detected_out pointer.
 //
-// Signature: (handle: RequestHandle) -> Result<ddos_detected, FastlyStatus>
-func (i *Instance) xqd_http_downstream_client_ddos_detected(req_handle int32) int32 {
+// Signature: (handle: RequestHandle, ddos_detected_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_client_ddos_detected(req_handle int32, ddos_detected_out int32) int32 {
 	i.abilog.Printf("http_downstream_client_ddos_detected: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -655,9 +655,10 @@ func (i *Instance) xqd_http_downstream_client_ddos_detected(req_handle int32) in
 	}
 
 	// DDoS detection is not implemented in local testing
-	// Always return 0 (false)
+	// Always write 0 (false) to the output pointer
+	i.memory.WriteUint32(ddos_detected_out, 0)
 	i.abilog.Printf("http_downstream_client_ddos_detected: DDoS detection not available (always returns false)")
-	return 0 // false
+	return XqdStatusOK
 }
 
 // xqd_http_downstream_compliance_region returns the compliance region for the downstream connection.
@@ -700,10 +701,10 @@ func (i *Instance) xqd_http_downstream_compliance_region(
 }
 
 // xqd_http_downstream_fastly_key_is_valid checks if the request has a valid Fastly-Key for purging.
-// Returns 0 (false) or 1 (true).
+// Writes 0 (false) or 1 (true) to is_valid_out pointer.
 //
-// Signature: (handle: RequestHandle) -> Result<is_valid, FastlyStatus>
-func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32) int32 {
+// Signature: (handle: RequestHandle, is_valid_out: *mut u32) -> FastlyStatus
+func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32, is_valid_out int32) int32 {
 	i.abilog.Printf("http_downstream_fastly_key_is_valid: req=%d", req_handle)
 
 	req := i.requests.Get(int(req_handle))
@@ -713,7 +714,8 @@ func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32) int
 	}
 
 	// In local testing, we don't validate Fastly-Key headers
-	// Always return 1 (true) to allow purge operations
+	// Always write 1 (true) to allow purge operations
+	i.memory.WriteUint32(is_valid_out, 1)
 	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns true)")
-	return 1 // true
+	return XqdStatusOK
 }

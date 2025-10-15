@@ -11,9 +11,10 @@ import (
 // This function checks whether the request method is GET or HEAD, and considers
 // requests with other methods uncacheable.
 //
-// Returns 1 for cacheable, 0 for not cacheable
+// Writes 1 for cacheable, 0 for not cacheable to is_cacheable_out pointer
 func (i *Instance) xqd_http_cache_is_request_cacheable(
 	req_handle int32,
+	is_cacheable_out int32,
 ) int32 {
 	i.abilog.Printf("http_cache_is_request_cacheable: handle=%d", req_handle)
 
@@ -24,13 +25,19 @@ func (i *Instance) xqd_http_cache_is_request_cacheable(
 
 	// Per RFC 9111 conservative semantics: only GET and HEAD are cacheable
 	method := req.Method
+	var isCacheable uint32
 	if method == "GET" || method == "HEAD" {
 		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> cacheable", method)
-		return 1 // cacheable
+		isCacheable = 1
+	} else {
+		i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable", method)
+		isCacheable = 0
 	}
 
-	i.abilog.Printf("http_cache_is_request_cacheable: method=%s -> not cacheable", method)
-	return 0 // not cacheable
+	// Write result to guest memory
+	i.memory.WriteUint32(is_cacheable_out, isCacheable)
+
+	return XqdStatusOK
 }
 
 // xqd_http_cache_get_suggested_cache_key generates a cache key based on the request

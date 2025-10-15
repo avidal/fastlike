@@ -11,7 +11,7 @@ func TestHttpCacheIsRequestCacheable(t *testing.T) {
 	tests := []struct {
 		name     string
 		method   string
-		expected int32
+		expected uint32
 	}{
 		{"GET is cacheable", "GET", 1},
 		{"HEAD is cacheable", "HEAD", 1},
@@ -25,6 +25,7 @@ func TestHttpCacheIsRequestCacheable(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inst := &Instance{
 				requests: &RequestHandles{},
+				memory:   &Memory{ByteMemory(make([]byte, 4096))},
 				abilog:   log.New(io.Discard, "", 0),
 			}
 
@@ -33,11 +34,21 @@ func TestHttpCacheIsRequestCacheable(t *testing.T) {
 			rh.Method = tt.method
 			rh.URL, _ = url.Parse("https://example.com/path")
 
+			// Allocate space for result
+			resultPtr := int32(0)
+
 			// Call is_request_cacheable
-			result := inst.xqd_http_cache_is_request_cacheable(int32(rhid))
+			status := inst.xqd_http_cache_is_request_cacheable(int32(rhid), resultPtr)
+
+			if status != XqdStatusOK {
+				t.Fatalf("xqd_http_cache_is_request_cacheable(%s) status = %d, want %d", tt.method, status, XqdStatusOK)
+			}
+
+			// Read the result from memory
+			result := inst.memory.Uint32(int64(resultPtr))
 
 			if result != tt.expected {
-				t.Errorf("xqd_http_cache_is_request_cacheable(%s) = %d, want %d", tt.method, result, tt.expected)
+				t.Errorf("xqd_http_cache_is_request_cacheable(%s) result = %d, want %d", tt.method, result, tt.expected)
 			}
 		})
 	}
@@ -46,14 +57,16 @@ func TestHttpCacheIsRequestCacheable(t *testing.T) {
 func TestHttpCacheIsRequestCacheableInvalidHandle(t *testing.T) {
 	inst := &Instance{
 		requests: &RequestHandles{},
+		memory:   &Memory{ByteMemory(make([]byte, 4096))},
 		abilog:   log.New(io.Discard, "", 0),
 	}
 
 	// Call with invalid handle
-	result := inst.xqd_http_cache_is_request_cacheable(999)
+	resultPtr := int32(0)
+	status := inst.xqd_http_cache_is_request_cacheable(999, resultPtr)
 
-	if result != XqdErrInvalidHandle {
-		t.Errorf("xqd_http_cache_is_request_cacheable(invalid) = %d, want %d", result, XqdErrInvalidHandle)
+	if status != XqdErrInvalidHandle {
+		t.Errorf("xqd_http_cache_is_request_cacheable(invalid) = %d, want %d", status, XqdErrInvalidHandle)
 	}
 }
 
