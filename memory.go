@@ -35,21 +35,26 @@ func (m ByteMemory) Cap() int {
 	return cap(m)
 }
 
-// wasmMemory is a MemorySlice implementation that wraps a wasmtime.Memory
+// wasmMemory is a MemorySlice implementation that wraps a wasmtime.Memory.
+// It provides access to the wasm linear memory via a byte slice interface.
 type wasmMemory struct {
 	store *wasmtime.Store
 	mem   *wasmtime.Memory
 	slice []byte
 }
 
+// Len returns the current length of the wasm memory.
 func (m *wasmMemory) Len() int {
 	return len(m.Data())
 }
 
+// Cap returns the capacity of the wasm memory.
 func (m *wasmMemory) Cap() int {
 	return cap(m.Data())
 }
 
+// Data returns the underlying byte slice for the wasm memory.
+// It rebuilds the slice if the memory has grown since the last call.
 func (m *wasmMemory) Data() []byte {
 	// If we have a pre-built slice and that slice capacity is the same as the current data size,
 	// return it. Otherwise, rebuild the slice.

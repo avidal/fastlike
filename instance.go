@@ -193,6 +193,8 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	return i
 }
 
+// reset cleans up an instance after serving a request, preparing it for reuse.
+// It closes all open handles, releases resources, and resets state to initial values.
 func (i *Instance) reset() {
 	// once i is done, drop everything off of it
 	for _, r := range i.requests.handles {
@@ -246,6 +248,8 @@ func (i *Instance) reset() {
 	i.executionStartTime = time.Time{}
 }
 
+// setup initializes a fresh wasm instance for a new request.
+// It creates a new store, configures WASI, links all host functions, and instantiates the module.
 func (i *Instance) setup() {
 	// Ensure critical fields are initialized
 	if i.wasmctx == nil || i.wasmctx.engine == nil || i.wasmctx.module == nil {
