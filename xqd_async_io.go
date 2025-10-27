@@ -4,6 +4,9 @@ import (
 	"time"
 )
 
+// neverReadyChan is a sentinel channel that never closes, reused to avoid memory leaks
+var neverReadyChan = make(chan struct{})
+
 // xqd_async_io_select waits for one of multiple async operations to complete.
 // Monitors a list of async handles and returns the index of the first one that becomes ready.
 // Returns the index (0-based) of the ready item, or u32::MAX (0xFFFFFFFF) on timeout.
@@ -246,9 +249,9 @@ func (i *Instance) getBodyChannel(body *BodyHandle) <-chan struct{} {
 			close(ch)
 			return ch
 		}
-		// Not ready - return a channel that never closes
+		// Not ready - return a sentinel channel that never closes
 		// In practice, the guest should poll is_ready
-		return make(chan struct{})
+		return neverReadyChan
 	}
 
 	// Non-streaming bodies are always ready

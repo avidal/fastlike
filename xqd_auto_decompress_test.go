@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -82,7 +83,7 @@ func TestAutoDecompression(t *testing.T) {
 			if tt.encoding != "" {
 				resp.Header.Set("Content-Encoding", tt.encoding)
 			}
-			resp.Header.Set("Content-Length", string(rune(len(body))))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 
 			// Apply auto-decompression
 			var encodings uint32 = 0

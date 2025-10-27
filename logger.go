@@ -103,7 +103,12 @@ func (w *PrefixWriter) Write(data []byte) (n int, err error) {
 	msg = append(msg, data...)
 
 	if n, err := w.Writer.Write(msg); err != nil {
-		return n, err
+		// Return only data bytes written, excluding prefix
+		prefixLen := len(w.prefix) + 2 // +2 for ": "
+		if n <= prefixLen {
+			return 0, err
+		}
+		return n - prefixLen, err
 	}
 
 	return l, nil

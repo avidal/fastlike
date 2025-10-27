@@ -150,6 +150,7 @@ func (f *dictionaryFlags) Set(v string) error {
 	if err != nil {
 		return fmt.Errorf("error opening dictionary file %s, got %s", filename, err.Error())
 	}
+	defer fd.Close()
 
 	content := map[string]string{}
 	if err := json.NewDecoder(fd).Decode(&content); err != nil {
