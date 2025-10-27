@@ -25,6 +25,9 @@ type Fastlike struct {
 	wasmfile string
 	// instanceOpts are the original options passed to New(), applied to all instances
 	instanceOpts []Option
+
+	// stopChan is used to signal cleanup of background goroutines
+	stopChan chan struct{}
 }
 
 // New returns a new Fastlike ready to create new instances from
@@ -32,6 +35,7 @@ func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 	f := &Fastlike{
 		wasmfile:     wasmfile,
 		instanceOpts: instanceOpts,
+		stopChan:     make(chan struct{}),
 	}
 
 	// Read the wasm file from disk
@@ -75,12 +79,19 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	instances := f.instances
 	f.mu.RUnlock()
 
-	select {
-	case instances <- i:
-		// Successfully returned to pool
-	default:
-		// Pool is full, instance will be garbage collected
-	}
+	// Protect against sending to a channel that might have been replaced during reload
+	func() {
+		defer func() {
+			// Recover from panic if channel was replaced during reload
+			recover()
+		}()
+		select {
+		case instances <- i:
+			// Successfully returned to pool
+		default:
+			// Pool is full, instance will be garbage collected
+		}
+	}()
 }
 
 // Warmup pre-creates n instances and adds them to the pool.
@@ -156,21 +167,38 @@ func (f *Fastlike) Reload() error {
 // EnableReloadOnSIGHUP sets up a signal handler that reloads the wasm module
 // when a SIGHUP signal is received. This is useful for hot-reloading during development
 // or when using tools like watchexec to monitor file changes.
-// The goroutine runs in the background until the program exits.
+// The goroutine runs in the background until Close() is called or the program exits.
 func (f *Fastlike) EnableReloadOnSIGHUP() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGHUP)
 
 	go func() {
-		for range sigChan {
-			log.Printf("[fastlike] Received SIGHUP, reloading wasm module from %s", f.wasmfile)
-			if err := f.Reload(); err != nil {
-				log.Printf("[fastlike] Reload failed: %v", err)
-			} else {
-				log.Printf("[fastlike] Reload completed successfully")
+		defer signal.Stop(sigChan)
+		for {
+			select {
+			case <-sigChan:
+				log.Printf("[fastlike] Received SIGHUP, reloading wasm module from %s", f.wasmfile)
+				if err := f.Reload(); err != nil {
+					log.Printf("[fastlike] Reload failed: %v", err)
+				} else {
+					log.Printf("[fastlike] Reload completed successfully")
+				}
+			case <-f.stopChan:
+				return
 			}
 		}
 	}()
+}
+
+// Close stops any background goroutines (such as the SIGHUP handler) and releases resources.
+// It is safe to call Close multiple times.
+func (f *Fastlike) Close() {
+	select {
+	case <-f.stopChan:
+		// Already closed
+	default:
+		close(f.stopChan)
+	}
 }
 
 // Instantiate returns an Instance ready to serve requests. It first tries to reuse

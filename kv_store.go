@@ -97,7 +97,10 @@ func (kvs *KVStore) Lookup(key string) (*ObjectValue, error) {
 		// Remove expired entry (upgrade to write lock)
 		kvs.mu.RUnlock()
 		kvs.mu.Lock()
-		delete(kvs.objects, key)
+		// Recheck after acquiring write lock - entry may have been modified
+		if obj, exists := kvs.objects[key]; exists && obj.IsExpired() {
+			delete(kvs.objects, key)
+		}
 		kvs.mu.Unlock()
 		kvs.mu.RLock()
 		return nil, nil
