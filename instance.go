@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytecodealliance/wasmtime-go/v37"
+	"github.com/bytecodealliance/wasmtime-go/v38"
 )
 
 // Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it.
