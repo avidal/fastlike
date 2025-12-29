@@ -32,6 +32,11 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 	// Check if this is a streaming body (used with async streaming requests)
 	if body.IsStreaming() {
+		if body_end == BodyWriteEndFront {
+			i.abilog.Printf("body_write: front-write not supported on streaming bodies")
+			return XqdErrUnsupported
+		}
+
 		// Read data from guest memory
 		data := make([]byte, size)
 		_, err := i.memory.ReadAt(data, int64(addr))
@@ -48,10 +53,8 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 		i.memory.PutUint32(uint32(n), int64(nwritten_out))
 
-		// If body_end is set, close the streaming body (signals completion)
-		if body_end == BodyWriteEndBack || body_end == BodyWriteEndFront {
-			_ = body.CloseStreaming()
-		}
+		// Note: The body_end parameter indicates write POSITION (back vs front),
+		// NOT whether to close the stream. The stream is closed via body_close.
 
 		return XqdStatusOK
 	}
