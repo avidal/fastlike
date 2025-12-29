@@ -14,9 +14,11 @@ const (
 	XqdErrHttpParse       int32 = 7  // HTTP parsing error
 	XqdErrHttpUserInvalid int32 = 8  // Invalid HTTP user input
 	XqdErrHttpIncomplete  int32 = 9  // Incomplete HTTP message
-	XqdErrNone            int32 = 10 // No value/data available
-	XqdErrAgain           int32 = 11 // Operation would block (try again)
-	XqdErrLimitExceeded   int32 = 12 // Resource limit exceeded
+	XqdErrNone              int32 = 10 // No value/data available
+	XqdErrHttpHeadTooLarge  int32 = 11 // HTTP header too large
+	XqdErrHttpInvalidStatus int32 = 12 // Invalid HTTP status code
+	XqdErrLimitExceeded     int32 = 13 // Resource limit exceeded
+	XqdErrAgain             int32 = 14 // Operation would block (try again)
 )
 
 // HandleInvalid is returned when attempting to open a resource that doesn't exist
