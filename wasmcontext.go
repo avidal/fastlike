@@ -541,6 +541,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_resp", "get_addr_dest_port", safeWrap2(i, "get_addr_dest_port", func(handle int32, port_out int32) int32 {
 		return i.xqd_resp_get_addr_dest_port(handle, port_out)
 	}))
+	_ = linker.FuncWrap("fastly_http_resp", "send_informational_response", safeWrap2(i, "send_informational_response", func(resp_handle int32, status int32) int32 {
+		return i.xqd_resp_send_informational_response(resp_handle, status)
+	}))
 
 	// xqd_body.go
 	_ = linker.FuncWrap("fastly_http_body", "new", safeWrap1(i, "new", func(handle_out int32) int32 {
@@ -748,10 +751,34 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_backend", "get_tcp_keepalive_time", safeWrap3(i, "get_tcp_keepalive_time", func(backend_addr int32, backend_size int32, timeout_out int32) int32 {
 		return i.xqd_backend_get_tcp_keepalive_time(backend_addr, backend_size, timeout_out)
 	}))
+	_ = linker.FuncWrap("fastly_backend", "is_ipv6_preferred", safeWrap3(i, "is_ipv6_preferred", func(backend_addr int32, backend_size int32, is_preferred_out int32) int32 {
+		return i.xqd_backend_is_ipv6_preferred(backend_addr, backend_size, is_preferred_out)
+	}))
+	_ = linker.FuncWrap("fastly_backend", "get_max_connections", safeWrap3(i, "get_max_connections", func(backend_addr int32, backend_size int32, max_out int32) int32 {
+		return i.xqd_backend_get_max_connections(backend_addr, backend_size, max_out)
+	}))
+	_ = linker.FuncWrap("fastly_backend", "get_max_use", safeWrap3(i, "get_max_use", func(backend_addr int32, backend_size int32, max_out int32) int32 {
+		return i.xqd_backend_get_max_use(backend_addr, backend_size, max_out)
+	}))
+	_ = linker.FuncWrap("fastly_backend", "get_max_lifetime_ms", safeWrap3(i, "get_max_lifetime_ms", func(backend_addr int32, backend_size int32, max_out int32) int32 {
+		return i.xqd_backend_get_max_lifetime_ms(backend_addr, backend_size, max_out)
+	}))
 
 	// xqd_compute_runtime.go
 	_ = linker.FuncWrap("fastly_compute_runtime", "get_vcpu_ms", safeWrap1(i, "get_vcpu_ms", func(vcpu_time_ms_out int32) int32 {
 		return i.xqd_compute_runtime_get_vcpu_ms(vcpu_time_ms_out)
+	}))
+	_ = linker.FuncWrap("fastly_compute_runtime", "get_sandbox_id", safeWrap3(i, "get_sandbox_id", func(sandbox_id_out int32, sandbox_id_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_compute_runtime_get_sandbox_id(sandbox_id_out, sandbox_id_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_compute_runtime", "get_trace_id", safeWrap3(i, "get_trace_id", func(trace_id_out int32, trace_id_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_compute_runtime_get_trace_id(trace_id_out, trace_id_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_compute_runtime", "get_service_version", safeWrap3(i, "get_service_version", func(version_out int32, version_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_compute_runtime_get_service_version(version_out, version_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_compute_runtime", "get_hostname", safeWrap3(i, "get_hostname", func(hostname_out int32, hostname_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_compute_runtime_get_hostname(hostname_out, hostname_max_len, nwritten_out)
 	}))
 
 	// xqd_cache.go

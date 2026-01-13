@@ -494,3 +494,34 @@ func (i *Instance) xqd_resp_get_addr_dest_port(handle int32, port_out int32) int
 	i.memory.PutUint16(uint16(port), int64(port_out))
 	return XqdStatusOK
 }
+
+// xqd_resp_send_informational_response sends an HTTP 1xx informational response.
+// Only 103 (Early Hints) is supported. Other 1xx status codes return XqdErrInvalidArgument.
+//
+// Note: In local testing, 103 Early Hints responses are logged but not actually sent.
+func (i *Instance) xqd_resp_send_informational_response(resp_handle int32, status int32) int32 {
+	i.abilog.Printf("resp_send_informational_response: resp_handle=%d status=%d", resp_handle, status)
+
+	// Only 103 Early Hints is supported
+	if status != 103 {
+		i.abilog.Printf("resp_send_informational_response: only 103 Early Hints is supported, got %d", status)
+		return XqdErrInvalidArgument
+	}
+
+	// Get the response handle to read headers
+	w := i.responses.Get(int(resp_handle))
+	if w == nil {
+		i.abilog.Printf("resp_send_informational_response: invalid handle %d", resp_handle)
+		return XqdErrInvalidHandle
+	}
+
+	// Log the 103 response (not sent in local testing)
+	i.log.Printf("103 Early Hints response logged but not sent to client")
+	for name, values := range w.Header {
+		for _, value := range values {
+			i.log.Printf("  %s: %s", name, value)
+		}
+	}
+
+	return XqdStatusOK
+}

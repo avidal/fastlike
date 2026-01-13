@@ -44,6 +44,12 @@ type Backend struct {
 	UseSSL        bool
 	SSLMinVersion uint32 // TLS version constant
 	SSLMaxVersion uint32 // TLS version constant
+
+	// Connection pool settings
+	PreferIPv6    bool   // Prefer IPv6 addresses over IPv4 when resolving backends
+	MaxConnections uint32 // Maximum connections in pool (0 = unlimited)
+	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
+	MaxLifetimeMs  uint32 // Upper bound for how long a keepalive connection can remain open (0 = unlimited)
 }
 
 // addBackend registers a backend with the given name and configuration.
@@ -143,6 +149,16 @@ func (b *Backend) CreateTransport() *http.Transport {
 		transport.ResponseHeaderTimeout = time.Duration(b.FirstByteTimeoutMs) * time.Millisecond
 	}
 
+	// Apply connection pool settings
+	if b.MaxConnections > 0 {
+		transport.MaxIdleConns = int(b.MaxConnections)
+		transport.MaxIdleConnsPerHost = int(b.MaxConnections)
+	}
+
+	if b.MaxLifetimeMs > 0 {
+		transport.IdleConnTimeout = time.Duration(b.MaxLifetimeMs) * time.Millisecond
+	}
+
 	return transport
 }
 
@@ -174,4 +190,10 @@ type DynamicBackendConfig struct {
 	TCPKeepaliveIntervalSecs uint32 // TCP keepalive interval in seconds
 	TCPKeepaliveProbes       uint32 // Number of TCP keepalive probes
 	TCPKeepaliveTimeSecs     uint32 // TCP keepalive time in seconds
+
+	// Connection pool settings
+	PreferIPv6     uint32 // Prefer IPv6 over IPv4 (0 or 1)
+	MaxConnections uint32 // Max connections in pool (0 = unlimited)
+	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
+	MaxLifetimeMs  uint32 // Upper bound for keepalive connection lifetime (0 = unlimited)
 }
