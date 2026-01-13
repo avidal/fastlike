@@ -1735,8 +1735,10 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 		backend.TCPKeepaliveProbes = config.TCPKeepaliveProbes
 	}
 
+	// Create a transport with TLS and timeout settings applied
+	transport := backend.CreateTransport()
+
 	// Create a simple http.Handler for the backend
-	// For local testing, we use http.DefaultTransport to make actual HTTP requests
 	backend.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Update the request URL to point to the backend
 		r.URL.Scheme = backend.URL.Scheme
@@ -1748,8 +1750,8 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 			r.Header.Set("Host", backend.OverrideHost)
 		}
 
-		// Use http.DefaultTransport to make the actual request
-		resp, err := http.DefaultTransport.RoundTrip(r)
+		// Use the configured transport to make the actual request
+		resp, err := transport.RoundTrip(r)
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)

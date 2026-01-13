@@ -1,9 +1,12 @@
 package fastlike
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // Backend represents a complete backend configuration with all introspectable properties
@@ -83,6 +86,64 @@ func defaultBackend(name string) http.Handler {
 		msg := fmt.Sprintf(`Unknown backend '%s'. Did you configure your backends correctly?`, name)
 		_, _ = w.Write([]byte(msg))
 	})
+}
+
+// fastlyTLSVersionToGo converts Fastly TLS version constants to Go's tls package constants.
+func fastlyTLSVersionToGo(v uint32) uint16 {
+	switch v {
+	case TLSv10:
+		return tls.VersionTLS10
+	case TLSv11:
+		return tls.VersionTLS11
+	case TLSv12:
+		return tls.VersionTLS12
+	case TLSv13:
+		return tls.VersionTLS13
+	default:
+		return 0
+	}
+}
+
+// CreateTransport creates an http.Transport configured according to the backend's settings.
+func (b *Backend) CreateTransport() *http.Transport {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	if b.ConnectTimeoutMs > 0 {
+		transport.DialContext = (&net.Dialer{
+			Timeout:   time.Duration(b.ConnectTimeoutMs) * time.Millisecond,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+
+	if b.UseSSL || b.SSLMinVersion > 0 || b.SSLMaxVersion > 0 {
+		tlsConfig := &tls.Config{}
+
+		if b.SSLMinVersion > 0 {
+			tlsConfig.MinVersion = fastlyTLSVersionToGo(b.SSLMinVersion)
+		}
+		if b.SSLMaxVersion > 0 {
+			tlsConfig.MaxVersion = fastlyTLSVersionToGo(b.SSLMaxVersion)
+		}
+
+		transport.TLSClientConfig = tlsConfig
+	}
+
+	if b.FirstByteTimeoutMs > 0 {
+		transport.ResponseHeaderTimeout = time.Duration(b.FirstByteTimeoutMs) * time.Millisecond
+	}
+
+	return transport
 }
 
 // DynamicBackendConfig represents the configuration structure passed from guest code
