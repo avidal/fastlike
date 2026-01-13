@@ -10,6 +10,23 @@ import (
 	"time"
 )
 
+// KVStoreError represents a typed error for KV store operations
+type KVStoreError struct {
+	Code    uint32
+	Message string
+}
+
+func (e *KVStoreError) Error() string {
+	return e.Message
+}
+
+// KV store error constructors
+var (
+	ErrKVPreconditionFailed = &KVStoreError{Code: KvErrorPreconditionFailed, Message: "precondition failed"}
+	ErrKVBadRequest         = &KVStoreError{Code: KvErrorBadRequest, Message: "bad request"}
+	ErrKVInternalError      = &KVStoreError{Code: KvErrorInternalError, Message: "internal error"}
+)
+
 // ObjectValue represents a value stored in the KV store
 type ObjectValue struct {
 	Body       []byte     // The actual value bytes
@@ -140,10 +157,10 @@ func (kvs *KVStore) Insert(key string, value []byte, metadata string, ttl *time.
 	// Handle if_generation_match
 	if ifGenerationMatch != nil {
 		if !exists {
-			return 0, fmt.Errorf("precondition failed: key does not exist")
+			return 0, ErrKVPreconditionFailed
 		}
 		if existing.Generation != *ifGenerationMatch {
-			return 0, fmt.Errorf("precondition failed: generation mismatch")
+			return 0, ErrKVPreconditionFailed
 		}
 	}
 
@@ -154,7 +171,7 @@ func (kvs *KVStore) Insert(key string, value []byte, metadata string, ttl *time.
 		finalValue = value
 	case InsertModeAdd:
 		if exists && !existing.IsExpired() {
-			return 0, fmt.Errorf("key already exists")
+			return 0, ErrKVPreconditionFailed
 		}
 		finalValue = value
 	case InsertModeAppend:
