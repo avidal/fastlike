@@ -131,6 +131,8 @@ type BodyHandle struct {
 	// trailers are HTTP trailers that come after the body in chunked transfer encoding
 	trailers http.Header
 
+	trailersReady bool
+
 	// Streaming body support (for send_async_streaming XQD call)
 	isStreaming      bool
 	streamingWriter  *io.PipeWriter // writes go here from guest
