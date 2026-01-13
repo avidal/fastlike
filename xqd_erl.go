@@ -1,8 +1,6 @@
 package fastlike
 
 // xqd_erl_check_rate checks if adding delta to an entry would exceed the rate limit.
-// This is a stub implementation for local testing that always returns "not blocked" (0).
-// In production, this would check the rate counter and penalty box.
 // Returns 0 if not blocked, 1 if blocked.
 func (i *Instance) xqd_erl_check_rate(
 	rcPtr int32,
@@ -17,7 +15,7 @@ func (i *Instance) xqd_erl_check_rate(
 	ttl uint32,
 	blockedPtr int32, // out parameter
 ) int32 {
-	i.abilog.Printf("fastly_erl::check_rate (stub)")
+	i.abilog.Printf("fastly_erl::check_rate")
 
 	// Read and validate rate counter name
 	rateCounterNameBuf := make([]byte, rcLen)
@@ -33,6 +31,14 @@ func (i *Instance) xqd_erl_check_rate(
 		return XqdErrInvalidArgument
 	}
 
+	// Read entry name
+	entryBuf := make([]byte, entryLen)
+	_, err = i.memory.ReadAt(entryBuf, int64(entryPtr))
+	if err != nil {
+		return XqdError
+	}
+	entry := string(entryBuf)
+
 	// Read and validate penalty box name
 	penaltyBoxNameBuf := make([]byte, pbLen)
 	_, err = i.memory.ReadAt(penaltyBoxNameBuf, int64(pbPtr))
@@ -47,9 +53,8 @@ func (i *Instance) xqd_erl_check_rate(
 		return XqdErrInvalidArgument
 	}
 
-	// Stub implementation: always return "not blocked" for local testing
-	// This matches Viceroy's behavior
-	i.memory.PutUint32(0, int64(blockedPtr))
+	blocked := CheckRate(rateCounter, penaltyBox, entry, delta, window, limit, ttl)
+	i.memory.PutUint32(blocked, int64(blockedPtr))
 
 	return XqdStatusOK
 }
