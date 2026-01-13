@@ -1,18 +1,16 @@
 package fastlike
 
 import (
+	"reflect"
 	"time"
 )
-
-// neverReadyChan is a sentinel channel that never closes, reused to avoid memory leaks
-var neverReadyChan = make(chan struct{})
 
 // xqd_async_io_select waits for one of multiple async operations to complete.
 // Monitors a list of async handles and returns the index of the first one that becomes ready.
 // Returns the index (0-based) of the ready item, or u32::MAX (0xFFFFFFFF) on timeout.
 //
 // The function supports async items (KV operations, cache operations), pending requests, and body handles.
-// It uses goroutines to monitor each handle's completion channel concurrently.
+// Uses reflect.Select to properly wait on multiple channels without goroutine leaks.
 func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, timeout_ms int32, ready_idx_out int32) int32 {
 	i.abilog.Printf("async_io_select: handles_len=%d timeout_ms=%d", handles_len, timeout_ms)
 
@@ -41,13 +39,11 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 		handles[idx] = handle
 	}
 
-	// Build a list of channels to select on
-	type selectCase struct {
-		index   int
-		channel <-chan struct{}
-	}
+	// Build select cases for reflect.Select
+	// Map from select case index to original handle index
+	handleIndexes := make([]int, 0, len(handles))
+	selectCases := make([]reflect.SelectCase, 0, len(handles)+1)
 
-	cases := make([]selectCase, 0, len(handles))
 	for idx, handle := range handles {
 		ch := i.getHandleChannel(int(handle))
 		if ch == nil {
@@ -55,61 +51,42 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 			return XqdErrInvalidHandle
 		}
 
-		cases = append(cases, selectCase{
-			index:   idx,
-			channel: ch,
+		selectCases = append(selectCases, reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(ch),
 		})
+		handleIndexes = append(handleIndexes, idx)
 	}
 
-	// Check if any are already ready (non-blocking)
-	for _, c := range cases {
-		select {
-		case <-c.channel:
-			i.abilog.Printf("async_io_select: handle at index %d already ready", c.index)
-			i.memory.PutUint32(uint32(c.index), int64(ready_idx_out))
-			return XqdStatusOK
-		default:
-			// Not ready, continue
-		}
-	}
-
-	// None are ready yet, use select with timeout.
-	// We spawn a goroutine for each handle to monitor its channel.
-	// The first one to complete sends its index to doneCh.
-	doneCh := make(chan int, len(cases))
-
-	// Spawn goroutines to monitor each channel
-	for _, c := range cases {
-		go func(idx int, ch <-chan struct{}) {
-			<-ch
-			doneCh <- idx
-		}(c.index, c.channel)
+	// Add timeout case if timeout is specified
+	var timeoutCh <-chan time.Time
+	if timeout_ms > 0 {
+		timeoutCh = time.After(time.Duration(uint32(timeout_ms)) * time.Millisecond)
+		selectCases = append(selectCases, reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(timeoutCh),
+		})
 	}
 
 	// Pause CPU time tracking while waiting
 	i.pauseExecution()
 	defer i.resumeExecution()
 
-	// Wait for first ready or timeout
-	if timeout_ms == 0 {
-		// No timeout, wait indefinitely
-		doneIndex := <-doneCh
-		i.abilog.Printf("async_io_select: handle at index %d completed", doneIndex)
-		i.memory.PutUint32(uint32(doneIndex), int64(ready_idx_out))
+	// Use reflect.Select to wait on all channels without goroutine leaks
+	chosen, _, _ := reflect.Select(selectCases)
+
+	// Check if it was the timeout case
+	if timeout_ms > 0 && chosen == len(handleIndexes) {
+		i.abilog.Printf("async_io_select: timeout expired")
+		i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
 		return XqdStatusOK
-	} else {
-		// Wait with timeout
-		select {
-		case doneIndex := <-doneCh:
-			i.abilog.Printf("async_io_select: handle at index %d completed", doneIndex)
-			i.memory.PutUint32(uint32(doneIndex), int64(ready_idx_out))
-			return XqdStatusOK
-		case <-time.After(time.Duration(uint32(timeout_ms)) * time.Millisecond):
-			i.abilog.Printf("async_io_select: timeout expired")
-			i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
-			return XqdStatusOK
-		}
 	}
+
+	// Return the original handle index
+	handleIdx := handleIndexes[chosen]
+	i.abilog.Printf("async_io_select: handle at index %d completed", handleIdx)
+	i.memory.PutUint32(uint32(handleIdx), int64(ready_idx_out))
+	return XqdStatusOK
 }
 
 // xqd_async_io_is_ready checks if an async operation is ready (non-blocking).
@@ -124,7 +101,7 @@ func (i *Instance) xqd_async_io_is_ready(handle int32, is_ready_out int32) int32
 		return XqdErrInvalidHandle
 	}
 
-	// Non-blocking check if channel is ready
+	// Non-blocking check if channel is ready (closed channels return immediately)
 	select {
 	case <-ch:
 		i.abilog.Printf("async_io_is_ready: handle=%d ready=true", handle)
@@ -204,7 +181,6 @@ func (i *Instance) isAsyncItemReady(item *AsyncItemHandle) bool {
 		return false
 	}
 
-	// Non-blocking check
 	select {
 	case <-ch:
 		return true
@@ -239,19 +215,24 @@ func (i *Instance) getHandleChannel(handle int) <-chan struct{} {
 }
 
 // getBodyChannel returns a completion channel for a body handle.
-// For streaming bodies, the channel closes when the body has capacity.
+// For streaming bodies, returns the body's streaming done channel.
 // For non-streaming bodies, returns an already-closed channel (always ready).
 func (i *Instance) getBodyChannel(body *BodyHandle) <-chan struct{} {
 	if body.IsStreaming() {
-		// For streaming bodies, check if channel has capacity
+		// For streaming bodies, return the streaming done channel
+		// This channel is closed when streaming completes or has capacity
+		if body.streamingDone != nil {
+			return body.streamingDone
+		}
+		// If no done channel, check if ready now
 		if body.IsStreamingReady() {
 			ch := make(chan struct{})
 			close(ch)
 			return ch
 		}
-		// Not ready - return a sentinel channel that never closes
-		// In practice, the guest should poll is_ready
-		return neverReadyChan
+		// Streaming body without done channel and not ready - return nil
+		// This will cause the handle to be treated as invalid
+		return nil
 	}
 
 	// Non-streaming bodies are always ready
