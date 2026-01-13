@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,21 +115,78 @@ func cacheKey(key []byte) string {
 	return string(key)
 }
 
+// extractVaryHeaders extracts only the headers named in the vary rule from serialized request headers.
+// The vary rule is a comma-separated list of header names (e.g., "Accept-Encoding, Accept-Language").
+// The request headers are in HTTP wire format as produced by http.Header.Write().
+// Returns a normalized representation suitable for comparison.
+func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
+	if varyRule == "" || len(requestHeaders) == 0 {
+		return nil
+	}
+
+	varyHeaders := make(map[string]bool)
+	for _, name := range strings.Split(varyRule, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			varyHeaders[strings.ToLower(name)] = true
+		}
+	}
+
+	if len(varyHeaders) == 0 {
+		return nil
+	}
+
+	extracted := make(map[string][]string)
+	lines := strings.Split(string(requestHeaders), "\r\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx == -1 {
+			continue
+		}
+		name := strings.TrimSpace(line[:colonIdx])
+		value := strings.TrimSpace(line[colonIdx+1:])
+		nameLower := strings.ToLower(name)
+		if varyHeaders[nameLower] {
+			extracted[nameLower] = append(extracted[nameLower], value)
+		}
+	}
+
+	var sortedNames []string
+	for name := range extracted {
+		sortedNames = append(sortedNames, name)
+	}
+	sort.Strings(sortedNames)
+
+	var result bytes.Buffer
+	for _, name := range sortedNames {
+		values := extracted[name]
+		sort.Strings(values)
+		for _, v := range values {
+			result.WriteString(name)
+			result.WriteByte(':')
+			result.WriteString(v)
+			result.WriteByte('\n')
+		}
+	}
+	return result.Bytes()
+}
+
 // varyKey creates a variant-specific cache key that incorporates the vary rule and request headers.
-// Content negotiation with Vary creates multiple cached versions (variants) of the same resource.
 // If no vary rule is specified, returns the base cache key unchanged.
-// Otherwise, returns a SHA256 hash of (base key + vary rule + request headers) to uniquely
-// identify this variant.
 func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) string {
 	if varyRule == "" {
 		return cacheKey(baseKey)
 	}
 
-	// Hash the vary rule and request headers to create a variant key
+	varyHeaderValues := extractVaryHeaders(varyRule, requestHeaders)
+
 	h := sha256.New()
 	h.Write(baseKey)
 	h.Write([]byte(varyRule))
-	h.Write(requestHeaders)
+	h.Write(varyHeaderValues)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
