@@ -128,9 +128,11 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	}
 
 	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, ncopied)
-
-	// Write the number of bytes read to guest memory
 	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
+
+	if ncopied == 0 && maxlen > 0 {
+		body.trailersReady = true
+	}
 
 	return XqdStatusOK
 }
@@ -223,13 +225,22 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 // The ending_cursor_out indicates the position for the next call, and nwritten_out
 // contains the number of bytes written. Call repeatedly with the ending cursor until
 // it equals -1 to retrieve all names.
-// Returns XqdStatusOK on success or XqdErrInvalidHandle if the body handle is invalid.
+// Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
+// XqdErrInvalidArgument if the body is a streaming body, or XqdErrAgain if the body
+// has not been fully read yet (trailers not available).
 func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("body_trailer_names_get: handle=%d cursor=%d", handle, cursor)
 
 	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
+	}
+
+	if body.IsStreaming() {
+		return XqdErrInvalidArgument
+	}
+	if !body.trailersReady {
+		return XqdErrAgain
 	}
 
 	names := []string{}
@@ -245,14 +256,21 @@ func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen i
 // the first value for that trailer to value_addr (up to value_maxlen bytes), null-terminated.
 // If the trailer doesn't exist or has no values, nwritten_out is set to 0.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
-// XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
+// XqdErrInvalidArgument if the body is a streaming body, XqdErrAgain if the body has not
+// been fully read yet, XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Read the trailer name from guest memory
+	if body.IsStreaming() {
+		return XqdErrInvalidArgument
+	}
+	if !body.trailersReady {
+		return XqdErrAgain
+	}
+
 	nameBuf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(nameBuf, int64(name_addr))
 	if err != nil {
@@ -296,14 +314,21 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 // to handle results that exceed maxlen buffer size. The ending_cursor_out indicates the
 // position for the next call, and nwritten_out contains the number of bytes written.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
-// or XqdError if memory operations fail.
+// XqdErrInvalidArgument if the body is a streaming body, XqdErrAgain if the body has not
+// been fully read yet, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Read the trailer name
+	if body.IsStreaming() {
+		return XqdErrInvalidArgument
+	}
+	if !body.trailersReady {
+		return XqdErrAgain
+	}
+
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
