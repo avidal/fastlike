@@ -710,13 +710,28 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	// Add a CDN-Loop header for loop detection (checked at ingress to prevent infinite loops)
 	req.Header.Add("cdn-loop", "fastlike")
 
-	// Set Content-Length if not already set or if ContentLength field is uninitialized
-	// This ensures the backend receives proper content length information
-	if req.Header.Get("content-length") == "" {
-		req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
-		req.ContentLength = b.Size()
-	} else if req.ContentLength <= 0 {
-		req.ContentLength = b.Size()
+	// Apply framing mode - validate and potentially filter framing headers
+	effectiveMode := validateAndApplyFramingMode(req.Header, r.framingHeadersMode, func(format string, args ...interface{}) {
+		i.abilog.Printf("req_send: "+format, args...)
+	})
+
+	// Set Content-Length only in automatic mode (when framing headers are managed by the library)
+	if effectiveMode == FramingHeadersModeAutomatic {
+		// Set Content-Length if not already set or if ContentLength field is uninitialized
+		// This ensures the backend receives proper content length information
+		if req.Header.Get("content-length") == "" {
+			req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
+			req.ContentLength = b.Size()
+		} else if req.ContentLength <= 0 {
+			req.ContentLength = b.Size()
+		}
+	} else {
+		// Manual mode: use the Content-Length from headers if present
+		if cl := req.Header.Get("Content-Length"); cl != "" {
+			var contentLength int64
+			fmt.Sscanf(cl, "%d", &contentLength)
+			req.ContentLength = contentLength
+		}
 	}
 
 	// If the backend is geolocation, we select the geobackend explicitly
@@ -843,7 +858,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	phid, pendingReq := i.pendingRequests.New()
 
 	// Launch goroutine to perform the request asynchronously
-	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32) {
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
 		// Build the request
 		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
 		if err != nil {
@@ -859,12 +874,24 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		// Add CDN-Loop header for loop detection
 		httpReq.Header.Add("cdn-loop", "fastlike")
 
-		// Set content-length if needed
-		if httpReq.Header.Get("content-length") == "" {
-			httpReq.Header.Add("content-length", fmt.Sprintf("%d", body.Size()))
-			httpReq.ContentLength = body.Size()
-		} else if httpReq.ContentLength <= 0 {
-			httpReq.ContentLength = body.Size()
+		// Apply framing mode - validate and potentially filter framing headers
+		effectiveMode := validateAndApplyFramingMode(httpReq.Header, framingMode, nil)
+
+		// Set Content-Length only in automatic mode
+		if effectiveMode == FramingHeadersModeAutomatic {
+			if httpReq.Header.Get("content-length") == "" {
+				httpReq.Header.Add("content-length", fmt.Sprintf("%d", body.Size()))
+				httpReq.ContentLength = body.Size()
+			} else if httpReq.ContentLength <= 0 {
+				httpReq.ContentLength = body.Size()
+			}
+		} else {
+			// Manual mode: use the Content-Length from headers if present
+			if cl := httpReq.Header.Get("Content-Length"); cl != "" {
+				var contentLength int64
+				fmt.Sscanf(cl, "%d", &contentLength)
+				httpReq.ContentLength = contentLength
+			}
 		}
 
 		// Get the backend handler
@@ -885,7 +912,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings)
+	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -979,7 +1006,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	phid, pendingReq := i.pendingRequests.New()
 
 	// Launch goroutine to perform the async request
-	go func(ctx context.Context, req *http.Request, body io.Reader, backendName string, pr *PendingRequest, autoDecompress uint32) {
+	go func(ctx context.Context, req *http.Request, body io.Reader, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
 		// Build the request with the pipe reader as body
 		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
 		if err != nil {
@@ -995,7 +1022,8 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		// Add CDN-Loop header
 		httpReq.Header.Add("cdn-loop", "fastlike")
 
-		// Note: Content-Length is unknown for streaming, don't set it
+		// Apply framing mode - for streaming, Content-Length is unknown but Transfer-Encoding may be set
+		validateAndApplyFramingMode(httpReq.Header, framingMode, nil)
 
 		// Get backend handler
 		var handler http.Handler
@@ -1015,7 +1043,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Mark pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, pipeReader, backend, pendingReq, r.autoDecompressEncodings)
+	}(i.ds_context, r.Request, pipeReader, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
 
 	// Write pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1309,12 +1337,26 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	// Add CDN-Loop header for loop detection
 	req.Header.Add("cdn-loop", "fastlike")
 
-	// Set content-length if needed
-	if req.Header.Get("content-length") == "" {
-		req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
-		req.ContentLength = b.Size()
-	} else if req.ContentLength <= 0 {
-		req.ContentLength = b.Size()
+	// Apply framing mode - validate and potentially filter framing headers
+	effectiveMode := validateAndApplyFramingMode(req.Header, r.framingHeadersMode, func(format string, args ...interface{}) {
+		i.abilog.Printf("req_send_v2: "+format, args...)
+	})
+
+	// Set Content-Length only in automatic mode
+	if effectiveMode == FramingHeadersModeAutomatic {
+		if req.Header.Get("content-length") == "" {
+			req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
+			req.ContentLength = b.Size()
+		} else if req.ContentLength <= 0 {
+			req.ContentLength = b.Size()
+		}
+	} else {
+		// Manual mode: use the Content-Length from headers if present
+		if cl := req.Header.Get("Content-Length"); cl != "" {
+			var contentLength int64
+			fmt.Sscanf(cl, "%d", &contentLength)
+			req.ContentLength = contentLength
+		}
 	}
 
 	// Get the backend handler
@@ -1330,7 +1372,7 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		select {
 		case <-i.ds_context.Done():
 			// Context was cancelled (timeout/cancellation), panic to cause interrupt trap
-			i.abilog.Printf("req_send: context cancelled before request")
+			i.abilog.Printf("req_send_v2: context cancelled before request")
 			panic("wasm trap: interrupt")
 		default:
 			// Context not cancelled, proceed
@@ -1352,28 +1394,28 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 
 	// Wait for either the request to complete or context to be cancelled
 	if i.ds_context != nil {
-		i.abilog.Printf("req_send: waiting with context cancellation support")
+		i.abilog.Printf("req_send_v2: waiting with context cancellation support")
 		select {
 		case <-done:
 			// Request completed normally
-			i.abilog.Printf("req_send: request completed normally")
+			i.abilog.Printf("req_send_v2: request completed normally")
 			i.resumeExecution()
 		case <-i.ds_context.Done():
 			// Context was cancelled during request
-			i.abilog.Printf("req_send: context cancelled during request")
+			i.abilog.Printf("req_send_v2: context cancelled during request")
 			i.resumeExecution()
 			// Wait a bit for the handler to finish (best effort cleanup)
 			select {
 			case <-done:
-				i.abilog.Printf("req_send: handler finished after cancel")
+				i.abilog.Printf("req_send_v2: handler finished after cancel")
 			case <-time.After(10 * time.Millisecond):
-				i.abilog.Printf("req_send: handler still running after cancel timeout")
+				i.abilog.Printf("req_send_v2: handler still running after cancel timeout")
 			}
 			return XqdError
 		}
 	} else {
 		// No context, just wait for completion
-		i.abilog.Printf("req_send: waiting without context (ds_context is nil)")
+		i.abilog.Printf("req_send_v2: waiting without context (ds_context is nil)")
 		<-done
 		i.resumeExecution()
 	}
@@ -1495,8 +1537,9 @@ func (i *Instance) xqd_req_on_behalf_of(handle int32, service_addr int32, servic
 	return XqdStatusOK
 }
 
-// xqd_req_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set
-// Only supports automatic mode
+// xqd_req_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set.
+// Mode 0 (Automatic): The HTTP library sets framing headers automatically.
+// Mode 1 (ManuallyFromHeaders): User-provided framing headers are preserved and used.
 func (i *Instance) xqd_req_framing_headers_mode_set(handle int32, mode int32) int32 {
 	// Validate request handle
 	r := i.requests.Get(int(handle))
@@ -1507,13 +1550,13 @@ func (i *Instance) xqd_req_framing_headers_mode_set(handle int32, mode int32) in
 
 	i.abilog.Printf("req_framing_headers_mode_set: handle=%d mode=%d", handle, mode)
 
-	// Mode 0 = Automatic (supported)
-	// Mode 1 = ManuallyFromHeaders (not supported)
-	if mode != 0 {
-		i.abilog.Printf("req_framing_headers_mode_set: manual mode not supported")
-		return XqdErrUnsupported
+	// Validate mode value
+	if mode != int32(FramingHeadersModeAutomatic) && mode != int32(FramingHeadersModeManuallyFromHeaders) {
+		i.abilog.Printf("req_framing_headers_mode_set: invalid mode %d", mode)
+		return XqdErrInvalidArgument
 	}
 
+	r.framingHeadersMode = FramingHeadersMode(mode)
 	return XqdStatusOK
 }
 

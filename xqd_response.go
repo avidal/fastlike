@@ -353,8 +353,8 @@ func (i *Instance) xqd_resp_close(handle int32) int32 {
 }
 
 // xqd_resp_framing_headers_mode_set controls how framing headers (Content-Length, Transfer-Encoding) are set.
-// Mode 0 (Automatic) is supported: Go's http package automatically sets these headers.
-// Mode 1 (ManuallyFromHeaders) is not supported and returns XqdErrUnsupported.
+// Mode 0 (Automatic): The HTTP library sets framing headers automatically.
+// Mode 1 (ManuallyFromHeaders): User-provided framing headers are preserved and used.
 func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) int32 {
 	// Validate response handle
 	w := i.responses.Get(int(handle))
@@ -365,16 +365,13 @@ func (i *Instance) xqd_resp_framing_headers_mode_set(handle int32, mode int32) i
 
 	i.abilog.Printf("resp_framing_headers_mode_set: handle=%d mode=%d", handle, mode)
 
-	const (
-		framingModeAutomatic          = 0
-		framingModeManuallyFromHeaders = 1
-	)
-
-	if mode != framingModeAutomatic {
-		i.abilog.Printf("resp_framing_headers_mode_set: manual mode not supported")
-		return XqdErrUnsupported
+	// Validate mode value
+	if mode != int32(FramingHeadersModeAutomatic) && mode != int32(FramingHeadersModeManuallyFromHeaders) {
+		i.abilog.Printf("resp_framing_headers_mode_set: invalid mode %d", mode)
+		return XqdErrInvalidArgument
 	}
 
+	w.framingHeadersMode = FramingHeadersMode(mode)
 	return XqdStatusOK
 }
 

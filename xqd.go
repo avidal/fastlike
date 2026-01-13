@@ -80,6 +80,7 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 
 // xqd_resp_send_downstream sends the response and body to the downstream client.
 // Copies response headers and body to the output stream. Streaming mode is not currently supported.
+// Respects the framing headers mode set on the response handle.
 // Returns XqdErrInvalidHandle if handles are invalid, XqdErrUnsupported for streaming, XqdStatusOK on success.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
 	if stream != 0 {
@@ -97,7 +98,17 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	}
 	defer func() { _ = b.Close() }()
 
-	for k, v := range w.Header {
+	// Clone headers so we don't modify the original
+	headers := w.Header.Clone()
+
+	// Apply framing mode - validate and potentially filter framing headers
+	effectiveMode := validateAndApplyFramingMode(headers, w.framingHeadersMode, func(format string, args ...interface{}) {
+		i.abilog.Printf("resp_send_downstream: "+format, args...)
+	})
+
+	i.abilog.Printf("resp_send_downstream: framing_mode=%d effective_mode=%d", w.framingHeadersMode, effectiveMode)
+
+	for k, v := range headers {
 		i.ds_response.Header()[k] = v
 	}
 

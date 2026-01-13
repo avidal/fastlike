@@ -8,6 +8,16 @@ import (
 	"net/url"
 )
 
+// FramingHeadersMode controls how HTTP framing headers (Content-Length, Transfer-Encoding) are handled.
+type FramingHeadersMode int32
+
+const (
+	// FramingHeadersModeAutomatic lets the HTTP library set framing headers automatically.
+	FramingHeadersModeAutomatic FramingHeadersMode = 0
+	// FramingHeadersModeManuallyFromHeaders preserves user-provided framing headers.
+	FramingHeadersModeManuallyFromHeaders FramingHeadersMode = 1
+)
+
 // RequestHandle is an http.Request with extra metadata.
 // The http.Request.Body field is ignored; instead, the guest program provides a BodyHandle
 // to use for the request body.
@@ -22,6 +32,8 @@ type RequestHandle struct {
 	tlsState *tls.ConnectionState
 	// version stores the HTTP version (0=Http09, 1=Http10, 2=Http11). Defaults to 2 (Http11).
 	version int32
+	// framingHeadersMode controls how Content-Length and Transfer-Encoding headers are handled
+	framingHeadersMode FramingHeadersMode
 }
 
 // RequestHandles is a slice of RequestHandle with functions to get and create
@@ -65,6 +77,8 @@ type ResponseHandle struct {
 	RemoteAddr string
 	// version stores the HTTP version (0=Http09, 1=Http10, 2=Http11). Defaults to 2 (Http11).
 	version int32
+	// framingHeadersMode controls how Content-Length and Transfer-Encoding headers are handled
+	framingHeadersMode FramingHeadersMode
 }
 
 // ResponseHandles is a slice of ResponseHandle with functions to get and create
