@@ -479,3 +479,88 @@ func (i *Instance) readBackendName(namePtr int32, nameLen int32) (string, error)
 	}
 	return string(buf), nil
 }
+
+// xqd_backend_is_ipv6_preferred checks if the backend prefers IPv6 over IPv4
+func (i *Instance) xqd_backend_is_ipv6_preferred(backend_addr int32, backend_size int32, is_preferred_out int32) int32 {
+	buf := make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	backendName := string(buf)
+	i.abilog.Printf("backend_is_ipv6_preferred: name=%q", backendName)
+
+	b := i.getBackend(backendName)
+	if b == nil {
+		return XqdErrInvalidArgument
+	}
+
+	// Return 1 if IPv6 preferred, 0 otherwise
+	var preferred uint32
+	if b.PreferIPv6 {
+		preferred = 1
+	}
+	i.memory.PutUint32(preferred, int64(is_preferred_out))
+	return XqdStatusOK
+}
+
+// xqd_backend_get_max_connections gets the max connections in pool for a backend
+func (i *Instance) xqd_backend_get_max_connections(backend_addr int32, backend_size int32, max_out int32) int32 {
+	buf := make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	backendName := string(buf)
+	i.abilog.Printf("backend_get_max_connections: name=%q", backendName)
+
+	b := i.getBackend(backendName)
+	if b == nil {
+		return XqdErrInvalidArgument
+	}
+
+	i.memory.PutUint32(b.MaxConnections, int64(max_out))
+	return XqdStatusOK
+}
+
+// xqd_backend_get_max_use gets how many times a pooled connection can be reused
+func (i *Instance) xqd_backend_get_max_use(backend_addr int32, backend_size int32, max_out int32) int32 {
+	buf := make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	backendName := string(buf)
+	i.abilog.Printf("backend_get_max_use: name=%q", backendName)
+
+	b := i.getBackend(backendName)
+	if b == nil {
+		return XqdErrInvalidArgument
+	}
+
+	i.memory.PutUint32(b.MaxUse, int64(max_out))
+	return XqdStatusOK
+}
+
+// xqd_backend_get_max_lifetime_ms gets the max lifetime for keepalive connections
+func (i *Instance) xqd_backend_get_max_lifetime_ms(backend_addr int32, backend_size int32, max_out int32) int32 {
+	buf := make([]byte, backend_size)
+	_, err := i.memory.ReadAt(buf, int64(backend_addr))
+	if err != nil {
+		return XqdError
+	}
+
+	backendName := string(buf)
+	i.abilog.Printf("backend_get_max_lifetime_ms: name=%q", backendName)
+
+	b := i.getBackend(backendName)
+	if b == nil {
+		return XqdErrInvalidArgument
+	}
+
+	i.memory.PutUint32(b.MaxLifetimeMs, int64(max_out))
+	return XqdStatusOK
+}
