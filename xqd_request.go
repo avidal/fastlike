@@ -614,6 +614,8 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 		r.Header = http.Header{}
 	}
 
+	r.Header.Del(header)
+
 	for _, v := range values {
 		r.Header.Add(header, string(v))
 	}
