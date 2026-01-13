@@ -15,10 +15,13 @@ func (i *Instance) xqd_config_store_open(name_addr int32, name_size int32, addr 
 
 	i.abilog.Printf("config_store_open: name=%s\n", configStoreName)
 
-	// Allocate a handle for this config store and write it to guest memory
 	handle := i.getConfigStoreHandle(configStoreName)
-	i.memory.PutUint32(uint32(handle), int64(addr))
+	if handle == HandleInvalid {
+		i.memory.PutUint32(HandleInvalid, int64(addr))
+		return XqdErrNone
+	}
 
+	i.memory.PutUint32(uint32(handle), int64(addr))
 	return XqdStatusOK
 }
 
