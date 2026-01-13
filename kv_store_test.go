@@ -292,3 +292,43 @@ func TestKVStore_GenerationMatch(t *testing.T) {
 		t.Error("Expected error when generation doesn't match")
 	}
 }
+
+func TestKVStore_ErrorCodes(t *testing.T) {
+	store := NewKVStore("test")
+
+	// Test that InsertModeAdd returns ErrKVPreconditionFailed when key exists
+	_, err := store.Insert("key1", []byte("value1"), "", nil, InsertModeAdd, nil)
+	if err != nil {
+		t.Fatalf("First insert failed: %v", err)
+	}
+
+	_, err = store.Insert("key1", []byte("value2"), "", nil, InsertModeAdd, nil)
+	kvErr, ok := err.(*KVStoreError)
+	if !ok {
+		t.Fatalf("Expected *KVStoreError, got %T", err)
+	}
+	if kvErr.Code != KvErrorPreconditionFailed {
+		t.Errorf("Expected error code %d (PreconditionFailed), got %d", KvErrorPreconditionFailed, kvErr.Code)
+	}
+
+	// Test that if_generation_match returns ErrKVPreconditionFailed on mismatch
+	wrongGeneration := uint64(12345)
+	_, err = store.Insert("key1", []byte("value3"), "", nil, InsertModeOverwrite, &wrongGeneration)
+	kvErr, ok = err.(*KVStoreError)
+	if !ok {
+		t.Fatalf("Expected *KVStoreError, got %T", err)
+	}
+	if kvErr.Code != KvErrorPreconditionFailed {
+		t.Errorf("Expected error code %d (PreconditionFailed), got %d", KvErrorPreconditionFailed, kvErr.Code)
+	}
+
+	// Test that if_generation_match on non-existent key returns ErrKVPreconditionFailed
+	_, err = store.Insert("nonexistent", []byte("value"), "", nil, InsertModeOverwrite, &wrongGeneration)
+	kvErr, ok = err.(*KVStoreError)
+	if !ok {
+		t.Fatalf("Expected *KVStoreError, got %T", err)
+	}
+	if kvErr.Code != KvErrorPreconditionFailed {
+		t.Errorf("Expected error code %d (PreconditionFailed), got %d", KvErrorPreconditionFailed, kvErr.Code)
+	}
+}

@@ -330,7 +330,12 @@ func (i *Instance) xqd_kv_store_insert_wait(
 	// Wait for the insert to complete
 	_, err := insert.Wait()
 	if err != nil {
-		i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		// Map typed errors to proper KV error codes
+		if kvErr, ok := err.(*KVStoreError); ok {
+			i.memory.WriteUint32(kvErrorOut, kvErr.Code)
+		} else {
+			i.memory.WriteUint32(kvErrorOut, KvErrorInternalError)
+		}
 		return XqdStatusOK
 	}
 
