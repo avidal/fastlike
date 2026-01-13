@@ -15,10 +15,13 @@ func (i *Instance) xqd_dictionary_open(name_addr int32, name_size int32, addr in
 
 	i.abilog.Printf("dictionary_open: name=%s\n", dictionaryName)
 
-	// Allocate a handle for this dictionary and write it to guest memory
 	handle := i.getDictionaryHandle(dictionaryName)
-	i.memory.PutUint32(uint32(handle), int64(addr))
+	if handle == HandleInvalid {
+		i.memory.PutUint32(HandleInvalid, int64(addr))
+		return XqdErrNone
+	}
 
+	i.memory.PutUint32(uint32(handle), int64(addr))
 	return XqdStatusOK
 }
 
