@@ -415,7 +415,22 @@ func (i *Instance) xqd_kv_store_delete_wait(
 	return XqdStatusOK
 }
 
+// KV store list config mask bits (per WITX kv_lookup_config_options)
+const (
+	kvListConfigMaskReserved uint32 = 1 << 0
+	kvListConfigMaskCursor   uint32 = 1 << 1
+	kvListConfigMaskLimit    uint32 = 1 << 2
+	kvListConfigMaskPrefix   uint32 = 1 << 3
+)
+
 // xqd_kv_store_list initiates an async list operation
+// Config buffer layout (fixed offsets):
+//   offset 0:  mode (u32) - reserved
+//   offset 4:  cursor_ptr (u32)
+//   offset 8:  cursor_len (u32)
+//   offset 12: limit (u32)
+//   offset 16: prefix_ptr (u32)
+//   offset 20: prefix_len (u32)
 func (i *Instance) xqd_kv_store_list(
 	kvStoreHandle int32,
 	listConfigMask uint32,
@@ -430,38 +445,15 @@ func (i *Instance) xqd_kv_store_list(
 		return XqdErrInvalidHandle
 	}
 
-	// Parse list config
+	// Parse list config using fixed offsets
 	var prefix string
 	var limit uint32
 	var cursor *string
 
-	offset := int32(0)
-
-	// Mask bit 0: limit (u32)
-	if listConfigMask&(1<<0) != 0 {
-		limit = i.memory.ReadUint32(listConfigBuf + offset)
-		offset += 4
-	}
-
-	// Mask bit 1: prefix (string)
-	if listConfigMask&(1<<1) != 0 {
-		prefixPtr := i.memory.ReadUint32(listConfigBuf + offset)
-		prefixLen := i.memory.ReadUint32(listConfigBuf + offset + 4)
-		if prefixLen > 0 {
-			prefixBuf := make([]byte, prefixLen)
-			_, err := i.memory.ReadAt(prefixBuf, int64(prefixPtr))
-			if err != nil {
-				return XqdError
-			}
-			prefix = string(prefixBuf)
-		}
-		offset += 8
-	}
-
-	// Mask bit 2: cursor (string)
-	if listConfigMask&(1<<2) != 0 {
-		cursorPtr := i.memory.ReadUint32(listConfigBuf + offset)
-		cursorLen := i.memory.ReadUint32(listConfigBuf + offset + 4)
+	// Mask bit 1: cursor (at fixed offset 4)
+	if listConfigMask&kvListConfigMaskCursor != 0 {
+		cursorPtr := i.memory.ReadUint32(listConfigBuf + 4)
+		cursorLen := i.memory.ReadUint32(listConfigBuf + 8)
 		if cursorLen > 0 {
 			cursorBuf := make([]byte, cursorLen)
 			_, err := i.memory.ReadAt(cursorBuf, int64(cursorPtr))
@@ -470,6 +462,25 @@ func (i *Instance) xqd_kv_store_list(
 			}
 			cursorStr := string(cursorBuf)
 			cursor = &cursorStr
+		}
+	}
+
+	// Mask bit 2: limit (at fixed offset 12)
+	if listConfigMask&kvListConfigMaskLimit != 0 {
+		limit = i.memory.ReadUint32(listConfigBuf + 12)
+	}
+
+	// Mask bit 3: prefix (at fixed offset 16)
+	if listConfigMask&kvListConfigMaskPrefix != 0 {
+		prefixPtr := i.memory.ReadUint32(listConfigBuf + 16)
+		prefixLen := i.memory.ReadUint32(listConfigBuf + 20)
+		if prefixLen > 0 {
+			prefixBuf := make([]byte, prefixLen)
+			_, err := i.memory.ReadAt(prefixBuf, int64(prefixPtr))
+			if err != nil {
+				return XqdError
+			}
+			prefix = string(prefixBuf)
 		}
 	}
 
