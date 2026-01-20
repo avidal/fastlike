@@ -768,6 +768,9 @@ func (i *Instance) link(store *wasmtime.Store, linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_compute_runtime", "get_vcpu_ms", safeWrap1(i, "get_vcpu_ms", func(vcpu_time_ms_out int32) int32 {
 		return i.xqd_compute_runtime_get_vcpu_ms(vcpu_time_ms_out)
 	}))
+	_ = linker.FuncWrap("fastly_compute_runtime", "get_heap_mib", safeWrap1(i, "get_heap_mib", func(heap_mib_out int32) int32 {
+		return i.xqd_compute_runtime_get_heap_mib(heap_mib_out)
+	}))
 	_ = linker.FuncWrap("fastly_compute_runtime", "get_sandbox_id", safeWrap3(i, "get_sandbox_id", func(sandbox_id_out int32, sandbox_id_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_compute_runtime_get_sandbox_id(sandbox_id_out, sandbox_id_max_len, nwritten_out)
 	}))
@@ -1150,6 +1153,7 @@ func (i *Instance) linklegacy(store *wasmtime.Store, linker *wasmtime.Linker) {
 
 	// xqd_compute_runtime.go
 	_ = linker.FuncWrap("env", "xqd_compute_runtime_get_vcpu_ms", safeWrap1(i, "xqd_compute_runtime_get_vcpu_ms", func(a int32) int32 { return i.xqd_compute_runtime_get_vcpu_ms(a) }))
+	_ = linker.FuncWrap("env", "xqd_compute_runtime_get_heap_mib", safeWrap1(i, "xqd_compute_runtime_get_heap_mib", func(a int32) int32 { return i.xqd_compute_runtime_get_heap_mib(a) }))
 
 	// xqd_async_io.go
 	_ = linker.FuncWrap("env", "xqd_async_io_select", safeWrap4(i, "xqd_async_io_select", func(a int32, b int32, c int32, d int32) int32 { return i.xqd_async_io_select(a, b, c, d) }))
