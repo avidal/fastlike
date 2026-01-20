@@ -4,16 +4,16 @@ package fastlike
 // These match the fastly-shared Rust crate definitions.
 // See https://docs.rs/fastly-shared for more details.
 const (
-	XqdStatusOK           int32 = 0  // Success
-	XqdError              int32 = 1  // Generic error
-	XqdErrInvalidArgument int32 = 2  // Invalid argument passed
-	XqdErrInvalidHandle   int32 = 3  // Invalid handle ID
-	XqdErrBufferLength    int32 = 4  // Buffer too small
-	XqdErrUnsupported     int32 = 5  // Operation not supported
-	XqdErrBadAlignment    int32 = 6  // Misaligned pointer
-	XqdErrHttpParse       int32 = 7  // HTTP parsing error
-	XqdErrHttpUserInvalid int32 = 8  // Invalid HTTP user input
-	XqdErrHttpIncomplete  int32 = 9  // Incomplete HTTP message
+	XqdStatusOK             int32 = 0  // Success
+	XqdError                int32 = 1  // Generic error
+	XqdErrInvalidArgument   int32 = 2  // Invalid argument passed
+	XqdErrInvalidHandle     int32 = 3  // Invalid handle ID
+	XqdErrBufferLength      int32 = 4  // Buffer too small
+	XqdErrUnsupported       int32 = 5  // Operation not supported
+	XqdErrBadAlignment      int32 = 6  // Misaligned pointer
+	XqdErrHttpParse         int32 = 7  // HTTP parsing error
+	XqdErrHttpUserInvalid   int32 = 8  // Invalid HTTP user input
+	XqdErrHttpIncomplete    int32 = 9  // Incomplete HTTP message
 	XqdErrNone              int32 = 10 // No value/data available
 	XqdErrHttpHeadTooLarge  int32 = 11 // HTTP header too large
 	XqdErrHttpInvalidStatus int32 = 12 // Invalid HTTP status code

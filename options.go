@@ -111,6 +111,7 @@ func WithSecretStore(name string, fn SecretLookupFunc) Option {
 // When the function returns true, the request will have:
 //   - URL scheme set to "https"
 //   - "fastly-ssl" header set to "1"
+//
 // This affects how the wasm guest program sees the request.
 // The default implementation checks if req.TLS is non-nil.
 func WithSecureFunc(fn func(*http.Request) bool) Option {

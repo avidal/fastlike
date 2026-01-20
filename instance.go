@@ -64,28 +64,28 @@ type Instance struct {
 	downstreamRequestHandle int32
 
 	// Backend configuration for subrequests
-	backends       map[string]*Backend      // Named backends registered by the user
+	backends       map[string]*Backend            // Named backends registered by the user
 	defaultBackend func(name string) http.Handler // Fallback when backend not found (default: 502)
 
 	// Logging configuration
-	loggers       []logger                  // Named log endpoints
+	loggers       []logger                    // Named log endpoints
 	defaultLogger func(name string) io.Writer // Fallback logger (default: stdout with prefix)
 
 	// Key-value stores for configuration and data
-	dictionaries    []dictionary          // Legacy string key-value lookup
-	configStores    []configStore         // Modern alternative to dictionaries
-	kvStoreRegistry map[string]*KVStore   // Object storage with async operations
-	secretStores    []secretStore         // Secure credential storage
+	dictionaries    []dictionary        // Legacy string key-value lookup
+	configStores    []configStore       // Modern alternative to dictionaries
+	kvStoreRegistry map[string]*KVStore // Object storage with async operations
+	secretStores    []secretStore       // Secure credential storage
 
 	// Secret store handles
 	secretStoreHandles *SecretStoreHandles
 	secretHandles      *SecretHandles
 
 	// Access Control Lists and Rate Limiting
-	acls         map[string]*Acl       // Named ACLs for IP-based filtering
-	aclHandles   *AclHandles           // Handle tracking for ACL operations
-	rateCounters []rateCounterEntry    // Rate counters for ERL
-	penaltyBoxes []penaltyBoxEntry     // Penalty boxes for ERL
+	acls         map[string]*Acl    // Named ACLs for IP-based filtering
+	aclHandles   *AclHandles        // Handle tracking for ACL operations
+	rateCounters []rateCounterEntry // Rate counters for ERL
+	penaltyBoxes []penaltyBoxEntry  // Penalty boxes for ERL
 
 	// Cache state
 	cache               *Cache               // In-memory cache implementation
@@ -94,12 +94,12 @@ type Instance struct {
 	cacheReplaceHandles *CacheReplaceHandles // Handle tracking for cache replace operations
 
 	// Request processing functions
-	geolookup       func(net.IP) Geo                    // Geographic lookup from IP address
-	uaparser        UserAgentParser                     // User agent parsing
-	deviceDetection DeviceLookupFunc                    // Device detection from user agent string
-	imageOptimizer  ImageOptimizerTransformFunc         // Image transformation hook
-	secureFn        func(*http.Request) bool            // Determines if request is "secure" (default: checks TLS)
-	complianceRegion string                             // GDPR/data locality region (e.g., "none", "us-eu", "us")
+	geolookup        func(net.IP) Geo            // Geographic lookup from IP address
+	uaparser         UserAgentParser             // User agent parsing
+	deviceDetection  DeviceLookupFunc            // Device detection from user agent string
+	imageOptimizer   ImageOptimizerTransformFunc // Image transformation hook
+	secureFn         func(*http.Request) bool    // Determines if request is "secure" (default: checks TLS)
+	complianceRegion string                      // GDPR/data locality region (e.g., "none", "us-eu", "us")
 
 	// Logging
 	log    *log.Logger // General fastlike logging
@@ -260,8 +260,8 @@ func (i *Instance) setup() {
 
 	// Configure WASI (WebAssembly System Interface) for this store
 	wasicfg := wasmtime.NewWasiConfig()
-	wasicfg.InheritStdout() // Allow guest to write to stdout
-	wasicfg.InheritStderr() // Allow guest to write to stderr
+	wasicfg.InheritStdout()               // Allow guest to write to stdout
+	wasicfg.InheritStderr()               // Allow guest to write to stderr
 	wasicfg.SetArgv([]string{"fastlike"}) // Set argv[0] to "fastlike"
 	// Set Fastly environment variables for local development/testing
 	wasicfg.SetEnv(
