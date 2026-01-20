@@ -26,10 +26,6 @@ func (i *Instance) xqd_erl_check_rate(
 	rateCounterName := string(rateCounterNameBuf)
 
 	rateCounter := i.getRateCounter(rateCounterName)
-	if rateCounter == nil {
-		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
-		return XqdErrInvalidArgument
-	}
 
 	// Read entry name
 	entryBuf := make([]byte, entryLen)
@@ -48,10 +44,6 @@ func (i *Instance) xqd_erl_check_rate(
 	penaltyBoxName := string(penaltyBoxNameBuf)
 
 	penaltyBox := i.getPenaltyBox(penaltyBoxName)
-	if penaltyBox == nil {
-		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
-		return XqdErrInvalidArgument
-	}
 
 	blocked := CheckRate(rateCounter, penaltyBox, entry, delta, window, limit, ttl)
 	i.memory.PutUint32(blocked, int64(blockedPtr))
@@ -86,11 +78,6 @@ func (i *Instance) xqd_erl_ratecounter_increment(
 	entry := string(entryBuf)
 
 	rateCounter := i.getRateCounter(rateCounterName)
-	if rateCounter == nil {
-		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
-		return XqdErrInvalidArgument
-	}
-
 	rateCounter.Increment(entry, delta)
 
 	return XqdStatusOK
@@ -125,11 +112,6 @@ func (i *Instance) xqd_erl_ratecounter_lookup_rate(
 	entry := string(entryBuf)
 
 	rateCounter := i.getRateCounter(rateCounterName)
-	if rateCounter == nil {
-		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
-		return XqdErrInvalidArgument
-	}
-
 	rate := rateCounter.LookupRate(entry, window)
 
 	i.memory.PutUint32(rate, int64(ratePtr))
@@ -165,11 +147,6 @@ func (i *Instance) xqd_erl_ratecounter_lookup_count(
 	entry := string(entryBuf)
 
 	rateCounter := i.getRateCounter(rateCounterName)
-	if rateCounter == nil {
-		i.abilog.Printf("rate counter '%s' not found", rateCounterName)
-		return XqdErrInvalidArgument
-	}
-
 	count := rateCounter.LookupCount(entry, duration)
 
 	i.memory.PutUint32(count, int64(countPtr))
@@ -205,11 +182,6 @@ func (i *Instance) xqd_erl_penaltybox_add(
 	entry := string(entryBuf)
 
 	penaltyBox := i.getPenaltyBox(penaltyBoxName)
-	if penaltyBox == nil {
-		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
-		return XqdErrInvalidArgument
-	}
-
 	penaltyBox.Add(entry, ttl)
 
 	return XqdStatusOK
@@ -243,11 +215,6 @@ func (i *Instance) xqd_erl_penaltybox_has(
 	entry := string(entryBuf)
 
 	penaltyBox := i.getPenaltyBox(penaltyBoxName)
-	if penaltyBox == nil {
-		i.abilog.Printf("penalty box '%s' not found", penaltyBoxName)
-		return XqdErrInvalidArgument
-	}
-
 	has := penaltyBox.Has(entry)
 
 	// Write result (1 if present, 0 if not)
@@ -263,7 +230,7 @@ func (i *Instance) xqd_erl_penaltybox_has(
 }
 
 // getRateCounter retrieves a rate counter by name from the instance's registry.
-// Returns nil if the rate counter is not found.
+// If the rate counter is not found, it is created automatically.
 func (i *Instance) getRateCounter(name string) *RateCounter {
 	for idx := range i.rateCounters {
 		if i.rateCounters[idx].name == name {
@@ -271,11 +238,13 @@ func (i *Instance) getRateCounter(name string) *RateCounter {
 		}
 	}
 
-	return nil
+	counter := NewRateCounter()
+	i.addRateCounter(name, counter)
+	return counter
 }
 
 // getPenaltyBox retrieves a penalty box by name from the instance's registry.
-// Returns nil if the penalty box is not found.
+// If the penalty box is not found, it is created automatically.
 func (i *Instance) getPenaltyBox(name string) *PenaltyBox {
 	for idx := range i.penaltyBoxes {
 		if i.penaltyBoxes[idx].name == name {
@@ -283,7 +252,9 @@ func (i *Instance) getPenaltyBox(name string) *PenaltyBox {
 		}
 	}
 
-	return nil
+	box := NewPenaltyBox()
+	i.addPenaltyBox(name, box)
+	return box
 }
 
 // addRateCounter registers a rate counter by name in the instance's registry.
