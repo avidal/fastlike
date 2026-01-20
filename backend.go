@@ -46,7 +46,7 @@ type Backend struct {
 	SSLMaxVersion uint32 // TLS version constant
 
 	// Connection pool settings
-	PreferIPv6    bool   // Prefer IPv6 addresses over IPv4 when resolving backends
+	PreferIPv6     bool   // Prefer IPv6 addresses over IPv4 when resolving backends
 	MaxConnections uint32 // Maximum connections in pool (0 = unlimited)
 	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
 	MaxLifetimeMs  uint32 // Upper bound for how long a keepalive connection can remain open (0 = unlimited)

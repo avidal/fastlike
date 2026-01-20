@@ -391,7 +391,7 @@ func (i *Instance) xqd_resp_http_keepalive_mode_set(handle int32, mode int32) in
 	i.abilog.Printf("resp_http_keepalive_mode_set: handle=%d mode=%d", handle, mode)
 
 	const (
-		keepaliveModeAutomatic = 0
+		keepaliveModeAutomatic   = 0
 		keepaliveModeNoKeepalive = 1
 	)
 

@@ -41,9 +41,9 @@ func (m ByteMemory) Cap() int {
 // It provides access to the wasm linear memory via a byte slice interface.
 // The slice is cached and rebuilt only when the memory grows.
 type wasmMemory struct {
-	store *wasmtime.Store   // The store that owns the memory
-	mem   *wasmtime.Memory  // The actual wasm memory object
-	slice []byte            // Cached slice (rebuilt when memory grows)
+	store *wasmtime.Store  // The store that owns the memory
+	mem   *wasmtime.Memory // The actual wasm memory object
+	slice []byte           // Cached slice (rebuilt when memory grows)
 }
 
 // Len returns the current length of the wasm memory.

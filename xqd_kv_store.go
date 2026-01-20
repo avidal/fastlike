@@ -430,12 +430,13 @@ const (
 
 // xqd_kv_store_list initiates an async list operation
 // Config buffer layout (fixed offsets):
-//   offset 0:  mode (u32) - reserved
-//   offset 4:  cursor_ptr (u32)
-//   offset 8:  cursor_len (u32)
-//   offset 12: limit (u32)
-//   offset 16: prefix_ptr (u32)
-//   offset 20: prefix_len (u32)
+//
+//	offset 0:  mode (u32) - reserved
+//	offset 4:  cursor_ptr (u32)
+//	offset 8:  cursor_len (u32)
+//	offset 12: limit (u32)
+//	offset 16: prefix_ptr (u32)
+//	offset 20: prefix_len (u32)
 func (i *Instance) xqd_kv_store_list(
 	kvStoreHandle int32,
 	listConfigMask uint32,
