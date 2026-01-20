@@ -71,6 +71,14 @@ func validateAndApplyFramingMode(headers http.Header, mode FramingHeadersMode, l
 		return FramingHeadersModeAutomatic
 	}
 
-	// Manual mode with valid headers (or no framing headers at all)
+	if !hasContentLength && !hasTransferEncoding {
+		if logger != nil {
+			logger("missing Content-Length and Transfer-Encoding headers, falling back to automatic framing")
+		}
+		filterFramingHeaders(headers)
+		return FramingHeadersModeAutomatic
+	}
+
+	// Manual mode with valid framing headers
 	return FramingHeadersModeManuallyFromHeaders
 }

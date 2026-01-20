@@ -274,12 +274,12 @@ func TestValidateAndApplyFramingMode(t *testing.T) {
 			expectTransferEncoding: false,
 		},
 		{
-			name: "manual mode - no framing headers is valid",
+			name: "manual mode - no framing headers falls back to automatic",
 			headers: http.Header{
 				"Content-Type": []string{"text/plain"},
 			},
 			mode:                   FramingHeadersModeManuallyFromHeaders,
-			expectedMode:           FramingHeadersModeManuallyFromHeaders,
+			expectedMode:           FramingHeadersModeAutomatic,
 			expectContentLength:    false,
 			expectTransferEncoding: false,
 		},

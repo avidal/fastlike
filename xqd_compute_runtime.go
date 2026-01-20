@@ -134,6 +134,30 @@ func (i *Instance) xqd_compute_runtime_get_hostname(hostname_out int32, hostname
 	return XqdStatusOK
 }
 
+// xqd_compute_runtime_get_heap_mib returns the current heap usage in mebibytes (2^20 bytes),
+// rounded up to the nearest MiB.
+//
+// Signature: (heap_mib_out: *mut u32) -> fastly_status
+func (i *Instance) xqd_compute_runtime_get_heap_mib(heap_mib_out int32) int32 {
+	i.abilog.Printf("compute_runtime_get_heap_mib: heap_mib_out=%d", heap_mib_out)
+
+	if i.memory == nil {
+		return XqdError
+	}
+
+	const mebibyte uint64 = 1024 * 1024
+	heapBytes := uint64(i.memory.Len())
+	heapMib := (heapBytes + mebibyte - 1) / mebibyte
+	if heapMib > uint64(^uint32(0)) {
+		heapMib = uint64(^uint32(0))
+	}
+
+	i.abilog.Printf("compute_runtime_get_heap_mib: returning %d MiB (%d bytes)", heapMib, heapBytes)
+	i.memory.WriteUint32(heap_mib_out, uint32(heapMib))
+
+	return XqdStatusOK
+}
+
 // xqd_compute_runtime_get_vcpu_ms returns the amount of active CPU time (in milliseconds)
 // that has been consumed by the WebAssembly guest during request processing.
 //
