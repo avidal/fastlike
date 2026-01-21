@@ -466,7 +466,7 @@ func (f *loggerFlags) Set(v string) error {
 
 	if len(parts) == 2 {
 		filename = parts[1]
-		fd, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		fd, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			return fmt.Errorf("error opening logger file %s: %s", filename, err.Error())
 		}
