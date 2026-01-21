@@ -124,10 +124,10 @@ Use JSON files for key-value lookups:
 # Create a config file
 echo '{"api_key": "secret123", "version": "1.0.0"}' > config.json
 
-# Use as a dictionary (legacy)
+# Use as a dictionary
 fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary config=config.json
 
-# Or use as a config store (modern)
+# Or use as a config store
 fastlike -wasm my-program.wasm -backend localhost:8000 -config-store config=config.json
 ```
 
