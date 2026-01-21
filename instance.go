@@ -247,16 +247,17 @@ func (i *Instance) reset() {
 }
 
 // setup initializes a fresh wasm instance for a new request.
-// It creates a new store, configures WASI, links all host functions, and instantiates the module.
+// It creates a new store with attached instance data, configures WASI, and instantiates the module
+// using the shared linker.
 func (i *Instance) setup() {
 	// Ensure critical fields are initialized
-	if i.wasmctx == nil || i.wasmctx.engine == nil || i.wasmctx.module == nil {
+	if i.wasmctx == nil || i.wasmctx.engine == nil || i.wasmctx.module == nil || i.wasmctx.linker == nil {
 		panic("wasmctx not properly initialized")
 	}
 
-	// Create a fresh store for this request
-	// Each wasm instance needs its own store to avoid state conflicts
-	i.store = wasmtime.NewStore(i.wasmctx.engine)
+	// Create a fresh store for this request with the Instance attached as data
+	// Host functions retrieve this Instance via caller.Data() to access per-request state
+	i.store = wasmtime.NewStoreWithData(i.wasmctx.engine, i)
 
 	// Configure WASI (WebAssembly System Interface) for this store
 	wasicfg := wasmtime.NewWasiConfig()
@@ -278,17 +279,10 @@ func (i *Instance) setup() {
 	// This will be replaced with the real memory after instantiation
 	i.memory = &Memory{nil}
 
-	// Create a new linker for this store and link all host functions
-	// IMPORTANT: Each request needs its own linker to ensure closures
-	// capture the correct instance state for this specific request
-	linker := wasmtime.NewLinker(i.wasmctx.engine)
-	check(linker.DefineWasi())
-	i.link(i.store, linker)
-	i.linklegacy(i.store, linker)
-
-	// Instantiate the module with the fresh store
+	// Instantiate the module using the shared linker
+	// The linker was configured at compile time with all host functions
 	var err error
-	i.wasm, err = linker.Instantiate(i.store, i.wasmctx.module)
+	i.wasm, err = i.wasmctx.linker.Instantiate(i.store, i.wasmctx.module)
 	if err != nil {
 		panic(err)
 	}
