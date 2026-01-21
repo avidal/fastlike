@@ -116,19 +116,22 @@ fastlike -wasm my-program.wasm \
   -backend images=localhost:9000
 ```
 
-### Dictionaries
+### Dictionaries and Config Stores
 
 Use JSON files for key-value lookups:
 
 ```bash
-# Create a dictionary file
+# Create a config file
 echo '{"api_key": "secret123", "version": "1.0.0"}' > config.json
 
-# Use the dictionary in your program
+# Use as a dictionary (legacy)
 fastlike -wasm my-program.wasm -backend localhost:8000 -dictionary config=config.json
+
+# Or use as a config store (modern)
+fastlike -wasm my-program.wasm -backend localhost:8000 -config-store config=config.json
 ```
 
-The dictionary file should contain a JSON object with string keys and values:
+The file should contain a JSON object with string keys and values:
 
 ```json
 {
@@ -136,6 +139,113 @@ The dictionary file should contain a JSON object with string keys and values:
   "key2": "value2",
   "api_endpoint": "https://api.example.com"
 }
+```
+
+### KV Stores
+
+Load KV store data from JSON files or create empty stores:
+
+```bash
+# Create a KV store with initial data
+fastlike -wasm my-program.wasm -backend localhost:8000 -kv mystore=data.json
+
+# Create an empty KV store
+fastlike -wasm my-program.wasm -backend localhost:8000 -kv mystore
+```
+
+KV store JSON supports simple string values or objects with body and metadata:
+
+```json
+{
+  "simple_key": "simple value",
+  "key_with_metadata": {
+    "body": "the value content",
+    "metadata": "optional metadata"
+  }
+}
+```
+
+### Secret Stores
+
+Store sensitive credentials in JSON files:
+
+```bash
+fastlike -wasm my-program.wasm -backend localhost:8000 -secret-store secrets=secrets.json
+```
+
+Secret store JSON format (string key-value pairs):
+
+```json
+{
+  "api_key": "sk-live-xxxxx",
+  "database_password": "supersecret"
+}
+```
+
+### Access Control Lists (ACLs)
+
+Configure IP-based access control:
+
+```bash
+fastlike -wasm my-program.wasm -backend localhost:8000 -acl blocklist=acl.json
+```
+
+ACL JSON format with CIDR prefixes and actions:
+
+```json
+{
+  "entries": [
+    {"prefix": "192.168.0.0/16", "action": "ALLOW"},
+    {"prefix": "10.0.0.0/8", "action": "ALLOW"},
+    {"prefix": "172.16.0.0/12", "action": "BLOCK"}
+  ]
+}
+```
+
+### Geolocation
+
+Provide custom IP-to-location mappings:
+
+```bash
+fastlike -wasm my-program.wasm -backend localhost:8000 -geo geo.json
+```
+
+Geo JSON maps IP addresses or CIDRs to location data:
+
+```json
+{
+  "192.168.1.0/24": {
+    "city": "San Francisco",
+    "country_code": "US",
+    "region": "CA",
+    "latitude": 37.7749,
+    "longitude": -122.4194
+  },
+  "10.0.0.1": {
+    "city": "New York",
+    "country_code": "US"
+  }
+}
+```
+
+### Log Endpoints
+
+Configure named log endpoints for your application:
+
+```bash
+# Log to stdout
+fastlike -wasm my-program.wasm -backend localhost:8000 -logger access
+
+# Log to a file
+fastlike -wasm my-program.wasm -backend localhost:8000 -logger access=/var/log/access.log
+```
+
+### Compliance Region
+
+Set the compliance region for data locality requirements:
+
+```bash
+fastlike -wasm my-program.wasm -backend localhost:8000 -compliance-region us-eu
 ```
 
 ### Hot Reloading
@@ -207,15 +317,20 @@ python3 -m http.server 8000 &  # Static files
 node app.js 8080 &             # API server
 npx serve public/ 9000 &       # Another service
 
-# Run Fastlike with multiple backends
+# Run Fastlike with multiple backends and stores
 fastlike -wasm my-program.wasm \
   -backend static=localhost:8000 \
   -backend api=localhost:8080 \
   -backend images=localhost:9000 \
-  -dictionary config=config.json \
+  -config-store config=config.json \
+  -secret-store secrets=secrets.json \
+  -kv cache=cache.json \
+  -acl blocklist=acl.json \
+  -geo geo.json \
+  -logger access \
   -bind localhost:5000
 
-# Now your WASM program can route to any of these backends by name
+# Now your WASM program can use all configured backends and stores
 ```
 
 ### Development Workflow with Hot Reloading
