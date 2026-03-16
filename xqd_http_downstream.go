@@ -712,6 +712,170 @@ func (i *Instance) xqd_http_downstream_compliance_region(
 	return XqdStatusOK
 }
 
+// botInfoAbsent is a sentinel indicating the BotDetectionFunc returned nil.
+// Distinguishes "not yet called" (cachedBotInfo == nil) from "called, returned nil".
+var botInfoAbsent = &BotInfo{}
+
+// getBotInfo validates the handle is the downstream request handle and returns
+// cached bot detection info. Results are memoized per-request to avoid redundant
+// calls to the user-provided BotDetectionFunc.
+//
+// Return values:
+//   - (nil, XqdErrInvalidHandle): handle is not a valid request
+//   - (nil, XqdErrNone): handle is valid but not the downstream request
+//   - (nil, XqdStatusOK): downstream handle, but no bot data available
+//   - (info, XqdStatusOK): downstream handle with bot data
+func (i *Instance) getBotInfo(req_handle int32) (*BotInfo, int32) {
+	if i.requests.Get(int(req_handle)) == nil {
+		return nil, XqdErrInvalidHandle
+	}
+	if req_handle != i.downstreamRequestHandle {
+		return nil, XqdErrNone
+	}
+	if i.cachedBotInfo != nil {
+		if i.cachedBotInfo == botInfoAbsent {
+			return nil, XqdStatusOK
+		}
+		return i.cachedBotInfo, XqdStatusOK
+	}
+	if i.botDetection == nil {
+		return nil, XqdStatusOK
+	}
+	result := i.botDetection(i.ds_request)
+	if result == nil {
+		i.cachedBotInfo = botInfoAbsent
+		return nil, XqdStatusOK
+	}
+	i.cachedBotInfo = result
+	return i.cachedBotInfo, XqdStatusOK
+}
+
+// xqd_http_downstream_bot_analyzed checks if bot analysis has been performed on this request.
+func (i *Instance) xqd_http_downstream_bot_analyzed(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_analyzed: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+
+	var result uint32
+	if info != nil && info.Analyzed {
+		result = 1
+	}
+
+	i.memory.PutUint32(result, int64(result_out))
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_bot_detected checks if a bot was detected in the downstream request.
+func (i *Instance) xqd_http_downstream_bot_detected(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_detected: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+
+	var result uint32
+	if info != nil && info.Detected {
+		result = 1
+	}
+
+	i.memory.PutUint32(result, int64(result_out))
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_bot_name returns the name of the detected bot.
+// Returns XqdErrNone if bot analysis is not available or no bot was detected.
+func (i *Instance) xqd_http_downstream_bot_name(req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_name: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil || info.Name == "" {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	nameBytes := []byte(info.Name)
+	if int32(len(nameBytes)) > maxlen {
+		i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	nwritten, _ := i.memory.WriteAt(nameBytes, int64(buf))
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_bot_category returns the category of the detected bot.
+// Returns XqdErrNone if bot analysis is not available or no bot was detected.
+func (i *Instance) xqd_http_downstream_bot_category(req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_category: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil || info.Category == "" {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	catBytes := []byte(info.Category)
+	if int32(len(catBytes)) > maxlen {
+		i.memory.PutUint32(uint32(len(catBytes)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	nwritten, _ := i.memory.WriteAt(catBytes, int64(buf))
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_bot_category_kind returns the category kind enum for the detected bot.
+// Returns XqdErrNone if bot analysis is not available.
+func (i *Instance) xqd_http_downstream_bot_category_kind(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_category_kind: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil {
+		i.memory.PutUint32(0, int64(result_out))
+		return XqdErrNone
+	}
+
+	i.memory.PutUint32(info.CategoryKind, int64(result_out))
+	return XqdStatusOK
+}
+
+// xqd_http_downstream_bot_verified checks if the detected bot has been verified.
+// Returns XqdErrNone if bot analysis is not available.
+func (i *Instance) xqd_http_downstream_bot_verified(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_bot_verified: req=%d", req_handle)
+
+	info, status := i.getBotInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil || info.Verified == nil {
+		i.memory.PutUint32(0, int64(result_out))
+		return XqdErrNone
+	}
+
+	var result uint32
+	if *info.Verified {
+		result = 1
+	}
+	i.memory.PutUint32(result, int64(result_out))
+	return XqdStatusOK
+}
+
 // xqd_http_downstream_fastly_key_is_valid checks if the request has a valid Fastly-Key for purging.
 // Writes 0 (false) or 1 (true) to is_valid_out pointer.
 //

@@ -718,6 +718,43 @@ func (i *Instance) xqd_http_cache_get_stale_while_revalidate_ns(
 	return XqdStatusOK
 }
 
+// xqd_http_cache_get_stale_if_error_ns gets stale-if-error duration
+func (i *Instance) xqd_http_cache_get_stale_if_error_ns(
+	cache_handle int32,
+	duration_out int32,
+) int32 {
+	i.abilog.Println("http_cache_get_stale_if_error_ns")
+
+	handle := i.cacheHandles.Get(int(cache_handle))
+	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+		return XqdErrInvalidHandle
+	}
+
+	obj := handle.Transaction.Entry.Object
+	i.memory.WriteUint64(duration_out, obj.StaleIfErrorNs)
+
+	return XqdStatusOK
+}
+
+// xqd_http_cache_transaction_choose_stale resolves a transaction with a stale response
+// if one is available within the stale-if-error window
+func (i *Instance) xqd_http_cache_transaction_choose_stale(cache_handle int32) int32 {
+	i.abilog.Println("http_cache_transaction_choose_stale")
+
+	handle := i.cacheHandles.Get(int(cache_handle))
+	if handle == nil || handle.Transaction == nil {
+		return XqdErrInvalidHandle
+	}
+
+	if !i.cache.TransactionChooseStale(handle.Transaction) {
+		return XqdErrNone
+	}
+
+	// Complete the transaction (like transaction_update_and_return_fresh)
+	i.cache.CompleteTransaction(handle.Transaction)
+	return XqdStatusOK
+}
+
 // xqd_http_cache_get_age_ns gets age of cached object
 func (i *Instance) xqd_http_cache_get_age_ns(
 	cache_handle int32,
@@ -878,6 +915,7 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 		HttpCacheWriteOptionsMaskSurrogateKeys          = 1 << 4
 		HttpCacheWriteOptionsMaskLength                 = 1 << 5
 		HttpCacheWriteOptionsMaskSensitiveData          = 1 << 6
+		HttpCacheWriteOptionsMaskStaleIfErrorNs         = 1 << 7
 	)
 
 	// Read vary_rule
@@ -924,6 +962,12 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 	// Read sensitive_data flag
 	if mask&HttpCacheWriteOptionsMaskSensitiveData != 0 {
 		opts.SensitiveData = true
+	}
+
+	// Read stale_if_error_ns at offset 48 (after length at offset 40, which is 8 bytes)
+	if mask&HttpCacheWriteOptionsMaskStaleIfErrorNs != 0 {
+		val := i.memory.ReadUint64(optionsPtr + 48)
+		opts.StaleIfErrorNs = &val
 	}
 
 	return opts

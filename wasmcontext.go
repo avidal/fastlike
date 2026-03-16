@@ -321,6 +321,12 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_cache", "get_vary_rule", safeWrap4("get_vary_rule", func(i *Instance, cache_handle int32, vary_rule_out int32, vary_rule_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_http_cache_get_vary_rule(cache_handle, vary_rule_out, vary_rule_max_len, nwritten_out)
 	}))
+	_ = linker.FuncWrap("fastly_http_cache", "get_stale_if_error_ns", safeWrap2("get_stale_if_error_ns", func(i *Instance, cache_handle int32, stale_if_error_ns_out int32) int32 {
+		return i.xqd_http_cache_get_stale_if_error_ns(cache_handle, stale_if_error_ns_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_cache", "transaction_choose_stale", safeWrap1("transaction_choose_stale", func(i *Instance, cache_handle int32) int32 {
+		return i.xqd_http_cache_transaction_choose_stale(cache_handle)
+	}))
 
 	// xqd.go
 	// Use FuncWrap for v37 compatibility with *Caller parameter
@@ -975,6 +981,34 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_downstream", "fastly_key_is_valid", safeWrap2("fastly_key_is_valid", func(i *Instance, req_handle int32, is_valid_out int32) int32 {
 		return i.xqd_http_downstream_fastly_key_is_valid(req_handle, is_valid_out)
 	}))
+
+	// Bot detection
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_analyzed", safeWrap2("downstream_bot_analyzed", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_bot_analyzed(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_detected", safeWrap2("downstream_bot_detected", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_bot_detected(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_name", safeWrap4("downstream_bot_name", func(i *Instance, req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_bot_name(req_handle, buf, maxlen, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_category", safeWrap4("downstream_bot_category", func(i *Instance, req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_bot_category(req_handle, buf, maxlen, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_category_kind", safeWrap2("downstream_bot_category_kind", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_bot_category_kind(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_bot_verified", safeWrap2("downstream_bot_verified", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_bot_verified(req_handle, result_out)
+	}))
+
+	// xqd_shielding.go
+	_ = linker.FuncWrap("fastly_shielding", "shield_info", safeWrap5("shield_info", func(i *Instance, name_addr int32, name_size int32, info_out int32, info_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_shield_info(name_addr, name_size, info_out, info_max_len, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_shielding", "backend_for_shield", safeWrap7("backend_for_shield", func(i *Instance, name_addr int32, name_size int32, config_mask int32, config_ptr int32, backend_name_out int32, backend_name_max_len int32, nwritten_out int32) int32 {
+		return i.xqd_backend_for_shield(name_addr, name_size, config_mask, config_ptr, backend_name_out, backend_name_max_len, nwritten_out)
+	}))
 }
 
 // linklegacy binds legacy XQD ABI functions using old naming conventions (xqd_*, env module).
@@ -1237,5 +1271,33 @@ func linklegacy(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja3_md5", safeWrap3("xqd_req_downstream_tls_ja3_md5", func(i *Instance, a int32, b int32, c int32) int32 { return i.xqd_http_downstream_tls_ja3_md5(a, b, c) }))
 	_ = linker.FuncWrap("env", "xqd_req_downstream_tls_ja4", safeWrap4("xqd_req_downstream_tls_ja4", func(i *Instance, a int32, b int32, c int32, d int32) int32 {
 		return i.xqd_http_downstream_tls_ja4(a, b, c, d)
+	}))
+
+	// Bot detection (legacy)
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_analyzed", safeWrap2("xqd_http_downstream_bot_analyzed", func(i *Instance, a int32, b int32) int32 {
+		return i.xqd_http_downstream_bot_analyzed(a, b)
+	}))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_detected", safeWrap2("xqd_http_downstream_bot_detected", func(i *Instance, a int32, b int32) int32 {
+		return i.xqd_http_downstream_bot_detected(a, b)
+	}))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_name", safeWrap4("xqd_http_downstream_bot_name", func(i *Instance, a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_bot_name(a, b, c, d)
+	}))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_category", safeWrap4("xqd_http_downstream_bot_category", func(i *Instance, a int32, b int32, c int32, d int32) int32 {
+		return i.xqd_http_downstream_bot_category(a, b, c, d)
+	}))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_category_kind", safeWrap2("xqd_http_downstream_bot_category_kind", func(i *Instance, a int32, b int32) int32 {
+		return i.xqd_http_downstream_bot_category_kind(a, b)
+	}))
+	_ = linker.FuncWrap("env", "xqd_http_downstream_bot_verified", safeWrap2("xqd_http_downstream_bot_verified", func(i *Instance, a int32, b int32) int32 {
+		return i.xqd_http_downstream_bot_verified(a, b)
+	}))
+
+	// Shielding (legacy)
+	_ = linker.FuncWrap("env", "xqd_shield_info", safeWrap5("xqd_shield_info", func(i *Instance, a int32, b int32, c int32, d int32, e int32) int32 {
+		return i.xqd_shield_info(a, b, c, d, e)
+	}))
+	_ = linker.FuncWrap("env", "xqd_backend_for_shield", safeWrap7("xqd_backend_for_shield", func(i *Instance, a int32, b int32, c int32, d int32, e int32, f int32, g int32) int32 {
+		return i.xqd_backend_for_shield(a, b, c, d, e, f, g)
 	}))
 }

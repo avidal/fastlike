@@ -93,10 +93,15 @@ type Instance struct {
 	cacheBusyHandles    *CacheBusyHandles    // Handle tracking for async cache operations
 	cacheReplaceHandles *CacheReplaceHandles // Handle tracking for cache replace operations
 
+	// Shield configuration
+	shields map[string]*Shield // Named shields for shielding module
+
 	// Request processing functions
 	geolookup        func(net.IP) Geo            // Geographic lookup from IP address
 	uaparser         UserAgentParser             // User agent parsing
 	deviceDetection  DeviceLookupFunc            // Device detection from user agent string
+	botDetection     BotDetectionFunc            // Bot detection from request
+	cachedBotInfo    *BotInfo                    // Per-request memoized bot detection result
 	imageOptimizer   ImageOptimizerTransformFunc // Image transformation hook
 	secureFn         func(*http.Request) bool    // Determines if request is "secure" (default: checks TLS)
 	complianceRegion string                      // GDPR/data locality region (e.g., "none", "us-eu", "us")
@@ -145,6 +150,7 @@ func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
 	i.kvStoreRegistry = map[string]*KVStore{}
 	i.secretStores = []secretStore{}
 	i.acls = map[string]*Acl{}
+	i.shields = map[string]*Shield{}
 	i.rateCounters = []rateCounterEntry{}
 	i.penaltyBoxes = []penaltyBoxEntry{}
 
@@ -235,6 +241,7 @@ func (i *Instance) reset() {
 	i.ds_request = nil
 	i.ds_context = nil
 	i.downstreamRequestHandle = 0
+	i.cachedBotInfo = nil
 
 	// Clear wasm state (will be re-initialized on next request)
 	i.wasm = nil
