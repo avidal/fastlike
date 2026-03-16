@@ -18,6 +18,7 @@ type CachedObject struct {
 	MaxAgeNs               uint64
 	InitialAgeNs           uint64
 	StaleWhileRevalidateNs uint64
+	StaleIfErrorNs         uint64
 	EdgeMaxAgeNs           uint64
 	VaryRule               string
 	SurrogateKeys          []string
@@ -75,6 +76,7 @@ type CacheWriteOptions struct {
 	UserMetadata           []byte
 	EdgeMaxAgeNs           *uint64
 	SensitiveData          bool
+	StaleIfErrorNs         *uint64
 }
 
 // CacheReplaceStrategy defines how to handle cache replacement
@@ -367,6 +369,9 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 	if options.EdgeMaxAgeNs != nil {
 		obj.EdgeMaxAgeNs = *options.EdgeMaxAgeNs
 	}
+	if options.StaleIfErrorNs != nil {
+		obj.StaleIfErrorNs = *options.StaleIfErrorNs
+	}
 
 	keyStr := cacheKey(key)
 	c.objects[keyStr] = append(c.objects[keyStr], obj)
@@ -401,6 +406,9 @@ func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptio
 	if options.EdgeMaxAgeNs != nil {
 		obj.EdgeMaxAgeNs = *options.EdgeMaxAgeNs
 	}
+	if options.StaleIfErrorNs != nil {
+		obj.StaleIfErrorNs = *options.StaleIfErrorNs
+	}
 	if options.UserMetadata != nil {
 		obj.UserMetadata = options.UserMetadata
 	}
@@ -431,6 +439,30 @@ func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
 
 	keyStr := cacheKey(tx.Key)
 	delete(c.transactions, keyStr)
+}
+
+// TransactionChooseStale resolves a cache transaction with a stale object if one is available
+// within the stale-if-error window. Returns true if a stale object was chosen.
+func (c *Cache) TransactionChooseStale(tx *CacheTransaction) bool {
+	if tx.Entry == nil || tx.Entry.Object == nil {
+		return false
+	}
+
+	obj := tx.Entry.Object
+	if obj.StaleIfErrorNs == 0 {
+		return false
+	}
+
+	age := obj.GetAge()
+	// Object must be stale (past max_age) but within the stale-if-error window
+	if age > obj.MaxAgeNs && age <= obj.MaxAgeNs+obj.StaleIfErrorNs {
+		// Resolve the transaction with the stale object
+		tx.Entry.State.MustInsertOrUpdate = false
+		tx.Entry.State.Usable = true
+		return true
+	}
+
+	return false
 }
 
 // PurgeSurrogateKey performs a hard purge of all cache entries tagged with the surrogate key.

@@ -147,6 +147,22 @@ func WithImageOptimizer(fn ImageOptimizerTransformFunc) Option {
 	}
 }
 
+// WithBotDetection is an Option that provides bot detection data for requests.
+// The function takes an HTTP request and returns bot detection info.
+// If not set, bot analysis always returns false (matching Viceroy's default behavior).
+func WithBotDetection(fn BotDetectionFunc) Option {
+	return func(i *Instance) {
+		i.botDetection = fn
+	}
+}
+
+// WithShield registers a shield POP configuration for the shielding module.
+func WithShield(name string, shield *Shield) Option {
+	return func(i *Instance) {
+		i.shields[name] = shield
+	}
+}
+
 // WithVerbosity controls logging verbosity for ABI calls and system-level operations.
 //   - Level 0 (default): No logging
 //   - Level 1: System-level logs to stderr
