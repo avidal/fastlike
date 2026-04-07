@@ -135,10 +135,9 @@ type BodyHandle struct {
 
 	// Streaming body support (for send_async_streaming XQD call)
 	isStreaming      bool
-	streamingWriter  *io.PipeWriter // writes go here from guest
-	streamingChan    chan []byte    // buffered channel for backpressure control
-	streamingDone    chan struct{}  // closed when streaming completes or is cancelled
-	streamingWritten int64          // total bytes written to streaming body so far
+	streamingChan    chan []byte   // buffered channel for backpressure control
+	streamingDone    chan struct{} // closed when streaming completes or is cancelled
+	streamingWritten int64         // total bytes written to streaming body so far
 }
 
 // Close implements io.Closer for a BodyHandle.
@@ -232,15 +231,12 @@ func (b *BodyHandle) RedirectWriter(w io.Writer) {
 	b.writer = w
 }
 
-// CloseStreaming closes the streaming body writer
+// CloseStreaming closes the streaming body by sending a nil sentinel.
 func (b *BodyHandle) CloseStreaming() error {
 	if !b.isStreaming {
 		return nil
 	}
-	if b.streamingWriter != nil {
-		return b.streamingWriter.Close()
-	}
-	return nil
+	return b.Close()
 }
 
 // BodyHandles is a slice of BodyHandle with methods to get and create

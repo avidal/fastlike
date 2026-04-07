@@ -1746,11 +1746,8 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		// Copy the response
 		for k, v := range resp.Header {
-			for _, vv := range v {
-				w.Header().Add(k, vv)
-			}
+			w.Header()[k] = v
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)

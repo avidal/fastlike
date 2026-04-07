@@ -167,9 +167,7 @@ func (i *Instance) xqd_backend_for_shield(
 		defer func() { _ = resp.Body.Close() }()
 
 		for k, v := range resp.Header {
-			for _, vv := range v {
-				w.Header().Add(k, vv)
-			}
+			w.Header()[k] = v
 		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
