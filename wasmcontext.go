@@ -1002,6 +1002,41 @@ func link(linker *wasmtime.Linker) {
 		return i.xqd_http_downstream_bot_verified(req_handle, result_out)
 	}))
 
+	// VPN/proxy intelligence
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_anonymous", safeWrap2("downstream_resvpnproxy_is_anonymous", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_anonymous(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_anonymous_vpn", safeWrap2("downstream_resvpnproxy_is_anonymous_vpn", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_anonymous_vpn(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_hosting_provider", safeWrap2("downstream_resvpnproxy_is_hosting_provider", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_hosting_provider(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_proxy_over_vpn", safeWrap2("downstream_resvpnproxy_is_proxy_over_vpn", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_proxy_over_vpn(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_public_proxy", safeWrap2("downstream_resvpnproxy_is_public_proxy", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_public_proxy(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_relay_proxy", safeWrap2("downstream_resvpnproxy_is_relay_proxy", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_relay_proxy(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_residential_proxy", safeWrap2("downstream_resvpnproxy_is_residential_proxy", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_residential_proxy(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_smart_dns_proxy", safeWrap2("downstream_resvpnproxy_is_smart_dns_proxy", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_smart_dns_proxy(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_tor_exit_node", safeWrap2("downstream_resvpnproxy_is_tor_exit_node", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_tor_exit_node(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_is_vpn_datacenter", safeWrap2("downstream_resvpnproxy_is_vpn_datacenter", func(i *Instance, req_handle int32, result_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_is_vpn_datacenter(req_handle, result_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_downstream", "downstream_resvpnproxy_vpn_service_name", safeWrap4("downstream_resvpnproxy_vpn_service_name", func(i *Instance, req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+		return i.xqd_http_downstream_resvpnproxy_vpn_service_name(req_handle, buf, maxlen, nwritten_out)
+	}))
+
 	// xqd_shielding.go
 	_ = linker.FuncWrap("fastly_shielding", "shield_info", safeWrap5("shield_info", func(i *Instance, name_addr int32, name_size int32, info_out int32, info_max_len int32, nwritten_out int32) int32 {
 		return i.xqd_shield_info(name_addr, name_size, info_out, info_max_len, nwritten_out)
