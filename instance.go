@@ -15,6 +15,15 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v38"
 )
 
+func isCleanExit(err error) bool {
+	if wtErr, ok := err.(*wasmtime.Error); ok {
+		if status, ok := wtErr.ExitStatus(); ok && status == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Instance is an implementation of the XQD ABI along with a wasmtime.Instance configured to use it.
 // Each instance handles exactly one HTTP request/response pair, as the XQD ABI is designed for
 // single-request semantics. After serving a request, instances are reset and can be reused.
@@ -381,8 +390,11 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Signal that execution is complete
 	donech <- struct{}{}
 
-	// Handle wasm execution errors
-	if err != nil {
+	// Handle wasm execution errors.
+	// A clean exit (exit code 0) is normal for WASI programs — wasmtime
+	// reports it as an error but it's not one. Only write the error
+	// response for actual failures.
+	if err != nil && !isCleanExit(err) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("Error running wasm program.\n"))
 		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))

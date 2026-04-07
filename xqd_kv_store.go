@@ -20,10 +20,8 @@ func (i *Instance) xqd_kv_store_open(
 		return XqdError
 	}
 
-	storeName := string(nameBuf)
-
 	// Look up the store in the registry
-	store, exists := i.kvStoreRegistry[storeName]
+	store, exists := i.kvStoreRegistry[string(nameBuf)]
 	if !exists {
 		// Store not found - return INVAL which the Rust SDK maps to StoreNotFound
 		return XqdErrInvalidArgument
