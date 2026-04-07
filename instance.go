@@ -102,6 +102,8 @@ type Instance struct {
 	deviceDetection  DeviceLookupFunc            // Device detection from user agent string
 	botDetection     BotDetectionFunc            // Bot detection from request
 	cachedBotInfo    *BotInfo                    // Per-request memoized bot detection result
+	vpnProxy         VpnProxyFunc                // VPN/proxy intelligence from request
+	cachedVpnProxy   *VpnProxyInfo               // Per-request memoized VPN proxy result
 	imageOptimizer   ImageOptimizerTransformFunc // Image transformation hook
 	secureFn         func(*http.Request) bool    // Determines if request is "secure" (default: checks TLS)
 	complianceRegion string                      // GDPR/data locality region (e.g., "none", "us-eu", "us")
@@ -242,6 +244,7 @@ func (i *Instance) reset() {
 	i.ds_context = nil
 	i.downstreamRequestHandle = 0
 	i.cachedBotInfo = nil
+	i.cachedVpnProxy = nil
 
 	// Clear wasm state (will be re-initialized on next request)
 	i.wasm = nil

@@ -156,6 +156,15 @@ func WithBotDetection(fn BotDetectionFunc) Option {
 	}
 }
 
+// WithVpnProxy is an Option that provides VPN/proxy intelligence data for requests.
+// The function takes an HTTP request and returns VPN/proxy info.
+// If not set, all VPN proxy hostcalls return NONE (matching Viceroy's stub behavior).
+func WithVpnProxy(fn VpnProxyFunc) Option {
+	return func(i *Instance) {
+		i.vpnProxy = fn
+	}
+}
+
 // WithShield registers a shield POP configuration for the shielding module.
 func WithShield(name string, shield *Shield) Option {
 	return func(i *Instance) {

@@ -16,8 +16,8 @@ type Shield struct {
 
 // Shield backend options mask bits (from shielding.witx)
 const (
-	ShieldBackendOptionsReserved        uint32 = 1 << 0
-	ShieldBackendOptionsUseCacheKey     uint32 = 1 << 1
+	ShieldBackendOptionsReserved         uint32 = 1 << 0
+	ShieldBackendOptionsUseCacheKey      uint32 = 1 << 1
 	ShieldBackendOptionsFirstByteTimeout uint32 = 1 << 2
 )
 

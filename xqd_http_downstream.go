@@ -876,6 +876,126 @@ func (i *Instance) xqd_http_downstream_bot_verified(req_handle int32, result_out
 	return XqdStatusOK
 }
 
+var vpnProxyAbsent = &VpnProxyInfo{}
+
+func (i *Instance) getVpnProxyInfo(req_handle int32) (*VpnProxyInfo, int32) {
+	if i.requests.Get(int(req_handle)) == nil {
+		return nil, XqdErrInvalidHandle
+	}
+	if req_handle != i.downstreamRequestHandle {
+		return nil, XqdErrNone
+	}
+	if i.cachedVpnProxy != nil {
+		if i.cachedVpnProxy == vpnProxyAbsent {
+			return nil, XqdStatusOK
+		}
+		return i.cachedVpnProxy, XqdStatusOK
+	}
+	if i.vpnProxy == nil {
+		return nil, XqdStatusOK
+	}
+	result := i.vpnProxy(i.ds_request)
+	if result == nil {
+		i.cachedVpnProxy = vpnProxyAbsent
+		return nil, XqdStatusOK
+	}
+	i.cachedVpnProxy = result
+	return i.cachedVpnProxy, XqdStatusOK
+}
+
+func (i *Instance) vpnProxyBool(req_handle int32, result_out int32, field func(*VpnProxyInfo) *bool) int32 {
+	info, status := i.getVpnProxyInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil {
+		return XqdErrNone
+	}
+	val := field(info)
+	if val == nil {
+		return XqdErrNone
+	}
+	var out uint32
+	if *val {
+		out = 1
+	}
+	i.memory.PutUint32(out, int64(result_out))
+	return XqdStatusOK
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_anonymous(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_anonymous: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsAnonymous })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_anonymous_vpn(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_anonymous_vpn: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsAnonymousVPN })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_hosting_provider(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_hosting_provider: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsHostingProvider })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_proxy_over_vpn(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_proxy_over_vpn: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsProxyOverVPN })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_public_proxy(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_public_proxy: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsPublicProxy })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_relay_proxy(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_relay_proxy: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsRelayProxy })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_residential_proxy(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_residential_proxy: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsResidentialProxy })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_smart_dns_proxy(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_smart_dns_proxy: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsSmartDNSProxy })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_tor_exit_node(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_tor_exit_node: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsTorExitNode })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_is_vpn_datacenter(req_handle int32, result_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_is_vpn_datacenter: req=%d", req_handle)
+	return i.vpnProxyBool(req_handle, result_out, func(v *VpnProxyInfo) *bool { return v.IsVPNDatacenter })
+}
+
+func (i *Instance) xqd_http_downstream_resvpnproxy_vpn_service_name(req_handle int32, buf int32, maxlen int32, nwritten_out int32) int32 {
+	i.abilog.Printf("http_downstream_resvpnproxy_vpn_service_name: req=%d", req_handle)
+
+	info, status := i.getVpnProxyInfo(req_handle)
+	if status != XqdStatusOK {
+		return status
+	}
+	if info == nil || info.ServiceName == "" {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdErrNone
+	}
+
+	nameBytes := []byte(info.ServiceName)
+	if int32(len(nameBytes)) > maxlen {
+		i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+
+	nwritten, _ := i.memory.WriteAt(nameBytes, int64(buf))
+	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
+	return XqdStatusOK
+}
+
 // xqd_http_downstream_fastly_key_is_valid checks if the request has a valid Fastly-Key for purging.
 // Writes 0 (false) or 1 (true) to is_valid_out pointer.
 //
