@@ -141,8 +141,16 @@ type BodyHandle struct {
 	streamingWritten int64          // total bytes written to streaming body so far
 }
 
-// Close implements io.Closer for a BodyHandle
+// Close implements io.Closer for a BodyHandle.
+// For streaming bodies, this signals the drain goroutine to finish
+// by sending a nil sentinel to the channel.
 func (b *BodyHandle) Close() error {
+	if b.isStreaming && b.streamingChan != nil {
+		select {
+		case b.streamingChan <- nil:
+		default:
+		}
+	}
 	if b.closer != nil {
 		return b.closer.Close()
 	}
@@ -216,6 +224,12 @@ func (b *BodyHandle) WriteStreaming(p []byte) (int, error) {
 	case <-b.streamingDone:
 		return 0, io.ErrClosedPipe
 	}
+}
+
+// RedirectWriter changes the body handle's writer to w. Future Write calls
+// (from body_write in the guest) go directly to w instead of the internal buffer.
+func (b *BodyHandle) RedirectWriter(w io.Writer) {
+	b.writer = w
 }
 
 // CloseStreaming closes the streaming body writer

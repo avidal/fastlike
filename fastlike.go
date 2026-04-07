@@ -82,8 +82,8 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Protect against sending to a channel that might have been replaced during reload
 	func() {
 		defer func() {
-			// Recover from panic if channel was replaced during reload
-			recover()
+			// Recover from panic if channel was replaced during reload.
+			_ = recover()
 		}()
 		select {
 		case instances <- i:

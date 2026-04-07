@@ -202,7 +202,7 @@ func (f *dictionaryFlags) Set(v string) error {
 	if err != nil {
 		return fmt.Errorf("error opening dictionary file %s, got %s", filename, err.Error())
 	}
-	defer fd.Close()
+	defer func() { _ = fd.Close() }()
 
 	content := map[string]string{}
 	if err := json.NewDecoder(fd).Decode(&content); err != nil {
@@ -258,7 +258,7 @@ func (f *kvStoreFlags) Set(v string) error {
 		if err != nil {
 			return fmt.Errorf("error opening KV store file %s: %s", filename, err.Error())
 		}
-		defer fd.Close()
+		defer func() { _ = fd.Close() }()
 
 		// Parse as map of string to any (value can be string or object with body/metadata)
 		var content map[string]json.RawMessage
@@ -328,7 +328,7 @@ func (f *configStoreFlags) Set(v string) error {
 	if err != nil {
 		return fmt.Errorf("error opening config store file %s: %s", filename, err.Error())
 	}
-	defer fd.Close()
+	defer func() { _ = fd.Close() }()
 
 	content := map[string]string{}
 	if err := json.NewDecoder(fd).Decode(&content); err != nil {
@@ -377,7 +377,7 @@ func (f *secretStoreFlags) Set(v string) error {
 	if err != nil {
 		return fmt.Errorf("error opening secret store file %s: %s", filename, err.Error())
 	}
-	defer fd.Close()
+	defer func() { _ = fd.Close() }()
 
 	content := map[string]string{}
 	if err := json.NewDecoder(fd).Decode(&content); err != nil {

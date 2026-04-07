@@ -79,15 +79,12 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 }
 
 // xqd_resp_send_downstream sends the response and body to the downstream client.
-// Copies response headers and body to the output stream. Streaming mode is not currently supported.
+// When stream is 0, copies the body immediately. When stream is non-zero, sends
+// headers immediately and redirects the body handle's writer to the response so
+// that future body_write calls stream directly to the client.
 // Respects the framing headers mode set on the response handle.
-// Returns XqdErrInvalidHandle if handles are invalid, XqdErrUnsupported for streaming, XqdStatusOK on success.
+// Returns XqdErrInvalidHandle if handles are invalid, XqdStatusOK on success.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
-	if stream != 0 {
-		i.abilog.Printf("resp_send_downstream: streaming unsupported")
-		return XqdErrUnsupported
-	}
-
 	w, b := i.responses.Get(int(whandle)), i.bodies.Get(int(bhandle))
 	if w == nil {
 		i.abilog.Printf("resp_send_downstream: invalid response handle %d", whandle)
@@ -96,7 +93,6 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 		i.abilog.Printf("resp_send_downstream: invalid body handle %d", bhandle)
 		return XqdErrInvalidHandle
 	}
-	defer func() { _ = b.Close() }()
 
 	// Clone headers so we don't modify the original
 	headers := w.Header.Clone()
@@ -106,7 +102,7 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 		i.abilog.Printf("resp_send_downstream: "+format, args...)
 	})
 
-	i.abilog.Printf("resp_send_downstream: framing_mode=%d effective_mode=%d", w.framingHeadersMode, effectiveMode)
+	i.abilog.Printf("resp_send_downstream: stream=%d framing_mode=%d effective_mode=%d", stream, w.framingHeadersMode, effectiveMode)
 
 	for k, v := range headers {
 		i.ds_response.Header()[k] = v
@@ -114,6 +110,15 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 
 	i.ds_response.WriteHeader(w.StatusCode)
 
+	if stream != 0 {
+		// Streaming mode: redirect the body handle's writer to the HTTP
+		// response so that future body_write calls go directly to the client.
+		b.RedirectWriter(i.ds_response)
+		return XqdStatusOK
+	}
+
+	// Non-streaming: copy body immediately and close.
+	defer func() { _ = b.Close() }()
 	_, err := io.Copy(i.ds_response, b)
 	if err != nil {
 		i.abilog.Printf("resp_send_downstream: copy err, got %s", err.Error())

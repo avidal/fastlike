@@ -731,8 +731,9 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		// Manual mode: use the Content-Length from headers if present
 		if cl := req.Header.Get("Content-Length"); cl != "" {
 			var contentLength int64
-			fmt.Sscanf(cl, "%d", &contentLength)
-			req.ContentLength = contentLength
+			if _, err := fmt.Sscanf(cl, "%d", &contentLength); err == nil {
+				req.ContentLength = contentLength
+			}
 		}
 	}
 
@@ -891,8 +892,9 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 			// Manual mode: use the Content-Length from headers if present
 			if cl := httpReq.Header.Get("Content-Length"); cl != "" {
 				var contentLength int64
-				fmt.Sscanf(cl, "%d", &contentLength)
-				httpReq.ContentLength = contentLength
+				if _, err := fmt.Sscanf(cl, "%d", &contentLength); err == nil {
+					httpReq.ContentLength = contentLength
+				}
 			}
 		}
 
@@ -961,56 +963,37 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	// Read initial body content
 	initialBody, _ := io.ReadAll(b)
 
-	// Create pipe for streaming
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Convert body handle to streaming mode
+	// Convert body handle to streaming mode. Guest writes go to the
+	// channel; a goroutine buffers them and sends the HTTP request
+	// once the body is closed, using bytes.NewReader so Go's HTTP
+	// stack sends with Content-Length instead of chunked encoding.
 	b.isStreaming = true
-	b.streamingWriter = pipeWriter
-	b.streamingChan = make(chan []byte, 128) // Buffered channel for backpressure (128 * 8KB ~= 1MB buffer)
+	b.streamingChan = make(chan []byte, 128)
 	b.streamingDone = make(chan struct{})
 	b.streamingWritten = 0
-
-	// Start goroutine to drain channel to pipe
-	go func() {
-		defer close(b.streamingDone)
-
-		// First write the initial body
-		if len(initialBody) > 0 {
-			_, _ = pipeWriter.Write(initialBody)
-		}
-
-		pipeOpen := true
-		// Then drain the channel, writing chunks to the pipe (or discarding if pipe closed)
-		for chunk := range b.streamingChan {
-			if chunk == nil {
-				// Sentinel value to close
-				break
-			}
-			if pipeOpen {
-				_, err := pipeWriter.Write(chunk)
-				if err != nil {
-					// Pipe closed by backend, but keep draining channel to prevent blocking
-					_ = pipeWriter.Close()
-					pipeOpen = false
-				}
-			}
-			// If pipe is closed, just discard the data (backend finished early)
-		}
-
-		// Close pipe if still open
-		if pipeOpen {
-			_ = pipeWriter.Close()
-		}
-	}()
 
 	// Create pending request handle
 	phid, pendingReq := i.pendingRequests.New()
 
-	// Launch goroutine to perform the async request
-	go func(ctx context.Context, req *http.Request, body io.Reader, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
-		// Build the request with the pipe reader as body
-		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
+	// Single goroutine: buffer body writes, then send the request
+	go func(ctx context.Context, req *http.Request, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
+		defer close(b.streamingDone)
+
+		// Accumulate body data
+		var buf bytes.Buffer
+		if len(initialBody) > 0 {
+			buf.Write(initialBody)
+		}
+		for chunk := range b.streamingChan {
+			if chunk == nil {
+				break
+			}
+			buf.Write(chunk)
+		}
+
+		// Body is complete — send the request with known Content-Length
+		bodyBytes := buf.Bytes()
+		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), bytes.NewReader(bodyBytes))
 		if err != nil {
 			pr.Complete(nil, err)
 			return
@@ -1020,11 +1003,12 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
 		}
+		httpReq.ContentLength = int64(len(bodyBytes))
 
 		// Add CDN-Loop header
 		httpReq.Header.Add("cdn-loop", "fastlike")
 
-		// Apply framing mode - for streaming, Content-Length is unknown but Transfer-Encoding may be set
+		// Apply framing mode
 		validateAndApplyFramingMode(httpReq.Header, framingMode, nil)
 
 		// Get backend handler
@@ -1045,7 +1029,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Mark pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, pipeReader, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
+	}(i.ds_context, r.Request, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
 
 	// Write pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1356,8 +1340,9 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		// Manual mode: use the Content-Length from headers if present
 		if cl := req.Header.Get("Content-Length"); cl != "" {
 			var contentLength int64
-			fmt.Sscanf(cl, "%d", &contentLength)
-			req.ContentLength = contentLength
+			if _, err := fmt.Sscanf(cl, "%d", &contentLength); err == nil {
+				req.ContentLength = contentLength
+			}
 		}
 	}
 

@@ -173,22 +173,6 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 	}
 }
 
-// isAsyncItemReady checks if an async item is ready without blocking.
-// Returns true if the operation has completed, false otherwise.
-func (i *Instance) isAsyncItemReady(item *AsyncItemHandle) bool {
-	ch := i.getAsyncItemChannel(item)
-	if ch == nil {
-		return false
-	}
-
-	select {
-	case <-ch:
-		return true
-	default:
-		return false
-	}
-}
-
 // getHandleChannel returns a completion channel for any type of handle.
 // Tries to resolve the handle as: async item, pending request, or body handle.
 // Returns nil if the handle is invalid or not recognized.
