@@ -328,9 +328,6 @@ func link(linker *wasmtime.Linker) {
 		return i.xqd_http_cache_transaction_choose_stale(cache_handle)
 	}))
 
-	// xqd.go
-	// Use FuncWrap for v37 compatibility with *Caller parameter
-	// Add panic recovery to work around wasmtime-go v37 bug with FuncWrap panic handling
 	err := linker.FuncWrap("fastly_abi", "init", safeWrap1i64("init", func(i *Instance, abiv int64) int32 {
 		return i.xqd_init(abiv)
 	}))
@@ -345,8 +342,6 @@ func link(linker *wasmtime.Linker) {
 		panic(fmt.Sprintf("Failed to define fastly_uap::parse: %v", err))
 	}
 
-	// xqd_request.go
-	// Use FuncWrap for all functions for v37 compatibility
 	_ = linker.FuncWrap("fastly_http_req", "body_downstream_get", safeWrap2("body_downstream_get", func(i *Instance, request_handle_out int32, body_handle_out int32) int32 {
 		if i.memory == nil || i.ds_request == nil {
 			// Return stub values if called during initialization
@@ -361,19 +356,12 @@ func link(linker *wasmtime.Linker) {
 		return i.xqd_req_downstream_client_ip_addr(octets_out, nwritten_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "new", safeWrap1("new", func(i *Instance, handle_out int32) int32 {
-		// Add panic recovery to work around wasmtime-go v37 bug
 		return i.xqd_req_new(handle_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "version_get", safeWrap2("version_get", func(i *Instance, handle int32, version_out int32) int32 {
-		if i == nil || i.memory == nil {
-			return XqdErrUnsupported
-		}
 		return i.xqd_req_version_get(handle, version_out)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "version_set", safeWrap2("version_set", func(i *Instance, handle int32, version int32) int32 {
-		if i == nil {
-			return XqdErrUnsupported
-		}
 		return i.xqd_req_version_set(handle, version)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "method_get", safeWrap4("method_get", func(i *Instance, handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
@@ -456,11 +444,7 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "original_header_names_get", safeWrap5("original_header_names_get", func(i *Instance, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 		return i.xqd_http_downstream_original_header_names(i.downstreamRequestHandle, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 	}))
-	// Try using FuncWrap instead of DefineFunc for v37 compatibility
 	_ = linker.FuncWrap("fastly_http_req", "close", safeWrap1("close", func(i *Instance, handle int32) int32 {
-		if i == nil {
-			panic("Instance is nil in close")
-		}
 		return i.xqd_req_close(handle)
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "downstream_client_ddos_detected", safeWrap1("downstream_client_ddos_detected", func(i *Instance, is_ddos_out int32) int32 {
@@ -1069,7 +1053,6 @@ func linklegacy(linker *wasmtime.Linker) {
 
 	// xqd.go
 	_ = linker.FuncWrap("fastly", "init", safeWrap1i64("init", func(i *Instance, abiv int64) int32 {
-		// Add panic recovery to work around wasmtime-go v37 bug
 		return i.xqd_init(abiv)
 	}))
 	_ = linker.FuncWrap("fastly_uap", "parse", safeWrap14("parse", func(i *Instance, user_agent int32, user_agent_len int32, family int32, family_max_len int32, family_written int32, major int32, major_max_len int32, major_written int32, minor int32, minor_max_len int32, minor_written int32, patch int32, patch_max_len int32, patch_written int32) int32 {
@@ -1088,7 +1071,6 @@ func linklegacy(linker *wasmtime.Linker) {
 
 	// xqd_request.go
 	_ = linker.FuncWrap("env", "xqd_req_new", safeWrap1("xqd_req_new", func(i *Instance, handle_out int32) int32 {
-		// Add panic recovery to work around wasmtime-go v37 bug
 		return i.xqd_req_new(handle_out)
 	}))
 	_ = linker.FuncWrap("env", "xqd_req_version_get", safeWrap2("xqd_req_version_get", func(i *Instance, handle int32, version_out int32) int32 {
