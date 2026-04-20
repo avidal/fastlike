@@ -713,6 +713,35 @@ func link(linker *wasmtime.Linker) {
 		return i.xqd_kv_store_list_wait(list_handle, body_handle_out, kv_error_out)
 	}))
 
+	// xqd_object_store.go (legacy, deprecated in favor of fastly_kv_store)
+	_ = linker.FuncWrap("fastly_object_store", "open", safeWrap3("open", func(i *Instance, name_addr int32, name_size int32, store_handle_out int32) int32 {
+		return i.xqd_object_store_open(name_addr, name_size, store_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "lookup", safeWrap4("lookup", func(i *Instance, store_handle int32, key_addr int32, key_size int32, body_handle_out int32) int32 {
+		return i.xqd_object_store_lookup(store_handle, key_addr, key_size, body_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "lookup_async", safeWrap4("lookup_async", func(i *Instance, store_handle int32, key_addr int32, key_size int32, pending_handle_out int32) int32 {
+		return i.xqd_object_store_lookup_async(store_handle, key_addr, key_size, pending_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "pending_lookup_wait", safeWrap2("pending_lookup_wait", func(i *Instance, pending_handle int32, body_handle_out int32) int32 {
+		return i.xqd_object_store_pending_lookup_wait(pending_handle, body_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "insert", safeWrap4("insert", func(i *Instance, store_handle int32, key_addr int32, key_size int32, body_handle int32) int32 {
+		return i.xqd_object_store_insert(store_handle, key_addr, key_size, body_handle)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "insert_async", safeWrap5("insert_async", func(i *Instance, store_handle int32, key_addr int32, key_size int32, body_handle int32, pending_handle_out int32) int32 {
+		return i.xqd_object_store_insert_async(store_handle, key_addr, key_size, body_handle, pending_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "pending_insert_wait", safeWrap1("pending_insert_wait", func(i *Instance, pending_handle int32) int32 {
+		return i.xqd_object_store_pending_insert_wait(pending_handle)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "delete_async", safeWrap4("delete_async", func(i *Instance, store_handle int32, key_addr int32, key_size int32, pending_handle_out int32) int32 {
+		return i.xqd_object_store_delete_async(store_handle, key_addr, key_size, pending_handle_out)
+	}))
+	_ = linker.FuncWrap("fastly_object_store", "pending_delete_wait", safeWrap1("pending_delete_wait", func(i *Instance, pending_handle int32) int32 {
+		return i.xqd_object_store_pending_delete_wait(pending_handle)
+	}))
+
 	// xqd_backend.go
 	_ = linker.FuncWrap("fastly_backend", "exists", safeWrap3("exists", func(i *Instance, backend_addr int32, backend_size int32, exists_out int32) int32 {
 		return i.xqd_backend_exists(backend_addr, backend_size, exists_out)

@@ -186,8 +186,6 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 	bodyID, bodyHandle := i.bodies.NewBuffer()
 	_, _ = bodyHandle.Write(result.Body)
 
-	i.abilog.Printf("  Created body handle ID: %d for %d bytes", bodyID, len(result.Body))
-
 	// Write body handle
 	i.memory.WriteUint32(bodyHandleOut, uint32(bodyID))
 
