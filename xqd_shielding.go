@@ -106,7 +106,8 @@ func (i *Instance) xqd_backend_for_shield(
 		return XqdErrInvalidArgument
 	}
 
-	// Validate cache_key if USE_CACHE_KEY is set
+	// Read cache_key if USE_CACHE_KEY is set
+	var cacheKey string
 	if uint32(config_mask)&ShieldBackendOptionsUseCacheKey != 0 {
 		cacheKeyPtr := int32(i.memory.Uint32(int64(config_ptr + 0)))
 		cacheKeyLen := i.memory.Uint32(int64(config_ptr + 4))
@@ -116,7 +117,8 @@ func (i *Instance) xqd_backend_for_shield(
 			if err != nil {
 				return XqdErrInvalidArgument
 			}
-			i.abilog.Printf("backend_for_shield: cache_key=%q (ignored in local testing)", string(keyBuf))
+			cacheKey = string(keyBuf)
+			i.abilog.Printf("backend_for_shield: cache_key=%q", cacheKey)
 		}
 	}
 
@@ -140,11 +142,12 @@ func (i *Instance) xqd_backend_for_shield(
 	// Generate backend name matching Viceroy's format: "******{uri}*****"
 	backendName := fmt.Sprintf("******%s*****", shieldURI)
 
-	// Build the backend with optional first byte timeout
+	// Build the backend with optional first byte timeout and cache key
 	backend := &Backend{
 		Name:      backendName,
 		URL:       u,
 		IsDynamic: true,
+		CacheKey:  cacheKey,
 	}
 
 	if uint32(config_mask)&ShieldBackendOptionsFirstByteTimeout != 0 {
@@ -173,8 +176,6 @@ func (i *Instance) xqd_backend_for_shield(
 		_, _ = io.Copy(w, resp.Body)
 	})
 
-	i.addBackend(backendName, backend)
-
 	// Write the backend name to the output buffer
 	nameBytes := []byte(backendName)
 	if int32(len(nameBytes)) > backend_name_max_len {
@@ -186,6 +187,8 @@ func (i *Instance) xqd_backend_for_shield(
 	if err != nil {
 		return XqdError
 	}
+
+	i.addBackend(backendName, backend)
 
 	i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
 	i.abilog.Printf("backend_for_shield: created backend %q for shield URI %q", backendName, shieldURI)

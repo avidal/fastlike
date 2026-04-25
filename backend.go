@@ -50,6 +50,9 @@ type Backend struct {
 	MaxConnections uint32 // Maximum connections in pool (0 = unlimited)
 	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
 	MaxLifetimeMs  uint32 // Upper bound for how long a keepalive connection can remain open (0 = unlimited)
+
+	// CacheKey is the cache key override for shield backends
+	CacheKey string
 }
 
 // addBackend registers a backend with the given name and configuration.
