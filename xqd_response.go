@@ -314,12 +314,19 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 	header := http.CanonicalHeaderKey(string(buf))
 
-	// Read the null-terminated values list
-	// We read (values_size - 1) bytes to exclude the trailing null terminator
-	buf = make([]byte, values_size-1)
+	// Read the values buffer. Values are separated by NUL bytes.
+	if values_size <= 0 {
+		return XqdErrInvalidArgument
+	}
+	buf = make([]byte, values_size)
 	_, err = i.memory.ReadAt(buf, int64(values_addr))
 	if err != nil {
 		return XqdError
+	}
+
+	// Trim a trailing NUL if present, then split on NUL
+	if len(buf) > 0 && buf[len(buf)-1] == 0 {
+		buf = buf[:len(buf)-1]
 	}
 
 	// Split on null bytes to get individual values
