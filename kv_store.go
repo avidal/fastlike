@@ -101,8 +101,8 @@ func ValidateKey(key string) error {
 
 // Lookup retrieves a value from the store
 func (kvs *KVStore) Lookup(key string) (*ObjectValue, error) {
-	kvs.mu.RLock()
-	defer kvs.mu.RUnlock()
+	kvs.mu.Lock()
+	defer kvs.mu.Unlock()
 
 	obj, exists := kvs.objects[key]
 	if !exists {
@@ -111,15 +111,7 @@ func (kvs *KVStore) Lookup(key string) (*ObjectValue, error) {
 
 	// Check if expired
 	if obj.IsExpired() {
-		// Remove expired entry (upgrade to write lock)
-		kvs.mu.RUnlock()
-		kvs.mu.Lock()
-		// Recheck after acquiring write lock - entry may have been modified
-		if obj, exists := kvs.objects[key]; exists && obj.IsExpired() {
-			delete(kvs.objects, key)
-		}
-		kvs.mu.Unlock()
-		kvs.mu.RLock()
+		delete(kvs.objects, key)
 		return nil, nil
 	}
 
