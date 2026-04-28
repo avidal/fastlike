@@ -35,6 +35,17 @@
 //   - WithBackend(name, handler): Register a simple backend
 //   - WithBackendConfig(config): Register with full configuration (timeouts, SSL, etc.)
 //   - WithDefaultBackend(fn): Fallback for undefined backends (default returns 502)
+//   - WithUnreliableBackend(name, handler, uptime): Register a backend whose
+//     reliability is simulated. Each request has an uptime/100 chance of being
+//     forwarded normally; the rest receive a synthetic 502 identical to a real
+//     upstream failure. Use this to exercise error paths in guest code without
+//     having to actually take a backend down.
+//   - WithUnreliableDefaultBackend(fn, uptime): Same simulation applied to the
+//     catch-all factory installed via WithDefaultBackend.
+//
+// On the CLI the same idea is exposed by appending @N to the address, where N
+// is a percentage in 0..100. For example, -backend api=localhost:8080@50 makes
+// the api backend drop roughly half of its requests with a 502.
 //
 // When the guest program sends a request to a backend, Fastlike looks up the
 // corresponding http.Handler and forwards the request.
