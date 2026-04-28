@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -38,12 +39,54 @@ func WithBackendConfig(backend *Backend) Option {
 	}
 }
 
+// WithUnreliableBackend registers a backend with simulated reliability. The
+// uptime parameter is the percentage of requests that reach the backend
+// normally; the rest are answered with a synthetic 502 that mimics a real
+// upstream failure. Values must be in [0, 100]; 0 means the backend always
+// appears down, 100 means no simulation. Out-of-range values panic at
+// configuration time so misconfigurations are caught immediately rather than
+// silently masked.
+func WithUnreliableBackend(name string, h http.Handler, uptime uint8) Option {
+	if uptime > 100 {
+		panic(fmt.Sprintf("WithUnreliableBackend: uptime %d out of range, must be 0..100", uptime))
+	}
+	return func(i *Instance) {
+		u, err := url.Parse("http://" + name)
+		if err != nil {
+			u, _ = url.Parse("http://localhost")
+		}
+		pct := uptime
+		i.addBackend(name, &Backend{
+			Name:          name,
+			URL:           u,
+			Handler:       h,
+			UptimePercent: &pct,
+		})
+	}
+}
+
 // WithDefaultBackend sets a fallback handler for backend requests to undefined backends.
 // The function receives the backend name and returns an http.Handler.
 // If not set, undefined backends return 502 Bad Gateway.
 func WithDefaultBackend(fn func(name string) http.Handler) Option {
 	return func(i *Instance) {
 		i.defaultBackend = fn
+	}
+}
+
+// WithUnreliableDefaultBackend is the catch-all counterpart of
+// WithUnreliableBackend. The supplied factory's output is wrapped with the
+// same reliability simulation used by named backends, so catch-all dispatch
+// honors the percentage even though it never flows through addBackend.
+func WithUnreliableDefaultBackend(fn func(name string) http.Handler, uptime uint8) Option {
+	if uptime > 100 {
+		panic(fmt.Sprintf("WithUnreliableDefaultBackend: uptime %d out of range, must be 0..100", uptime))
+	}
+	pct := uptime
+	return func(i *Instance) {
+		i.defaultBackend = func(name string) http.Handler {
+			return wrapWithReliability(fn(name), &pct)
+		}
 	}
 }
 

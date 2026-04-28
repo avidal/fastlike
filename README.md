@@ -116,6 +116,23 @@ fastlike -wasm my-program.wasm \
   -backend images=localhost:9000
 ```
 
+### Simulating Unreliable Backends
+
+Append `@N` to a backend address to simulate flakiness, where `N` is the percentage of requests that should reach the upstream successfully. The remaining requests are answered with a synthetic 502, identical in shape to the response Fastlike emits when a real upstream is unreachable. This is handy for exercising error paths in your guest program without actually taking a backend down.
+
+```bash
+# api responds normally for roughly half of requests, the rest get a 502
+fastlike -wasm my-program.wasm -backend api=localhost:8000@50
+
+# cdn always appears down
+fastlike -wasm my-program.wasm -backend cdn=localhost:9000@0
+
+# default catch-all backend with simulated reliability
+fastlike -wasm my-program.wasm -backend localhost:8000@75
+```
+
+The suffix is recognized only when it is purely numeric and in the `0..100` range, so URLs that legitimately contain `@` (for example `http://user:pass@host`) are left alone. A trailing `@<digits>` outside `0..100` is rejected at startup. The same behavior is available programmatically through `fastlike.WithUnreliableBackend` and `fastlike.WithUnreliableDefaultBackend`.
+
 ### Dictionaries and Config Stores
 
 Use JSON files for key-value lookups:
@@ -365,7 +382,7 @@ curl -H "fastlike-verbose: 1" http://localhost:5000/
 
 ### Backend Configuration
 
-Support for named backend configurations. Complex backend configurations with timeouts, SSL, and more are available through the Go API but not through the CLI.
+Support for named backend configurations. Complex backend configurations with timeouts, SSL, and more are available through the Go API but not through the CLI. Reliability simulation (the `@N` suffix described above) is the one exception, and is exposed on both the CLI and the Go API.
 
 ### Cache Support
 

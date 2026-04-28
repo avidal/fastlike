@@ -3,6 +3,7 @@ package fastlike
 import (
 	"crypto/tls"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -53,12 +54,46 @@ type Backend struct {
 
 	// CacheKey is the cache key override for shield backends
 	CacheKey string
+
+	// UptimePercent simulates backend reliability for testing. When non-nil, each
+	// request to this backend has a UptimePercent / 100 chance of being forwarded
+	// normally; otherwise the runtime synthesises a 502 response identical to the
+	// one produced when a real upstream is unreachable. Valid values are 0..100;
+	// 0 means the backend always appears down, 100 means no simulation. A nil
+	// value disables simulation entirely (the default for every existing
+	// construction path).
+	UptimePercent *uint8
 }
 
 // addBackend registers a backend with the given name and configuration.
 func (i *Instance) addBackend(name string, b *Backend) {
 	b.Name = name
+	if b.Handler != nil {
+		b.Handler = wrapWithReliability(b.Handler, b.UptimePercent)
+	}
 	i.backends[name] = b
+}
+
+// wrapWithReliability returns a handler that simulates backend failures based
+// on the supplied uptime percentage. A nil percentage or a value of 100 short
+// circuits and returns the original handler unchanged; any other value in
+// [0, 99] makes the wrapper draw a random number per request and emit a 502
+// when the draw falls outside the success window. The 502 body matches the
+// shape produced by the real RoundTrip failure path so guest code observes
+// identical behavior to a genuine outage.
+func wrapWithReliability(h http.Handler, uptime *uint8) http.Handler {
+	if uptime == nil || *uptime >= 100 {
+		return h
+	}
+	pct := *uptime
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if uint8(rand.IntN(100)) >= pct {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, "Backend request failed: simulated backend failure (uptime=%d%%)", pct)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // getBackend retrieves a backend by name. Returns nil if not found.

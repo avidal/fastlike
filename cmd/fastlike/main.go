@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"fastlike.dev"
@@ -22,7 +23,7 @@ func main() {
 	complianceRegion := flag.String("compliance-region", "", "compliance region identifier (e.g., 'none', 'us-eu', 'us')")
 
 	backends := make(backendFlags)
-	flag.Var(&backends, "backend", "<name=address> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000)")
+	flag.Var(&backends, "backend", "<name=address[@uptime%]> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000). Append @N (0..100) to simulate reliability, e.g. -backend api=localhost:2000@50.")
 	flag.Var(&backends, "b", "alias for -backend")
 
 	dictionaries := make(dictionaryFlags)
@@ -63,12 +64,23 @@ func main() {
 	opts := []fastlike.Option{}
 
 	for name, backend := range backends {
+		proxy := backend.proxy
 		if name == "" {
-			opts = append(opts, fastlike.WithDefaultBackend(func(_ string) http.Handler {
-				return backend.proxy
-			}))
+			if backend.uptime != nil {
+				opts = append(opts, fastlike.WithUnreliableDefaultBackend(func(_ string) http.Handler {
+					return proxy
+				}, *backend.uptime))
+			} else {
+				opts = append(opts, fastlike.WithDefaultBackend(func(_ string) http.Handler {
+					return proxy
+				}))
+			}
 		} else {
-			opts = append(opts, fastlike.WithBackend(name, backend.proxy))
+			if backend.uptime != nil {
+				opts = append(opts, fastlike.WithUnreliableBackend(name, proxy, *backend.uptime))
+			} else {
+				opts = append(opts, fastlike.WithBackend(name, proxy))
+			}
 		}
 	}
 
@@ -128,6 +140,7 @@ func main() {
 type backend struct {
 	address string
 	proxy   http.Handler
+	uptime  *uint8
 }
 
 // backendFlags implements flag.Value for parsing -backend flags
@@ -141,17 +154,49 @@ func (f *backendFlags) String() string {
 	return strings.Join(results, ", ")
 }
 
+// splitReliabilitySuffix peels a trailing "@N" reliability suffix off addr
+// where N is purely digits in [0, 100]. The suffix is the substring after the
+// last '@' in the address. Anything else (basic-auth in a URL, an "@abc" tail,
+// or no '@' at all) is left attached so URLs that legitimately contain '@'
+// keep working unchanged.
+func splitReliabilitySuffix(addr string) (string, *uint8, error) {
+	at := strings.LastIndex(addr, "@")
+	if at < 0 {
+		return addr, nil, nil
+	}
+	suffix := addr[at+1:]
+	if suffix == "" {
+		return addr, nil, nil
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return addr, nil, nil
+		}
+	}
+	n, err := strconv.Atoi(suffix)
+	if err != nil {
+		return addr, nil, nil
+	}
+	if n < 0 || n > 100 {
+		return "", nil, fmt.Errorf("backend uptime suffix %q out of range, must be 0..100", suffix)
+	}
+	uptime := uint8(n)
+	return addr[:at], &uptime, nil
+}
+
 func (f *backendFlags) Set(v string) error {
-	parts := strings.Split(v, "=")
+	parts := strings.SplitN(v, "=", 2)
 	name, addr := "", ""
 	if len(parts) == 2 {
 		name = parts[0]
 		addr = parts[1]
-	} else if len(parts) == 1 {
-		name = ""
-		addr = parts[0]
 	} else {
-		return fmt.Errorf("invalid backend %s specified", v)
+		addr = parts[0]
+	}
+
+	addr, uptime, err := splitReliabilitySuffix(addr)
+	if err != nil {
+		return err
 	}
 
 	// turn the address into an http/https url
@@ -166,7 +211,7 @@ func (f *backendFlags) Set(v string) error {
 
 	proxy := httputil.NewSingleHostReverseProxy(dest)
 
-	(*f)[name] = backend{address: addr, proxy: proxy}
+	(*f)[name] = backend{address: addr, proxy: proxy, uptime: uptime}
 	return nil
 }
 
