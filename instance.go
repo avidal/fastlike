@@ -125,12 +125,48 @@ type Instance struct {
 	// Note: This tracks active CPU time in microseconds, NOT wall clock time
 	activeCpuTimeUs    atomic.Uint64 // Accumulated CPU time excluding I/O waits
 	executionStartTime time.Time     // When execution started/resumed (zero when paused)
+
+	// profile is the per-instance binding to the parent Fastlike's profile
+	// store. nil disables profiling for this instance. Captured at instance
+	// construction time so a Reload retiring the parent's binding does not
+	// silently re-attribute an in-flight request's trace.
+	profile *profileBinding
+
+	// trace is the currently-active RequestTrace, set by beginTrace and
+	// nilled by finalizeTrace. nil when profile == nil or between requests.
+	trace *RequestTrace
+
+	// traceWriter is the wrapper around ds_response that records status and
+	// response bytes. Same lifetime as trace. Typed as the interface so the
+	// struct compiles before the wrapper type is added by task 5.
+	traceWriter responseObserver
+}
+
+// responseObserver is the subset of traceResponseWriter the rest of the
+// package depends on. The concrete wrapper lands in profile_writer.go.
+type responseObserver interface {
+	http.ResponseWriter
+	Status() int
+	BytesWritten() int64
+	HeaderFlushed() *int64
+	Hijacked() *int64
 }
 
 // NewInstance returns an http.Handler that can handle a single request.
+// Profiling is disabled on this path; embedders who want profiling should
+// construct via Fastlike.New / Fastlike.Instantiate, which wires the
+// per-Fastlike profile store through to each Instance.
 func NewInstance(wasmbytes []byte, opts ...Option) *Instance {
+	return newInstanceWithProfile(wasmbytes, nil, nil, opts...)
+}
+
+// newInstanceWithProfile is the internal constructor used by both NewInstance
+// (no profiling) and Fastlike's instancefn (profiling bound). compileCfg may
+// be nil; binding may be nil to disable profiling for this instance.
+func newInstanceWithProfile(wasmbytes []byte, compileCfg *profileCompileConfig, binding *profileBinding, opts ...Option) *Instance {
 	i := new(Instance)
-	i.compile(wasmbytes)
+	i.profile = binding
+	i.compile(wasmbytes, compileCfg)
 
 	i.requests = &RequestHandles{}
 	i.bodies = &BodyHandles{}
@@ -321,7 +357,25 @@ func (i *Instance) setup() {
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
 func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.setup()
+
+	// Preserve the original writer for narrow code paths (e.g. the
+	// httptest.ResponseRecorder workaround below) that mutate the recorder
+	// directly. The trace wrapper observes the same underlying writer, so
+	// recorded status/byte counts still reflect those direct mutations
+	// only via Status() snapshots taken at finalize time.
+	originalWriter := w
+
+	// beginTrace returns w wrapped in a traceResponseWriter when profiling
+	// is enabled, or w unchanged when it is off. Shadowing w forces every
+	// downstream write (loop-fail body, trap error body, ds_response handed
+	// to the guest) through the wrapper.
+	w = i.beginTrace(w, r)
+
+	// Defer registration order matters: reset() registered first runs
+	// second, so finalizeTrace registered second runs first while
+	// ds_request/ds_response/ds_context are still populated.
 	defer i.reset()
+	defer i.finalizeTrace()
 
 	// Check for request loops using the cdn-loop header
 	// We add "fastlike" to this header on each subrequest
@@ -338,6 +392,7 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Detect infinite request loops and fail fast
 	if strings.Contains(strings.Join(loops, "\x00"), "fastlike") {
+		i.markOutcome(TraceOutcomeLoopFail)
 		w.WriteHeader(http.StatusLoopDetected)
 		_, _ = w.Write([]byte("Loop detected! This request has already come through your fastly program.\n"))
 		_, _ = w.Write([]byte("You probably have a non-exhaustive backend handler?"))
@@ -395,6 +450,14 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// reports it as an error but it's not one. Only write the error
 	// response for actual failures.
 	if err != nil && !isCleanExit(err) {
+		// A trap triggered by epoch interrupt during cancellation should be
+		// classified as a cancellation, not as a guest-side trap. Genuine
+		// guest traps reach finalize with ds_context still healthy.
+		if i.ds_context != nil && i.ds_context.Err() != nil {
+			i.markOutcome(TraceOutcomeCtxCanceled)
+		} else {
+			i.markOutcome(TraceOutcomeTrap)
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("Error running wasm program.\n"))
 		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
@@ -408,7 +471,8 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This only works with httptest.ResponseRecorder (used in tests).
 	// TODO: Remove this workaround when upgrading to a fixed wasmtime-go version
 	if i.ds_context.Err() != nil {
-		if rec, ok := w.(*httptest.ResponseRecorder); ok {
+		i.markOutcome(TraceOutcomeCtxCanceled)
+		if rec, ok := originalWriter.(*httptest.ResponseRecorder); ok {
 			// Override the response to indicate an interrupt
 			rec.Code = http.StatusInternalServerError
 			rec.Body.Reset()

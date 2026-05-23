@@ -1,3 +1,8 @@
 *~
 bin/
 tmp/
+
+# Profile artifacts emitted by `-profile native|combined|deep` when
+# -profile-dir is empty (defaults to the working directory). Should be
+# checked in only when intentionally captured as a fixture.
+wasm-symbols-*.json

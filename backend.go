@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"math/rand/v2"
@@ -9,6 +10,32 @@ import (
 	"net/url"
 	"time"
 )
+
+// syntheticFailureCtxKey is the context key the reliability wrapper uses to
+// signal a short-circuited synthetic 502 to the backend recorder. The
+// recorder reads the flag from the request context after the handler
+// returns and tags the BackendCall with BackendOutcomeSyntheticFailure
+// when set. Embedders cannot collide with the key because the type is
+// unexported.
+type syntheticFailureCtxKey struct{}
+
+// markSyntheticFailure stores a sentinel on the request context so the
+// recorder can distinguish a synthetic 502 from a genuine one. The pointer
+// targets a per-request bool so multiple ServeHTTP layers see consistent
+// state without allocating per request beyond the bool itself.
+func markSyntheticFailure(ctx context.Context, flag *bool) context.Context {
+	return context.WithValue(ctx, syntheticFailureCtxKey{}, flag)
+}
+
+func syntheticFailureFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	if flag, ok := ctx.Value(syntheticFailureCtxKey{}).(*bool); ok && flag != nil {
+		return *flag
+	}
+	return false
+}
 
 // Backend represents a complete backend configuration with all introspectable properties
 type Backend struct {
@@ -63,6 +90,15 @@ type Backend struct {
 	// value disables simulation entirely (the default for every existing
 	// construction path).
 	UptimePercent *uint8
+
+	// Transport is the optional *http.Transport that the registered Handler
+	// actually dispatches through. When non-nil, fastlike attaches an
+	// httptrace.ClientTrace via per-request context so the profile recorder
+	// can capture DNS / connect / TLS / TTFB phase timings. The transport is
+	// embedder-owned: fastlike does not clone, mutate, or close it.
+	// Backends registered via WithBackend keep this field nil and surface
+	// only the total span; phase fields stay nil in the trace.
+	Transport *http.Transport
 }
 
 // addBackend registers a backend with the given name and configuration.
@@ -88,6 +124,9 @@ func wrapWithReliability(h http.Handler, uptime *uint8) http.Handler {
 	pct := *uptime
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if uint8(rand.IntN(100)) >= pct {
+			if flag, ok := r.Context().Value(syntheticFailureCtxKey{}).(*bool); ok && flag != nil {
+				*flag = true
+			}
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, "Backend request failed: simulated backend failure (uptime=%d%%)", pct)
 			return

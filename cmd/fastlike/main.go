@@ -11,13 +11,31 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"fastlike.dev"
 )
 
+// cliTransport is the *http.Transport every CLI-registered named backend
+// shares. Sharing one transport across backends is intentional: connection
+// pooling is amortised, and the profile recorder installs its
+// httptrace.ClientTrace per request via context rather than per transport,
+// so the trace events stay correctly attributed.
+var cliTransport = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          100,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+}
+
 func main() {
-	wasm := flag.String("wasm", "", "wasm program to execute")
-	bind := flag.String("bind", "localhost:5000", "address to bind to")
+	bind := flag.String("bind", "localhost:8000", "address to bind to")
 	verbosity := flag.Int("v", 0, "verbosity level (0, 1, 2)")
 	reloadOnSIGHUP := flag.Bool("reload", false, "enable SIGHUP handler for hot-reloading wasm module")
 	complianceRegion := flag.String("compliance-region", "", "compliance region identifier (e.g., 'none', 'us-eu', 'us')")
@@ -47,10 +65,44 @@ func main() {
 
 	geoFile := flag.String("geo", "", "JSON file containing IP to geo mapping for geolocation lookups")
 
-	flag.Parse()
+	profileMode := flag.String("profile", "trace", "profiling mode: off, trace, native, combined, deep. Defaults to trace; collection runs even without a UI.")
+	profileUI := flag.String("profile-ui", "", "address to bind the profiler UI on. Empty disables the UI listener entirely. Loopback binds require no auth; non-loopback binds require -profile-auth or -profile-insecure-ui.")
+	profileAuth := flag.String("profile-auth", "", "bearer token required on every profiler UI request. Required for non-loopback -profile-ui unless -profile-insecure-ui is set.")
+	profileInsecure := flag.Bool("profile-insecure-ui", false, "allow a non-loopback -profile-ui without -profile-auth. Intended only for environments with externalized auth (mTLS, authenticating reverse proxy). Logs a prominent startup warning.")
+	profileRetain := flag.Int("profile-retain", 0, "per-Fastlike LRU size for completed traces. <=0 keeps the package default.")
+	profileBackendCap := flag.Int("profile-backend-cap", 0, "per-request cap on recorded backend calls. <=0 keeps the package default.")
+	profileAsyncGrace := flag.Duration("profile-async-grace", 0, "max time finalize waits for in-flight async backends. <=0 keeps the package default; pass 0s explicitly to disable via the default.")
+	profileDir := flag.String("profile-dir", "", "directory to write per-process profile artifacts (wasm-symbols-{pid}.json and, in a future step, completed traces). Empty writes the symbol manifest to the working directory.")
 
-	if *wasm == "" {
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "-wasm argument is required\n")
+	flag.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, "Usage: %s [OPTIONS] <wasm-file> [OPTIONS]\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	// Go's flag.Parse stops at the first non-flag argument. To accept flags
+	// on either side of the positional <wasm-file> (viceroy-style), parse,
+	// consume the wasm path, then keep parsing what's left.
+	args := os.Args[1:]
+	wasmPath := ""
+	for {
+		if err := flag.CommandLine.Parse(args); err != nil {
+			os.Exit(2)
+		}
+		if flag.NArg() == 0 {
+			break
+		}
+		if wasmPath != "" {
+			_, _ = fmt.Fprintf(flag.CommandLine.Output(), "unexpected extra positional argument %q (only one <wasm-file> allowed)\n", flag.Arg(0))
+			flag.Usage()
+			os.Exit(1)
+		}
+		wasmPath = flag.Arg(0)
+		args = flag.Args()[1:]
+	}
+
+	if wasmPath == "" {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "a positional <wasm-file> argument is required\n")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -66,6 +118,9 @@ func main() {
 	for name, backend := range backends {
 		proxy := backend.proxy
 		if name == "" {
+			// Catch-all backends remain plain (no traced transport); the
+			// default-backend factory pattern does not surface a transport
+			// fastlike can observe.
 			if backend.uptime != nil {
 				opts = append(opts, fastlike.WithUnreliableDefaultBackend(func(_ string) http.Handler {
 					return proxy
@@ -76,10 +131,32 @@ func main() {
 				}))
 			}
 		} else {
+			// Named backends register via WithBackendTraced so the profile
+			// recorder gets DNS / connect / TLS / TTFB phase data from
+			// httptrace.ClientTrace. The reliability wrapper still applies;
+			// addBackend wraps the handler before the recorder observes it.
 			if backend.uptime != nil {
-				opts = append(opts, fastlike.WithUnreliableBackend(name, proxy, *backend.uptime))
+				// WithBackendConfig does NOT synthesize a URL from the
+				// name the way WithBackend / WithBackendTraced do, so we
+				// have to set it explicitly here. Without it, every
+				// fastly_backend_get_host / _get_port / _is_ssl hostcall
+				// crashes on a nil *url.URL dereference. Mirror the
+				// http://name parse from options.go's other Backend
+				// constructors so the fallback string ('localhost') is
+				// identical across paths.
+				u, err := url.Parse("http://" + name)
+				if err != nil {
+					u, _ = url.Parse("http://localhost")
+				}
+				opts = append(opts, fastlike.WithBackendConfig(&fastlike.Backend{
+					Name:          name,
+					URL:           u,
+					Handler:       proxy,
+					Transport:     cliTransport,
+					UptimePercent: backend.uptime,
+				}))
 			} else {
-				opts = append(opts, fastlike.WithBackend(name, proxy))
+				opts = append(opts, fastlike.WithBackendTraced(name, proxy, cliTransport))
 			}
 		}
 	}
@@ -123,11 +200,54 @@ func main() {
 
 	opts = append(opts, fastlike.WithVerbosity(*verbosity))
 
-	fl := fastlike.New(*wasm, opts...)
+	mode := fastlike.ProfileMode(*profileMode)
+	switch mode {
+	case fastlike.ProfileModeOff, fastlike.ProfileModeTrace, fastlike.ProfileModeNative, fastlike.ProfileModeCombined, fastlike.ProfileModeDeep:
+	default:
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "invalid -profile mode %q; valid: off, trace, native, combined, deep\n", *profileMode)
+		os.Exit(1)
+	}
+
+	if err := fastlike.ValidateProfileUIAuth(*profileUI, *profileAuth, *profileInsecure); err != nil {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "%s\n", err)
+		os.Exit(1)
+	}
+
+	flOpts := []fastlike.FastlikeOption{
+		fastlike.WithInstanceOptions(opts...),
+		fastlike.WithProfileMode(mode),
+	}
+	if *profileUI != "" {
+		flOpts = append(flOpts, fastlike.WithProfileUI(*profileUI))
+	}
+	if *profileAuth != "" {
+		flOpts = append(flOpts, fastlike.WithProfileAuth(*profileAuth))
+	}
+	if *profileInsecure {
+		flOpts = append(flOpts, fastlike.WithProfileInsecureUI())
+	}
+	if *profileRetain > 0 {
+		flOpts = append(flOpts, fastlike.WithProfileRetain(*profileRetain))
+	}
+	if *profileBackendCap > 0 {
+		flOpts = append(flOpts, fastlike.WithProfileBackendCap(*profileBackendCap))
+	}
+	if *profileAsyncGrace > 0 {
+		flOpts = append(flOpts, fastlike.WithProfileAsyncGrace(*profileAsyncGrace))
+	}
+	if *profileDir != "" {
+		flOpts = append(flOpts, fastlike.WithProfileDir(*profileDir))
+	}
+
+	fl := fastlike.New(wasmPath, flOpts...)
 
 	if *reloadOnSIGHUP {
 		fl.EnableReloadOnSIGHUP()
 		fmt.Printf("SIGHUP reload enabled. Send SIGHUP signal to reload wasm module.\n")
+	}
+
+	if *profileUI != "" {
+		startProfileUI(fl, *profileUI, *profileAuth, *profileInsecure)
 	}
 
 	fmt.Printf("Listening on %s\n", *bind)
@@ -210,6 +330,7 @@ func (f *backendFlags) Set(v string) error {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(dest)
+	proxy.Transport = cliTransport
 
 	(*f)[name] = backend{address: addr, proxy: proxy, uptime: uptime}
 	return nil
@@ -607,4 +728,51 @@ func loadGeoFile(filename string) (func(ip net.IP) fastlike.Geo, error) {
 
 		return defaultGeo
 	}, nil
+}
+
+// startProfileUI binds the profiler UI on a separate socket from the wasm
+// listener. The two never share a listener regardless of -profile-ui, per
+// the security policy in plans/guest-profiling.md. Auth and the
+// loopback-vs-non-loopback gate were already validated by
+// ValidateProfileUIAuth before this function ran; here we bind synchronously
+// so the user only sees the "UI available" log line after the socket
+// actually came up. A bind failure exits the process so the operator does
+// not silently lose observability.
+func startProfileUI(fl *fastlike.Fastlike, addr, token string, insecure bool) {
+	store := fl.ProfileStore()
+	if store == nil {
+		fmt.Printf("profiler UI requested at %s but profiling is disabled; not binding listener\n", addr)
+		return
+	}
+
+	// Detect mode=off explicitly so the operator gets a clear message
+	// instead of a UI that always shows zero traces.
+	if fl.ProfileMode() == fastlike.ProfileModeOff {
+		fmt.Printf("profiler UI requested at %s but -profile=off disables collection; not binding listener\n", addr)
+		return
+	}
+
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Printf("profiler UI listener failed to bind %s: %s\n", addr, err)
+		os.Exit(1)
+	}
+
+	handler := fastlike.WrapProfileUIAuth(fastlike.NewProfileUI(store), token)
+	loopback := fastlike.IsLoopbackBindAddress(addr)
+	switch {
+	case loopback && token == "":
+		fmt.Printf("profiler UI at http://%s/\n", listener.Addr())
+	case token != "":
+		fmt.Printf("profiler UI at http://%s/ (bearer auth required)\n", listener.Addr())
+	case insecure:
+		fmt.Printf("WARNING: profiler UI at http://%s/ has no authentication; -profile-insecure-ui exposes every captured trace to anyone who can reach this bind\n", listener.Addr())
+	}
+
+	srv := &http.Server{Handler: handler}
+	go func() {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("profiler UI listener exited: %s\n", err)
+		}
+	}()
 }

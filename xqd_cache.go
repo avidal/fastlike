@@ -19,6 +19,7 @@ func (i *Instance) xqd_cache_lookup(
 	cache_handle_out int32,
 ) int32 {
 	i.abilog.Println("xqd_cache_lookup")
+	i.deepBumpCacheLookup()
 
 	key := make([]byte, cache_key_len)
 	_, _ = i.memory.ReadAt(key, int64(cache_key))
@@ -26,6 +27,11 @@ func (i *Instance) xqd_cache_lookup(
 	lookupOpts := i.readCacheLookupOptions(options_mask, options)
 
 	entry := i.cache.Lookup(key, lookupOpts)
+	if entry != nil {
+		i.deepBumpCacheOutcome(entry.State)
+	} else {
+		i.deepBumpCacheOutcome(CacheState{})
+	}
 
 	// Create a transaction to wrap the entry (for handle consistency)
 	tx := &CacheTransaction{
@@ -50,6 +56,7 @@ func (i *Instance) xqd_cache_insert(
 	body_handle_out int32,
 ) int32 {
 	i.abilog.Println("xqd_cache_insert")
+	i.deepBumpCacheInsert()
 
 	key := make([]byte, cache_key_len)
 	_, _ = i.memory.ReadAt(key, int64(cache_key))
@@ -84,6 +91,7 @@ func (i *Instance) xqd_cache_transaction_lookup(
 	cache_handle_out int32,
 ) int32 {
 	i.abilog.Println("xqd_cache_transaction_lookup")
+	i.deepBumpCacheLookup()
 
 	key := make([]byte, cache_key_len)
 	_, _ = i.memory.ReadAt(key, int64(cache_key))
@@ -91,6 +99,11 @@ func (i *Instance) xqd_cache_transaction_lookup(
 	lookupOpts := i.readCacheLookupOptions(options_mask, options)
 
 	tx := i.cache.TransactionLookup(key, lookupOpts)
+	if tx != nil && tx.Entry != nil {
+		i.deepBumpCacheOutcome(tx.Entry.State)
+	} else {
+		i.deepBumpCacheOutcome(CacheState{})
+	}
 
 	handleID := i.cacheHandles.New(tx)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
@@ -115,6 +128,12 @@ func (i *Instance) xqd_cache_transaction_lookup_async(
 
 	// Start async lookup (in our case, it's immediate but we return a busy handle)
 	tx := i.cache.TransactionLookup(key, lookupOpts)
+	i.deepBumpCacheLookup()
+	if tx != nil && tx.Entry != nil {
+		i.deepBumpCacheOutcome(tx.Entry.State)
+	} else {
+		i.deepBumpCacheOutcome(CacheState{})
+	}
 
 	busyHandleID := i.cacheBusyHandles.New(tx)
 	i.memory.WriteUint32(cache_busy_handle_out, uint32(busyHandleID))
@@ -152,6 +171,7 @@ func (i *Instance) xqd_cache_transaction_insert(
 	body_handle_out int32,
 ) int32 {
 	i.abilog.Println("xqd_cache_transaction_insert")
+	i.deepBumpCacheInsert()
 
 	handle := i.cacheHandles.Get(int(cache_handle))
 	if handle == nil || handle.Transaction == nil {
@@ -191,6 +211,7 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 	cache_handle_out int32,
 ) int32 {
 	i.abilog.Println("xqd_cache_transaction_insert_and_stream_back")
+	i.deepBumpCacheInsert()
 
 	handle := i.cacheHandles.Get(int(cache_handle))
 	if handle == nil || handle.Transaction == nil {

@@ -51,6 +51,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 			return XqdError
 		}
 
+		i.deepBumpBodyWrite(int64(n))
 		i.memory.PutUint32(uint32(n), int64(nwritten_out))
 
 		// Note: The body_end parameter indicates write POSITION (back vs front),
@@ -75,6 +76,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	if body_end == writeEndFront {
 		// Prepend: Create a MultiReader that reads new data first, then existing content
 		body.reader = io.MultiReader(bytes.NewReader(data), body.reader)
+		i.deepBumpBodyWrite(int64(size))
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
 		return XqdStatusOK
 	}
@@ -85,6 +87,8 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	if err != nil {
 		return XqdError
 	}
+
+	i.deepBumpBodyWrite(nwritten)
 
 	// Write the number of bytes copied to guest memory
 	i.memory.PutUint32(uint32(nwritten), int64(nwritten_out))
@@ -128,6 +132,7 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	}
 
 	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, ncopied)
+	i.deepBumpBodyRead(ncopied)
 	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
 
 	if ncopied == 0 && maxlen > 0 {

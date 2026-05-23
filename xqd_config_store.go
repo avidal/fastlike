@@ -51,6 +51,12 @@ func (i *Instance) xqd_config_store_get(handle int32, key_addr int32, key_size i
 
 	i.abilog.Printf("config_store_get: handle=%d key=%s", handle, key)
 
+	// Resolve the store name from the handle for the deep-mode counter.
+	// Out-of-range handles already returned above; this lookup is safe.
+	if int(handle) >= 0 && int(handle) < len(i.configStores) {
+		i.deepBumpStore("config", i.configStores[handle].name)
+	}
+
 	value := lookupFunc(key)
 
 	// Empty value indicates the key doesn't exist

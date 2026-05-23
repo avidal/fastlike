@@ -23,24 +23,50 @@ type Fastlike struct {
 
 	// wasmfile is the path to the wasm file, stored for hot reload
 	wasmfile string
-	// instanceOpts are the original options passed to New(), applied to all instances
+	// instanceOpts are the per-instance options applied to every Instance the
+	// Fastlike creates. Populated via WithInstanceOptions(...).
 	instanceOpts []Option
+
+	// profileStore owns retention, in-flight state, and UI configuration for
+	// the per-Fastlike profile. nil disables profiling for every Instance
+	// this Fastlike produces.
+	profileStore *ProfileStore
+
+	// profileCompile is the compile-time profile configuration consumed by
+	// Instance.compile. Always non-nil; mode defaults to ProfileModeOff.
+	profileCompile *profileCompileConfig
+
+	// moduleID is a short stable identifier for the currently-loaded wasm
+	// bytes. Recomputed on Reload so pooled instances built against the old
+	// module can be retired by mismatch.
+	moduleID string
 
 	// stopChan is used to signal cleanup of background goroutines
 	stopChan chan struct{}
 }
 
-// New returns a new Fastlike ready to create new instances from
-func New(wasmfile string, instanceOpts ...Option) *Fastlike {
+// New returns a new Fastlike ready to create new instances from. Pass
+// FastlikeOption values to configure profiling, retention, the UI listener,
+// and other per-Fastlike behavior. Per-instance options are threaded through
+// using WithInstanceOptions(...).
+func New(wasmfile string, opts ...FastlikeOption) *Fastlike {
 	f := &Fastlike{
-		wasmfile:     wasmfile,
-		instanceOpts: instanceOpts,
-		stopChan:     make(chan struct{}),
+		wasmfile:       wasmfile,
+		profileCompile: &profileCompileConfig{mode: ProfileModeOff},
+		stopChan:       make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(f)
 	}
 
 	// Read the wasm file from disk
 	wasmbytes, err := os.ReadFile(wasmfile)
 	check(err)
+	f.moduleID = moduleIDOf(wasmbytes)
+
+	f.maybeEmitWasmSymbolSidecar(wasmbytes)
+	f.maybeLogDeepCaptureNotice()
 
 	// Calculate pool size: cap at 16 to avoid excessive memory usage
 	// while still benefiting from instance reuse
@@ -54,14 +80,106 @@ func New(wasmfile string, instanceOpts ...Option) *Fastlike {
 	// Create a buffered channel as the instance pool
 	f.instances = make(chan *Instance, size)
 
-	// instancefn creates new instances on demand when the pool is empty
-	f.instancefn = func(opts ...Option) *Instance {
-		// Merge the base options with any additional per-request options
-		allOpts := append(instanceOpts, opts...)
-		return NewInstance(wasmbytes, allOpts...)
-	}
+	// instancefn creates new instances on demand when the pool is empty.
+	// It captures the current wasm bytes, instanceOpts, profile binding,
+	// and compile config so pooled instances built before a Reload keep
+	// their original module attribution.
+	f.instancefn = makeInstanceFn(f, wasmbytes)
 
 	return f
+}
+
+// maybeLogDeepCaptureNotice prints the deep-mode capture-and-redaction
+// summary at startup when ProfileModeDeep is active. The notice is
+// load-bearing for operator awareness: an embedder enabling deep should
+// know exactly what fastlike will record, even if they never read the
+// docs. Single source of truth so CLI and embedders see identical text.
+func (f *Fastlike) maybeLogDeepCaptureNotice() {
+	if f.profileCompile == nil || f.profileCompile.mode != ProfileModeDeep {
+		return
+	}
+	log.Print("[fastlike] -profile=deep captures: body read/write byte totals; cache lookup/insert/hit/miss/stale counts; per-named-store access counts (kv/config/secret/dictionary); request/response header names + sizes (deny-listed names like Cookie/Authorization redacted to <redacted>); wasm linear memory size curve sampled at request start, finalize, and hostcall boundaries.")
+	log.Print("[fastlike] -profile=deep NEVER captures: header values, body bytes, secret values, KV values, cache keys, surrogate keys, URL userinfo, URL query strings, Go runtime heap (the memory curve is wasm guest memory only).")
+}
+
+// maybeEmitWasmSymbolSidecar writes the wasm-symbols-{pid}.json manifest
+// when native sampling is configured. Skips silently otherwise. Errors
+// from emission are logged but do not abort: the sidecar is an aid for
+// external samplers, never a precondition for in-process tracing. The
+// log line uses f.log so verbosity controls suppress it in quiet mode.
+func (f *Fastlike) maybeEmitWasmSymbolSidecar(wasmbytes []byte) {
+	if f.profileCompile == nil || !nativeSamplingRequested(f.profileCompile.mode) {
+		return
+	}
+	dir := ""
+	if f.profileStore != nil {
+		dir = f.profileStore.dir
+	}
+	path, err := writeWasmSymbolSidecar(wasmbytes, dir, f.moduleID, f.profileCompile.mode)
+	if err != nil {
+		log.Printf("[fastlike] wasm symbol sidecar emission failed: %v", err)
+		return
+	}
+	log.Printf("[fastlike] wrote wasm symbol manifest %s", path)
+	if _, supported := nativeProfilerStrategy(f.profileCompile.mode); !supported {
+		log.Printf("[fastlike] native sampling requested but no supported strategy on this platform; engine ran without SetProfiler")
+	}
+}
+
+// makeInstanceFn returns the closure that constructs new Instances for f.
+// Extracted so Reload can rebuild the closure against fresh wasm bytes
+// without duplicating the binding logic.
+func makeInstanceFn(f *Fastlike, wasmbytes []byte) func(opts ...Option) *Instance {
+	binding := f.bindingFor(wasmbytes)
+	baseOpts := f.instanceOpts
+	compileCfg := f.profileCompile
+	return func(opts ...Option) *Instance {
+		allOpts := append(append([]Option{}, baseOpts...), opts...)
+		i := newInstanceWithProfile(wasmbytes, compileCfg, binding, allOpts...)
+		return i
+	}
+}
+
+// bindingFor returns the profileBinding to attach to instances built from
+// wasmbytes. Returns nil when profiling is disabled — either no store
+// is configured, or the configured mode is ProfileModeOff. The mode gate
+// is what makes -profile off truly turn collection off; merely passing
+// any other profile option allocates a store via ensureProfileStore, but
+// mode=off keeps that store empty.
+func (f *Fastlike) bindingFor(wasmbytes []byte) *profileBinding {
+	if f.profileStore == nil {
+		return nil
+	}
+	if f.profileCompile == nil || !f.profileCompile.mode.includesTrace() {
+		return nil
+	}
+	return &profileBinding{
+		store:       f.profileStore,
+		moduleID:    moduleIDOf(wasmbytes),
+		deepEnabled: f.profileCompile.mode == ProfileModeDeep,
+	}
+}
+
+// ProfileStore returns the Fastlike's profile store, or nil if profiling is
+// disabled. Exported so embedders and the viewer can read trace state.
+func (f *Fastlike) ProfileStore() *ProfileStore {
+	return f.profileStore
+}
+
+// ModuleID returns the short identifier of the currently-loaded wasm module.
+func (f *Fastlike) ModuleID() string {
+	return f.moduleID
+}
+
+// ProfileMode returns the configured compile-time profile mode. Defaults to
+// ProfileModeOff. Useful for callers (CLI, embedder bootstrap) that want to
+// branch on whether trace collection is enabled before exposing a UI or
+// allocating downstream resources.
+func (f *Fastlike) ProfileMode() ProfileMode {
+	if f.profileCompile == nil {
+		return ProfileModeOff
+	}
+	return f.profileCompile.mode
 }
 
 // ServeHTTP implements http.Handler for a Fastlike module. It's a convenience function over
@@ -153,13 +271,14 @@ func (f *Fastlike) Reload() error {
 		poolSize = 0
 	}
 
-	// Create a new instance pool with the fresh wasm bytes
+	// Create a new instance pool with the fresh wasm bytes. Recompute the
+	// module id so new instances tag their traces with the post-reload
+	// module while any pooled-and-still-running instance keeps its old
+	// binding (see "Hot reload" in plans/guest-profiling.md).
+	f.moduleID = moduleIDOf(wasmbytes)
+	f.maybeEmitWasmSymbolSidecar(wasmbytes)
 	f.instances = make(chan *Instance, poolSize)
-	f.instancefn = func(opts ...Option) *Instance {
-		// Merge the base options with any additional per-request options
-		allOpts := append(f.instanceOpts, opts...)
-		return NewInstance(wasmbytes, allOpts...)
-	}
+	f.instancefn = makeInstanceFn(f, wasmbytes)
 
 	return nil
 }

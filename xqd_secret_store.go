@@ -78,6 +78,10 @@ func (i *Instance) xqd_secret_store_get(store_handle int32, key_addr int32, key_
 
 	i.abilog.Printf("secret_store_get: store_handle=%d key=%s", store_handle, key)
 
+	if sh := i.secretStoreHandles.Get(int(store_handle)); sh != nil {
+		i.deepBumpStore("secret", sh.name)
+	}
+
 	// Look up the secret by key
 	plaintext, found := lookupFunc(key)
 	if !found {

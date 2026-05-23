@@ -25,6 +25,11 @@ Fastlike is a complete Go implementation of the Fastly Compute XQD ABI that runs
 - Secure Secret Handling: Secure credential management
 - KV Store Support: Object storage with async operations
 - Image Optimization Hooks: Transform images on-the-fly
+- Built-in Profiler: Capture hostcall timings, backend waterfalls, native CPU samples, and deep-mode body/cache/header/memory counters, served through a browser viewer. See [docs/profiling.md](docs/profiling.md).
+
+## Profiling
+
+Fastlike ships with a built-in profiler. Pass `-profile-ui localhost:6060` and open the viewer in your browser to inspect hostcall timings, backend waterfalls, optional native CPU samples, and (in deep mode) body byte counters, cache hit/miss rates, store access counts, header summaries, and the wasm linear memory curve. The full operator guide lives in [docs/profiling.md](docs/profiling.md).
 
 ## Installation
 
@@ -367,6 +372,10 @@ watch -n 1 curl -s http://localhost:5000/
 ```
 
 ## Advanced Features
+
+### Profiler and Trace Viewer
+
+Fastlike's built-in profiler records every guest request and serves traces through a read-only HTTP listener. Start it with `-profile-ui <addr>`, switch to deep mode with `-profile-mode deep` for body/cache/header/memory metrics, or enable native CPU sampling with `-profile-native`. The full reference, including security gates, deep-mode caveats, and the macOS and Linux native sampling setup, is documented in [docs/profiling.md](docs/profiling.md).
 
 ### Custom Logging
 
