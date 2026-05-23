@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -271,6 +272,7 @@ type requestData struct {
 	Dropped          int
 	DroppedBackends  int
 	Spans            []requestSpan
+	SpanGroups       []requestSpanGroup
 	BackendWaterfall []backendBar
 	NativeSamples    []nativeSampleRow
 	Deep             *deepRow
@@ -329,6 +331,19 @@ type requestSpan struct {
 	Tags       string
 }
 
+type requestSpanGroup struct {
+	Name       string
+	Count      int
+	TotalMs    string
+	AvgMs      string
+	MaxMs      string
+	FirstMs    string
+	LastMs     string
+	Spans      []requestSpan
+	TotalNanos int64
+	maxNanos   int64
+}
+
 type backendBar struct {
 	Idx         int
 	Name        string
@@ -373,16 +388,46 @@ func newRequestData(t *RequestTrace) requestData {
 			{Label: "pprof", URL: fmt.Sprintf("/r/%d.pprof", t.ReqID)},
 		},
 	}
+	groupIdx := make(map[string]int)
 	for i, s := range t.Spans {
-		data.Spans = append(data.Spans, requestSpan{
+		row := requestSpan{
 			Idx:        i,
 			Name:       resolveHostcallName(s.NameIdx),
 			StartMs:    fmtMs(s.Start),
 			DurationMs: fmtMs(s.Duration),
 			RC:         s.RC,
 			Tags:       fmt.Sprintf("%v", s.TagSlots),
-		})
+		}
+		data.Spans = append(data.Spans, row)
+		gi, ok := groupIdx[row.Name]
+		if !ok {
+			gi = len(data.SpanGroups)
+			groupIdx[row.Name] = gi
+			data.SpanGroups = append(data.SpanGroups, requestSpanGroup{
+				Name:    row.Name,
+				FirstMs: row.StartMs,
+			})
+		}
+		g := &data.SpanGroups[gi]
+		g.Count++
+		g.TotalNanos += s.Duration
+		g.LastMs = row.StartMs
+		g.Spans = append(g.Spans, row)
+		if s.Duration > g.maxNanos {
+			g.maxNanos = s.Duration
+		}
 	}
+	for i := range data.SpanGroups {
+		g := &data.SpanGroups[i]
+		g.TotalMs = fmtMs(g.TotalNanos)
+		g.MaxMs = fmtMs(g.maxNanos)
+		if g.Count > 0 {
+			g.AvgMs = fmtMs(g.TotalNanos / int64(g.Count))
+		}
+	}
+	sort.SliceStable(data.SpanGroups, func(i, j int) bool {
+		return data.SpanGroups[i].TotalNanos > data.SpanGroups[j].TotalNanos
+	})
 	total := float64(t.WallNanos)
 	if total <= 0 {
 		// Avoid div-by-zero; fall back to the largest backend call total.
@@ -544,6 +589,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .bar.incomplete { background: #444; }
 .summary td:first-child { width: 14rem; color: #444; }
 .notes { background: #fff7eb; border: 1px solid #ffd7a8; padding: 0.5rem 0.75rem; border-radius: 4px; margin: 1rem 0; }
+table.spangroups td:first-child { width: 38%; }
+table.spangroups details > summary { cursor: pointer; list-style: revert; }
+table.group-detail { margin: 0.5rem 0 0.25rem 0; background: #fafafa; }
+table.group-detail th { background: #f0f0f3; font-weight: 500; font-size: 0.92em; }
+table.group-detail td { font-size: 0.92em; }
 </style>
 </head>
 <body>
@@ -717,18 +767,38 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 {{end}}
 
 <h2>hostcall spans ({{len .Spans}}{{if gt .Dropped 0}} <span class="dropped">+{{.Dropped}} dropped</span>{{end}})</h2>
-{{if .Spans}}
-<table>
-<thead><tr><th>#</th><th>name</th><th>start (ms)</th><th>duration (ms)</th><th>rc</th><th>tags</th></tr></thead>
+{{if .SpanGroups}}
+<p class="muted">grouped by name, sorted by total time. expand a row to see individual calls.</p>
+<table class="spangroups">
+<thead><tr>
+  <th>name</th><th>count</th><th>total (ms)</th><th>avg (ms)</th><th>max (ms)</th>
+  <th>first start (ms)</th><th>last start (ms)</th>
+</tr></thead>
 <tbody>
-{{range .Spans}}
-<tr>
-  <td>{{.Idx}}</td>
-  <td><code>{{.Name}}</code></td>
-  <td>{{.StartMs}}</td>
-  <td>{{.DurationMs}}</td>
-  <td>{{.RC}}</td>
-  <td><code class="muted">{{.Tags}}</code></td>
+{{range .SpanGroups}}
+<tr class="group-row">
+  <td><details><summary><code>{{.Name}}</code></summary>
+    <table class="group-detail">
+    <thead><tr><th>#</th><th>start (ms)</th><th>duration (ms)</th><th>rc</th><th>tags</th></tr></thead>
+    <tbody>
+    {{range .Spans}}
+    <tr>
+      <td>{{.Idx}}</td>
+      <td>{{.StartMs}}</td>
+      <td>{{.DurationMs}}</td>
+      <td>{{.RC}}</td>
+      <td><code class="muted">{{.Tags}}</code></td>
+    </tr>
+    {{end}}
+    </tbody>
+    </table>
+  </details></td>
+  <td>{{.Count}}</td>
+  <td>{{.TotalMs}}</td>
+  <td>{{.AvgMs}}</td>
+  <td>{{.MaxMs}}</td>
+  <td>{{.FirstMs}}</td>
+  <td>{{.LastMs}}</td>
 </tr>
 {{end}}
 </tbody>
