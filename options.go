@@ -39,6 +39,33 @@ func WithBackendConfig(backend *Backend) Option {
 	}
 }
 
+// WithBackendTraced registers a backend identified by name and records the
+// supplied *http.Transport so the profile recorder can install an
+// httptrace.ClientTrace via per-request context. The transport is
+// embedder-owned: fastlike never clones, mutates, or closes it. The handler
+// is expected to dispatch through transport; if it does not (for example a
+// custom in-memory mock), phase fields stay nil in the trace and only the
+// total span timing is captured.
+//
+// When profiling is disabled on the parent Fastlike, the backend behaves
+// exactly like one registered through WithBackend; the transport reference
+// is retained but no httptrace callbacks are attached.
+func WithBackendTraced(name string, h http.Handler, transport *http.Transport) Option {
+	return func(i *Instance) {
+		u, err := url.Parse("http://" + name)
+		if err != nil {
+			u, _ = url.Parse("http://localhost")
+		}
+		backend := &Backend{
+			Name:      name,
+			URL:       u,
+			Handler:   h,
+			Transport: transport,
+		}
+		i.addBackend(name, backend)
+	}
+}
+
 // WithUnreliableBackend registers a backend with simulated reliability. The
 // uptime parameter is the percentage of requests that reach the backend
 // normally; the rest are answered with a synthetic 502 that mimics a real

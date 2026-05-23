@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync/atomic"
+	"time"
 )
 
 // FramingHeadersMode controls how HTTP framing headers (Content-Length, Transfer-Encoding) are handled.
@@ -290,6 +292,21 @@ type PendingRequest struct {
 	done     chan struct{}  // closed when request completes
 	response *http.Response // response when complete
 	err      error          // error if request failed
+
+	// Profile bookkeeping. These fields are nil / zero when profiling is
+	// disabled on the parent Instance, and the synchronization paths below
+	// short-circuit accordingly so the no-profile cost stays a single
+	// pointer compare.
+	recorder           *backendCallRecorder // bound at send time, observed at wait time
+	waitObservedAtNano atomic.Int64         // nanos since trace.WallStart of first poll/wait/select; 0 when never observed
+	completeHook       atomic.Pointer[func(*http.Response, error)]
+
+	// bodyClosed arbitrates the response-body close between the
+	// recorder's late-completion hook (orphan / incomplete paths) and
+	// the response-handle path (reset() closing wh.Body for responses
+	// the guest converted to a handle). Whichever side wins the swap
+	// performs the close; the other side observes true and skips.
+	bodyClosed atomic.Bool
 }
 
 // IsReady checks if the pending request has completed (non-blocking)
@@ -306,6 +323,43 @@ func (pr *PendingRequest) IsReady() bool {
 func (pr *PendingRequest) Wait() (*http.Response, error) {
 	<-pr.done
 	return pr.response, pr.err
+}
+
+// observeWait records the first time a poll / wait / select hostcall
+// referenced this handle. Subsequent observations leave the timestamp
+// unchanged so the finalize sweep can tell apart "guest cared at some
+// point" (non-zero) from "fire and forget" (zero).
+func (pr *PendingRequest) observeWait(traceStart time.Time) {
+	if pr == nil || pr.recorder == nil {
+		return
+	}
+	if pr.waitObservedAtNano.Load() != 0 {
+		return
+	}
+	pr.waitObservedAtNano.CompareAndSwap(0, time.Since(traceStart).Nanoseconds())
+}
+
+// waitObserved reports whether the guest has ever observed this handle.
+func (pr *PendingRequest) waitObserved() bool {
+	return pr.waitObservedAtNano.Load() != 0
+}
+
+// setCompleteHook installs a one-shot callback invoked after the goroutine
+// stores the response and closes done. If the goroutine has already
+// completed when setCompleteHook is called, the hook fires synchronously.
+// The hook is responsible for resource hygiene (body close); the recorder's
+// trace-write side checks the sticky no-op flag itself.
+func (pr *PendingRequest) setCompleteHook(fn func(*http.Response, error)) {
+	if pr == nil {
+		return
+	}
+	hook := fn
+	pr.completeHook.Store(&hook)
+	if pr.IsReady() {
+		if cb := pr.completeHook.Swap(nil); cb != nil {
+			(*cb)(pr.response, pr.err)
+		}
+	}
 }
 
 // PendingRequestHandles is a slice of PendingRequest with methods to get and create
@@ -336,6 +390,9 @@ func (pr *PendingRequest) Complete(resp *http.Response, err error) {
 	pr.response = resp
 	pr.err = err
 	close(pr.done)
+	if cb := pr.completeHook.Swap(nil); cb != nil {
+		(*cb)(resp, err)
+	}
 }
 
 // Secret represents a secret value that can be retrieved from a SecretStore

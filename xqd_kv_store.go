@@ -68,6 +68,8 @@ func (i *Instance) xqd_kv_store_lookup(
 		return XqdErrInvalidArgument
 	}
 
+	i.deepBumpStore("kv", storeHandle.Store.name)
+
 	// Note: lookup config only contains reserved fields, so we ignore it
 
 	// Create a pending lookup handle

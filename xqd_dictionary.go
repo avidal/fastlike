@@ -51,6 +51,10 @@ func (i *Instance) xqd_dictionary_get(handle int32, key_addr int32, key_size int
 
 	i.abilog.Printf("dictionary_get: handle=%d key=%s", handle, key)
 
+	if int(handle) >= 0 && int(handle) < len(i.dictionaries) {
+		i.deepBumpStore("dictionary", i.dictionaries[handle].name)
+	}
+
 	value := lookupFunc(key)
 
 	// Empty value indicates the key doesn't exist

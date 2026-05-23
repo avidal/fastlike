@@ -716,6 +716,17 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		req.Header = http.Header{}
 	}
 
+	// Go's HTTP client ignores Header["Host"] on outgoing requests and uses
+	// req.Host instead. http.NewRequestWithContext set req.Host to the URL's
+	// host (the downstream URL, e.g. 127.0.0.1:5000), which would be sent
+	// upstream as-is — breaking name-based virtual hosts and CDN-fronted
+	// origins. Promote the guest-set Host header so it actually goes out.
+	// When the guest didn't set one, leave req.Host alone so embedder
+	// http.Handler backends that branch on r.Host still see a valid value.
+	if host := req.Header.Get("Host"); host != "" {
+		req.Host = host
+	}
+
 	// Add a CDN-Loop header for loop detection (checked at ingress to prevent infinite loops)
 	req.Header.Add("cdn-loop", "fastlike")
 
@@ -746,11 +757,23 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	// If the backend is geolocation, we select the geobackend explicitly
 	var handler http.Handler
+	var transportPresent bool
 	if backend == "geolocation" {
 		handler = geoHandler(i.geolookup)
 	} else {
 		handler = i.getBackendHandler(backend)
+		if b := i.getBackend(backend); b != nil && b.Transport != nil {
+			transportPresent = true
+		}
 	}
+
+	// Record the backend call against the active trace (no-op when
+	// profiling is disabled). The recorder owns the BackendCall slot
+	// through completion; we install httptrace.ClientTrace via the
+	// request context only when the backend actually exposes a transport
+	// fastlike can observe.
+	recorder, _ := i.startBackendCall(backend, req.Method, req.URL, 0)
+	req = req.WithContext(recorder.installHTTPTrace(req.Context(), transportPresent))
 
 	// Use httptest.ResponseRecorder to capture the response from the handler
 	// This provides an http.ResponseWriter interface and allows us to extract the *http.Response
@@ -761,11 +784,22 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	// Pause CPU time tracking during the blocking HTTP request
 	i.pauseExecution()
 
-	// Run the handler in a goroutine so we can monitor context cancellation
+	// Run the handler in a goroutine so we can monitor context
+	// cancellation. defer close(done) + recover guards against a handler
+	// panic — without them, a panic would skip the close and wedge the
+	// outer select forever, leaving the BackendCall slot permanently
+	// Incomplete and the wasm goroutine deadlocked.
 	done := make(chan struct{})
+	var handlerErr error
 	go func() {
+		defer close(done)
+		defer func() {
+			if rv := recover(); rv != nil {
+				handlerErr = fmt.Errorf("backend handler panic: %v", rv)
+				i.abilog.Printf("req_send: %s", handlerErr)
+			}
+		}()
 		handler.ServeHTTP(wr, req)
-		close(done)
 	}()
 
 	// Wait for either the request to complete or context to be cancelled
@@ -783,6 +817,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 			case <-done:
 			case <-time.After(10 * time.Millisecond):
 			}
+			recorder.completeBackendCall(0, true, i.ds_context.Err())
 			// Return error - wasm will trap on epoch when it continues executing
 			return XqdError
 		}
@@ -792,7 +827,13 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		i.resumeExecution()
 	}
 
+	if handlerErr != nil {
+		recorder.completeBackendCall(0, false, handlerErr)
+		return XqdError
+	}
+
 	w := wr.Result()
+	recorder.completeBackendCall(w.StatusCode, false, nil)
 
 	// Apply auto-decompression if enabled
 	_ = applyAutoDecompression(w, r.autoDecompressEncodings)
@@ -867,11 +908,33 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	// Create a pending request handle
 	phid, pendingReq := i.pendingRequests.New()
 
-	// Launch goroutine to perform the request asynchronously
-	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
+	// Allocate the BackendCall slot synchronously before launching the
+	// goroutine so the recorder owns the slot independent of goroutine
+	// scheduling.
+	transportPresent := false
+	if b := i.getBackend(backend); b != nil && b.Transport != nil {
+		transportPresent = true
+	}
+	recorder, _ := i.startBackendCall(backend, r.Method, r.URL, uint32(phid))
+	pendingReq.recorder = recorder
+
+	// Launch goroutine to perform the request asynchronously. defer
+	// recover guards against a handler panic — without it, the
+	// BackendCall slot would stay Incomplete forever and pr.Complete
+	// would never fire (leaking goroutines that observe pr.done).
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+		defer func() {
+			if rv := recover(); rv != nil {
+				err := fmt.Errorf("backend handler panic: %v", rv)
+				i.abilog.Printf("req_send_async: %s", err)
+				rec.completeBackendCall(0, false, err)
+				pr.Complete(nil, err)
+			}
+		}()
 		// Build the request
-		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
+		httpReq, err := http.NewRequestWithContext(rec.installHTTPTrace(ctx, tracedTransport), req.Method, req.URL.String(), body)
 		if err != nil {
+			rec.completeBackendCall(0, ctx.Err() != nil, err)
 			pr.Complete(nil, err)
 			return
 		}
@@ -880,6 +943,8 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
 		}
+
+		httpReq.Host = httpReq.Header.Get("Host")
 
 		// Add CDN-Loop header for loop detection
 		httpReq.Header.Add("cdn-loop", "fastlike")
@@ -921,9 +986,15 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		// Apply auto-decompression if enabled
 		_ = applyAutoDecompression(resp, autoDecompress)
 
+		// Record the backend outcome before handing the response off.
+		// completeBackendCall is a silent no-op when the trace has been
+		// finalized (sticky no-op flag), but it still runs so the
+		// recorder's late-completion hook can pick up the response.
+		rec.completeBackendCall(resp.StatusCode, ctx.Err() != nil, nil)
+
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
+	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -982,9 +1053,26 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	// Create pending request handle
 	phid, pendingReq := i.pendingRequests.New()
 
-	// Single goroutine: buffer body writes, then send the request
-	go func(ctx context.Context, req *http.Request, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode) {
+	transportPresent := false
+	if bk := i.getBackend(backend); bk != nil && bk.Transport != nil {
+		transportPresent = true
+	}
+	recorder, _ := i.startBackendCall(backend, r.Method, r.URL, uint32(phid))
+	pendingReq.recorder = recorder
+
+	// Single goroutine: buffer body writes, then send the request.
+	// defer recover guards against a handler panic — same rationale
+	// as xqd_req_send_async.
+	go func(ctx context.Context, req *http.Request, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
 		defer close(b.streamingDone)
+		defer func() {
+			if rv := recover(); rv != nil {
+				err := fmt.Errorf("backend handler panic: %v", rv)
+				i.abilog.Printf("req_send_async_streaming: %s", err)
+				rec.completeBackendCall(0, false, err)
+				pr.Complete(nil, err)
+			}
+		}()
 
 		// Accumulate body data
 		var buf bytes.Buffer
@@ -1000,8 +1088,9 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Body is complete — send the request with known Content-Length
 		bodyBytes := buf.Bytes()
-		httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), bytes.NewReader(bodyBytes))
+		httpReq, err := http.NewRequestWithContext(rec.installHTTPTrace(ctx, tracedTransport), req.Method, req.URL.String(), bytes.NewReader(bodyBytes))
 		if err != nil {
+			rec.completeBackendCall(0, ctx.Err() != nil, err)
 			pr.Complete(nil, err)
 			return
 		}
@@ -1011,6 +1100,8 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 			httpReq.Header = http.Header{}
 		}
 		httpReq.ContentLength = int64(len(bodyBytes))
+
+		httpReq.Host = httpReq.Header.Get("Host")
 
 		// Add CDN-Loop header
 		httpReq.Header.Add("cdn-loop", "fastlike")
@@ -1034,9 +1125,11 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		// Apply auto-decompression if enabled
 		_ = applyAutoDecompression(resp, autoDecompress)
 
+		rec.completeBackendCall(resp.StatusCode, ctx.Err() != nil, nil)
+
 		// Mark pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode)
+	}(i.ds_context, r.Request, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1069,6 +1162,10 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 
 	i.abilog.Printf("pending_req_poll: pending handle=%d", phandle)
 
+	if i.trace != nil {
+		pr.observeWait(i.trace.WallStart)
+	}
+
 	// Check if ready (non-blocking)
 	if pr.IsReady() {
 		// Request is complete, get the response
@@ -1081,6 +1178,11 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 			i.memory.PutUint32(HandleInvalid, int64(bh_out))
 			return XqdError
 		}
+
+		// The response body now flows through a response handle that
+		// reset() closes; mark bodyClosed so the recorder's late hook
+		// (if any) skips this PendingRequest.
+		pr.bodyClosed.Store(true)
 
 		// Convert the response into (wh, bh) pair
 		whid, wh := i.responses.New()
@@ -1130,6 +1232,10 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 
 	i.abilog.Printf("pending_req_wait: pending handle=%d, blocking until complete", phandle)
 
+	if i.trace != nil {
+		pr.observeWait(i.trace.WallStart)
+	}
+
 	// Pause CPU time tracking while waiting for the async request
 	i.pauseExecution()
 	// Block until the request completes
@@ -1144,6 +1250,9 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 		i.memory.PutUint32(HandleInvalid, int64(bh_out))
 		return XqdError
 	}
+
+	// Response handed off to a response handle reset() will close.
+	pr.bodyClosed.Store(true)
 
 	// Convert the response into (wh, bh) pair
 	whid, wh := i.responses.New()
@@ -1211,6 +1320,9 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 			channel: pr.done,
 			pr:      pr,
 		})
+		if i.trace != nil {
+			pr.observeWait(i.trace.WallStart)
+		}
 	}
 
 	// Use goroutines to implement dynamic select over multiple channels
@@ -1244,6 +1356,9 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 		i.memory.PutUint32(HandleInvalid, int64(bh_out))
 		return XqdError
 	}
+
+	// Response handed off to a response handle reset() will close.
+	pr.bodyClosed.Store(true)
 
 	// Convert the response into (wh, bh) pair
 	whid, wh := i.responses.New()
@@ -1325,6 +1440,10 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 
 	if req.Header == nil {
 		req.Header = http.Header{}
+	}
+
+	if host := req.Header.Get("Host"); host != "" {
+		req.Host = host
 	}
 
 	// Add CDN-Loop header for loop detection
