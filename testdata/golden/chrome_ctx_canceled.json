@@ -1,0 +1,123 @@
+{
+  "traceEvents": [
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "name": "hostcalls"
+      }
+    },
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 2,
+      "args": {
+        "name": "backends"
+      }
+    },
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 3,
+      "args": {
+        "name": "native"
+      }
+    },
+    {
+      "name": "body_downstream_get",
+      "cat": "hostcall",
+      "ph": "X",
+      "ts": 100,
+      "dur": 200,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "index": 0,
+        "rc": 0,
+        "tag_slots": [
+          1,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "send",
+      "cat": "hostcall",
+      "ph": "X",
+      "ts": 1000,
+      "dur": 1600,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "index": 1,
+        "rc": 0,
+        "tag_slots": [
+          1,
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "api",
+      "cat": "backend",
+      "ph": "X",
+      "ts": 1050,
+      "dur": 1500,
+      "pid": 1,
+      "tid": 2,
+      "args": {
+        "connect_ms": 1.5,
+        "index": 0,
+        "method": "GET",
+        "name": "api",
+        "outcome": "cancelled",
+        "status": 0,
+        "ttfb_ms": 2.5,
+        "url": "http://upstream/v1/things"
+      }
+    },
+    {
+      "name": "header_flush",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 800,
+      "pid": 1,
+      "tid": 1,
+      "s": "g"
+    },
+    {
+      "name": "outcome.ctx-canceled",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 0,
+      "pid": 1,
+      "tid": 1,
+      "s": "g",
+      "args": {
+        "method": "GET",
+        "module_id": "abc123def456",
+        "req_id": 12,
+        "status": 500,
+        "url": "http://example.com/proxy"
+      }
+    }
+  ],
+  "displayTimeUnit": "ms",
+  "otherData": {
+    "fastlike.module_id": "abc123def456",
+    "fastlike.outcome": "ctx-canceled",
+    "fastlike.req_id": 12,
+    "fastlike.wall_nanos": 5000000
+  }
+}

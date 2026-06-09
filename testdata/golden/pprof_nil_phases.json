@@ -1,0 +1,89 @@
+{
+  "sample_types": [
+    "wall/nanoseconds",
+    "count/count"
+  ],
+  "samples": [
+    {
+      "functions": [
+        "backend:mock"
+      ],
+      "values": [
+        1800000,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "backend"
+        ],
+        [
+          "method",
+          "POST"
+        ],
+        [
+          "outcome",
+          "ok"
+        ],
+        [
+          "status",
+          "200"
+        ],
+        [
+          "url",
+          "http://mock/api"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "hostcall:send"
+      ],
+      "values": [
+        1800000,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "hostcall"
+        ],
+        [
+          "rc",
+          "0"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "outcome:normal"
+      ],
+      "values": [
+        0,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "lifecycle"
+        ],
+        [
+          "method",
+          "POST"
+        ],
+        [
+          "module_id",
+          "abc123def456"
+        ],
+        [
+          "req_id",
+          "9"
+        ],
+        [
+          "url",
+          "http://example.com/api"
+        ]
+      ]
+    }
+  ]
+}

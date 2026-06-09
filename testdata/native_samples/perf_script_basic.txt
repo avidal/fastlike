@@ -1,0 +1,16 @@
+fastlike 12345 [001] 1700000000.000001500:    1 cycles:
+	7fbeef2a1234 wasm_function_a+0x42 (/tmp/fastlike-jit.so)
+	7fbeef2a0010 wasm_trampoline+0x10 (/tmp/fastlike-jit.so)
+	7fbeef100000 wasmtime_call+0x5 (/usr/lib/libwasmtime.so)
+
+fastlike 12345 [001] 1700000000.001002000:    1 cycles:
+	7fbeef2a5678 wasm_function_b+0x1a (/tmp/fastlike-jit.so)
+	7fbeef2a0010 wasm_trampoline+0x10 (/tmp/fastlike-jit.so)
+
+fastlike 12345 [002] 1700000000.002500000:    1 cycles:
+	7fbeef2a1234 wasm_function_a+0x8 (/tmp/fastlike-jit.so)
+	7fbeef2a0010 wasm_trampoline+0x10 (/tmp/fastlike-jit.so)
+
+other-proc 99999 [003] 1700000000.003000000:    1 cycles:
+	7fffaabb0000 unrelated_function+0x3 (/usr/bin/other-proc)
+

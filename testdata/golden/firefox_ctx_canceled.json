@@ -1,0 +1,191 @@
+{
+  "meta": {
+    "version": 27,
+    "interval": 1,
+    "startTime": 0,
+    "processType": 0,
+    "categories": [
+      {
+        "name": "Other",
+        "color": "grey",
+        "subcategories": [
+          "Other"
+        ]
+      },
+      {
+        "name": "Hostcall",
+        "color": "blue",
+        "subcategories": [
+          "Hostcall"
+        ]
+      },
+      {
+        "name": "Backend",
+        "color": "green",
+        "subcategories": [
+          "Backend"
+        ]
+      },
+      {
+        "name": "Lifecycle",
+        "color": "yellow",
+        "subcategories": [
+          "Lifecycle"
+        ]
+      },
+      {
+        "name": "Native",
+        "color": "red",
+        "subcategories": [
+          "Native"
+        ]
+      }
+    ],
+    "stackwalk": 0,
+    "platform": "fastlike",
+    "oscpu": "fastlike",
+    "product": "fastlike",
+    "abi": "fastlike",
+    "misc": "fastlike profile",
+    "appBuildID": "abc123def456",
+    "physicalCPUs": 0,
+    "logicalCPUs": 0,
+    "sampleUnits": {
+      "time": "ms",
+      "eventDelay": "ms",
+      "threadCPUDelta": "ns"
+    },
+    "markerSchema": []
+  },
+  "libs": [],
+  "pages": [],
+  "threads": [
+    {
+      "name": "fastlike-request",
+      "processName": "fastlike",
+      "processType": "default",
+      "registerTime": 0,
+      "unregisterTime": null,
+      "pid": 1,
+      "tid": 1,
+      "markers": {
+        "schema": {
+          "category": 4,
+          "data": 5,
+          "endTime": 2,
+          "name": 0,
+          "phase": 3,
+          "startTime": 1
+        },
+        "data": [
+          [
+            0,
+            0.1,
+            0.3,
+            1,
+            1,
+            {
+              "rc": 0,
+              "tag_slots": [
+                1,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          [
+            1,
+            1,
+            2.6,
+            1,
+            1,
+            {
+              "rc": 0,
+              "tag_slots": [
+                1,
+                1,
+                0,
+                0
+              ]
+            }
+          ],
+          [
+            2,
+            1.05,
+            2.55,
+            1,
+            2,
+            {
+              "backend": "api",
+              "connect_ms": 1.5,
+              "method": "GET",
+              "outcome": "cancelled",
+              "status": 0,
+              "ttfb_ms": 2.5,
+              "url": "http://upstream/v1/things"
+            }
+          ],
+          [
+            3,
+            0.8,
+            0.8,
+            0,
+            3,
+            null
+          ],
+          [
+            4,
+            0,
+            0,
+            0,
+            3,
+            null
+          ]
+        ],
+        "length": 5
+      },
+      "samples": {
+        "schema": {
+          "responsiveness": 2,
+          "stack": 0,
+          "time": 1
+        },
+        "data": null,
+        "length": 0
+      },
+      "frameTable": {
+        "schema": {
+          "func": 0,
+          "inlineDepth": 1
+        },
+        "data": null,
+        "length": 0
+      },
+      "stackTable": {
+        "schema": {
+          "frame": 1,
+          "prefix": 0
+        },
+        "data": null,
+        "length": 0
+      },
+      "funcTable": {
+        "schema": {
+          "name": 0
+        },
+        "data": null,
+        "length": 0
+      },
+      "stringTable": [
+        "body_downstream_get",
+        "send",
+        "backend:api",
+        "header_flush",
+        "outcome.ctx-canceled"
+      ]
+    }
+  ],
+  "pausedRanges": [],
+  "processName": "fastlike"
+}

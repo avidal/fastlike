@@ -3,7 +3,7 @@ package fastlike
 import (
 	"runtime"
 
-	"github.com/bytecodealliance/wasmtime-go/v38"
+	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
 // nativeProfilerStrategy maps a ProfileMode to the wasmtime profiling

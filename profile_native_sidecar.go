@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bytecodealliance/wasmtime-go/v38"
+	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
 // writeWasmSymbolSidecar writes wasm-symbols-{pid}.json into dir (or the

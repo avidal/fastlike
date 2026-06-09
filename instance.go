@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bytecodealliance/wasmtime-go/v38"
+	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
 func isCleanExit(err error) bool {
