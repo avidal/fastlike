@@ -39,6 +39,11 @@ var cliTransport = &http.Transport{
 func main() {
 	bind := flag.String("bind", "localhost:8000", "address to bind to")
 	verbosity := flag.Int("v", 0, "verbosity level (0, 1, 2)")
+
+	// wasmFlag preserves the pre-positional-argument invocation style
+	// (-wasm file.wasm). It is intentionally left out of the usage text;
+	// the positional <wasm-file> is the documented form now.
+	wasmFlag := flag.String("wasm", "", "")
 	reloadOnSIGHUP := flag.Bool("reload", false, "enable SIGHUP handler for hot-reloading wasm module")
 	complianceRegion := flag.String("compliance-region", "", "compliance region identifier (e.g., 'none', 'us-eu', 'us')")
 
@@ -104,6 +109,17 @@ func main() {
 		}
 		wasmPath = flag.Arg(0)
 		args = flag.Args()[1:]
+	}
+
+	// Fall back to the legacy -wasm flag when no positional path was given.
+	// If both are supplied and disagree, the positional argument wins but we
+	// warn so the contradiction is not silent.
+	if *wasmFlag != "" {
+		if wasmPath == "" {
+			wasmPath = *wasmFlag
+		} else if wasmPath != *wasmFlag {
+			_, _ = fmt.Fprintf(flag.CommandLine.Output(), "both a positional <wasm-file> %q and -wasm %q were given; using %q\n", wasmPath, *wasmFlag, wasmPath)
+		}
 	}
 
 	if wasmPath == "" {
