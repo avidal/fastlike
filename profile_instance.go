@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"fastlike.dev/profile"
 )
 
 // beginTrace arms the recorder for r and returns the response writer the
@@ -15,21 +17,21 @@ func (i *Instance) beginTrace(w http.ResponseWriter, r *http.Request) http.Respo
 	if i.profile == nil {
 		return w
 	}
-	i.trace = i.profile.store.newRequestTrace(i.profile.moduleID, r)
-	if i.profile.deepEnabled {
-		i.trace.Deep = newDeepMetrics()
+	i.trace = i.profile.Store.NewRequestTrace(i.profile.ModuleID, r)
+	if i.profile.DeepEnabled {
+		i.trace.Deep = profile.NewDeepMetrics()
 		// Snapshot the downstream request headers as the request
 		// arrives. Guests are free to mutate r.Header later via
 		// req_header_insert / req_header_append hostcalls; the trace
 		// captures the original surface so the operator sees what
 		// came in over the wire.
-		i.trace.Deep.RequestHeaders = summarizeHeaders(r.Header)
+		i.trace.Deep.RequestHeaders = profile.SummarizeHeaders(r.Header)
 		// Sample wasm heap at request start. The wasm has been
 		// instantiated by Instance.setup() which ran before
 		// beginTrace, so memory is live.
 		i.deepSampleHeap(0)
 	}
-	tw := newTraceResponseWriter(w)
+	tw := profile.NewTraceResponseWriter(w)
 	i.traceWriter = tw
 	return tw
 }
@@ -37,11 +39,11 @@ func (i *Instance) beginTrace(w http.ResponseWriter, r *http.Request) http.Respo
 // markOutcome stamps a non-normal outcome on the active trace. Subsequent
 // calls do not downgrade a more specific outcome back to normal. Safe to
 // call when profiling is disabled.
-func (i *Instance) markOutcome(o TraceOutcome) {
+func (i *Instance) markOutcome(o profile.TraceOutcome) {
 	if i.trace == nil {
 		return
 	}
-	if i.trace.Outcome == TraceOutcomeNormal {
+	if i.trace.Outcome == profile.TraceOutcomeNormal {
 		i.trace.Outcome = o
 	}
 }
@@ -56,7 +58,7 @@ func (i *Instance) noteTrace(msg string) {
 }
 
 func (i *Instance) markHostcallPanic(name string, val any) {
-	i.markOutcome(TraceOutcomePanic)
+	i.markOutcome(profile.TraceOutcomePanic)
 	i.noteTrace(fmt.Sprintf("hostcall %s panic: %v", name, val))
 }
 
@@ -82,7 +84,7 @@ func (i *Instance) finishHostcallSpan(nameIdx uint16, start time.Time, rc int32,
 		t.Dropped++
 		return
 	}
-	span := Span{
+	span := profile.Span{
 		NameIdx:  nameIdx,
 		Start:    start.Sub(t.WallStart).Nanoseconds(),
 		Duration: duration,
@@ -124,8 +126,8 @@ func (i *Instance) finalizeTrace() {
 		t.HeaderFlushNanos = i.traceWriter.HeaderFlushed()
 		t.HijackedNanos = i.traceWriter.Hijacked()
 	}
-	if t.Outcome == TraceOutcomeNormal && i.ds_context != nil && i.ds_context.Err() != nil {
-		t.Outcome = TraceOutcomeCtxCanceled
+	if t.Outcome == profile.TraceOutcomeNormal && i.ds_context != nil && i.ds_context.Err() != nil {
+		t.Outcome = profile.TraceOutcomeCtxCanceled
 	}
 	i.sweepPendingBackends()
 	if t.Deep != nil && i.traceWriter != nil {
@@ -133,13 +135,13 @@ func (i *Instance) finalizeTrace() {
 		// trace is handed to the store. Reading via the wrapper's
 		// Header() returns the same map net/http will have written
 		// (the wrapper forwards Header() unchanged).
-		t.Deep.ResponseHeaders = summarizeHeaders(i.traceWriter.Header())
+		t.Deep.ResponseHeaders = profile.SummarizeHeaders(i.traceWriter.Header())
 	}
 	// One final heap sample at end-of-request so the curve always has
 	// a "final" data point even when memory was stable throughout.
 	i.deepSampleHeap(t.WallNanos)
-	t.Deep.finalize()
-	i.profile.store.completeTrace(t)
+	t.Deep.Finalize()
+	i.profile.Store.CompleteTrace(t)
 	i.trace = nil
 	i.traceWriter = nil
 }
@@ -167,8 +169,8 @@ func (i *Instance) sweepPendingBackends() {
 		return
 	}
 	grace := time.Duration(0)
-	if i.profile != nil && i.profile.store != nil {
-		grace = i.profile.store.AsyncGrace()
+	if i.profile != nil && i.profile.Store != nil {
+		grace = i.profile.Store.AsyncGrace()
 	}
 	for _, pr := range i.pendingRequests.handles {
 		if pr == nil || pr.recorder == nil {

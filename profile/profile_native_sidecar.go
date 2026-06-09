@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
-// writeWasmSymbolSidecar writes wasm-symbols-{pid}.json into dir (or the
+// WriteWasmSymbolSidecar writes wasm-symbols-{pid}.json into dir (or the
 // current working directory when dir is empty) containing the export
 // list of the module compiled from wasmbytes. Returns the file path on
 // success.
@@ -20,9 +20,9 @@ import (
 // for the in-process trace, so a missing sidecar must never break the
 // rest of the profiler.
 //
-// Callers (New, Reload) gate emission on nativeSamplingRequested(mode)
+// Callers (New, Reload) gate emission on NativeSamplingRequested(mode)
 // so trace-only / off configurations skip this entirely.
-func writeWasmSymbolSidecar(wasmbytes []byte, dir, moduleID string, mode ProfileMode) (string, error) {
+func WriteWasmSymbolSidecar(wasmbytes []byte, dir, moduleID string, mode ProfileMode) (string, error) {
 	exports, err := extractWasmExports(wasmbytes)
 	if err != nil {
 		return "", fmt.Errorf("extract exports: %w", err)

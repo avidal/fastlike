@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -51,7 +51,7 @@ func EncodeFirefoxGecko(t *RequestTrace) ([]byte, error) {
 
 	for _, s := range t.Spans {
 		thread.Markers.add(
-			thread.intern(resolveHostcallName(s.NameIdx)),
+			thread.intern(ResolveHostcallName(s.NameIdx)),
 			geckoMarkerPhaseInterval,
 			nanosToMillisFloat(s.Start),
 			nanosToMillisFloat(s.Start+s.Duration),

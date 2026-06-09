@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"runtime"
@@ -6,7 +6,7 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
-// nativeProfilerStrategy maps a ProfileMode to the wasmtime profiling
+// NativeProfilerStrategy maps a ProfileMode to the wasmtime profiling
 // strategy fastlike should configure on the engine. Returns
 // ProfilingStrategyNone unless mode is native or combined, and unless the
 // host platform actually supports jitdump (today: Linux).
@@ -16,7 +16,7 @@ import (
 // or requiring perf/samply to be installed. Callers separately decide
 // whether to log a notice when the configured mode would have enabled
 // sampling but the platform does not support it.
-func nativeProfilerStrategy(mode ProfileMode) (wasmtime.ProfilingStrategy, bool) {
+func NativeProfilerStrategy(mode ProfileMode) (wasmtime.ProfilingStrategy, bool) {
 	switch mode {
 	case ProfileModeNative, ProfileModeCombined:
 		// wasmtime-go v38 only wraps ProfilingStrategyJitdump from the
@@ -33,12 +33,12 @@ func nativeProfilerStrategy(mode ProfileMode) (wasmtime.ProfilingStrategy, bool)
 	return wasmtime.ProfilingStrategyNone, false
 }
 
-// nativeSamplingRequested reports whether the configured mode asked for
+// NativeSamplingRequested reports whether the configured mode asked for
 // native sampling, regardless of whether the platform supports it. The
 // CLI uses this to print a one-line notice when a native/combined mode
 // is configured on a host with no supported strategy, so the operator
 // understands why their sampler will see no jitdump output.
-func nativeSamplingRequested(mode ProfileMode) bool {
+func NativeSamplingRequested(mode ProfileMode) bool {
 	return mode == ProfileModeNative || mode == ProfileModeCombined
 }
 

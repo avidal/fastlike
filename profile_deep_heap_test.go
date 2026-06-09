@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"fastlike.dev/profile"
 )
 
 // instanceWithHeap returns an Instance whose i.memory is backed by
@@ -11,14 +13,14 @@ import (
 // to read.
 func instanceWithHeap(t *testing.T, deepEnabled bool, sz int) *Instance {
 	t.Helper()
-	store := NewProfileStore()
+	store := profile.NewProfileStore()
 	i := &Instance{
-		profile: &profileBinding{store: store, moduleID: "m", deepEnabled: deepEnabled},
+		profile: &profile.Binding{Store: store, ModuleID: "m", DeepEnabled: deepEnabled},
 		memory:  &Memory{ByteMemory(make([]byte, sz))},
 	}
-	i.trace = store.newRequestTrace("m", mustRequest(t))
+	i.trace = store.NewRequestTrace("m", mustRequest(t))
 	if deepEnabled {
-		i.trace.Deep = newDeepMetrics()
+		i.trace.Deep = profile.NewDeepMetrics()
 	}
 	return i
 }
@@ -74,20 +76,20 @@ func TestDeepHeapAppendsOnChange(t *testing.T) {
 func TestDeepHeapCapDropsExcess(t *testing.T) {
 	i := instanceWithHeap(t, true, 64*1024)
 	// Fill the cap by feeding distinct sizes.
-	for k := 0; k < defaultHeapSampleCap; k++ {
+	for k := 0; k < profile.DefaultHeapSampleCap; k++ {
 		i.memory = &Memory{ByteMemory(make([]byte, (k+1)*1024))}
 		i.deepSampleHeap(int64(k))
 	}
-	if got := len(i.trace.Deep.HeapSamples); got != defaultHeapSampleCap {
-		t.Fatalf("filled samples: %d, want %d", got, defaultHeapSampleCap)
+	if got := len(i.trace.Deep.HeapSamples); got != profile.DefaultHeapSampleCap {
+		t.Fatalf("filled samples: %d, want %d", got, profile.DefaultHeapSampleCap)
 	}
 	// Overflow.
 	for k := 0; k < 10; k++ {
-		i.memory = &Memory{ByteMemory(make([]byte, (defaultHeapSampleCap+k+1)*1024))}
+		i.memory = &Memory{ByteMemory(make([]byte, (profile.DefaultHeapSampleCap+k+1)*1024))}
 		i.deepSampleHeap(int64(10000 + k))
 	}
-	if got := len(i.trace.Deep.HeapSamples); got != defaultHeapSampleCap {
-		t.Errorf("samples post-overflow: %d, want %d", got, defaultHeapSampleCap)
+	if got := len(i.trace.Deep.HeapSamples); got != profile.DefaultHeapSampleCap {
+		t.Errorf("samples post-overflow: %d, want %d", got, profile.DefaultHeapSampleCap)
 	}
 	if got := i.trace.Deep.HeapSamplesDropped; got != 10 {
 		t.Errorf("HeapSamplesDropped: %d, want 10", got)
@@ -95,19 +97,19 @@ func TestDeepHeapCapDropsExcess(t *testing.T) {
 }
 
 func TestHeapAggregatesOfEmpty(t *testing.T) {
-	got := HeapAggregatesOf(nil)
-	if got != (HeapAggregates{}) {
+	got := profile.HeapAggregatesOf(nil)
+	if got != (profile.HeapAggregates{}) {
 		t.Errorf("empty samples: %+v, want zero struct", got)
 	}
 }
 
 func TestHeapAggregatesOfMonotonic(t *testing.T) {
-	samples := []HeapSample{
+	samples := []profile.HeapSample{
 		{RelativeNanos: 0, MemoryBytes: 64 * 1024},
 		{RelativeNanos: 100, MemoryBytes: 128 * 1024},
 		{RelativeNanos: 200, MemoryBytes: 256 * 1024},
 	}
-	got := HeapAggregatesOf(samples)
+	got := profile.HeapAggregatesOf(samples)
 	if got.Min != 64*1024 || got.Max != 256*1024 || got.Final != 256*1024 {
 		t.Errorf("aggregates: %+v", got)
 	}
@@ -143,7 +145,7 @@ func TestDeepHeapJSONShape(t *testing.T) {
 }
 
 func TestDeepHeapJSONOmittedWhenAbsent(t *testing.T) {
-	tr := &RequestTrace{Deep: newDeepMetrics()}
+	tr := &profile.RequestTrace{Deep: profile.NewDeepMetrics()}
 	raw, err := tr.MarshalJSON()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -162,7 +164,7 @@ func TestDeepHeapEncodersAggregatesOnly(t *testing.T) {
 	i.memory = &Memory{ByteMemory(make([]byte, 256*1024))}
 	i.deepSampleHeap(1000)
 
-	chromeRaw, err := EncodeChromeTrace(i.trace)
+	chromeRaw, err := profile.EncodeChromeTrace(i.trace)
 	if err != nil {
 		t.Fatalf("chrome: %v", err)
 	}
@@ -182,7 +184,7 @@ func TestDeepHeapEncodersAggregatesOnly(t *testing.T) {
 		t.Errorf("chrome should not carry per-sample heap entries")
 	}
 
-	ffRaw, err := EncodeFirefoxGecko(i.trace)
+	ffRaw, err := profile.EncodeFirefoxGecko(i.trace)
 	if err != nil {
 		t.Fatalf("firefox: %v", err)
 	}
@@ -217,7 +219,7 @@ func TestDeepHeapEncodersNeverClaimGoHeap(t *testing.T) {
 	}
 }
 
-func mustEncodeNative(t *testing.T, tr *RequestTrace) []byte {
+func mustEncodeNative(t *testing.T, tr *profile.RequestTrace) []byte {
 	t.Helper()
 	raw, err := tr.MarshalJSON()
 	if err != nil {
@@ -225,17 +227,19 @@ func mustEncodeNative(t *testing.T, tr *RequestTrace) []byte {
 	}
 	return raw
 }
-func mustEncodeChrome(t *testing.T, tr *RequestTrace) []byte {
+
+func mustEncodeChrome(t *testing.T, tr *profile.RequestTrace) []byte {
 	t.Helper()
-	raw, err := EncodeChromeTrace(tr)
+	raw, err := profile.EncodeChromeTrace(tr)
 	if err != nil {
 		t.Fatalf("chrome: %v", err)
 	}
 	return raw
 }
-func mustEncodeFirefox(t *testing.T, tr *RequestTrace) []byte {
+
+func mustEncodeFirefox(t *testing.T, tr *profile.RequestTrace) []byte {
 	t.Helper()
-	raw, err := EncodeFirefoxGecko(tr)
+	raw, err := profile.EncodeFirefoxGecko(tr)
 	if err != nil {
 		t.Fatalf("firefox: %v", err)
 	}

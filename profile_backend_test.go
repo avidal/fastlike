@@ -11,17 +11,19 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"fastlike.dev/profile"
 )
 
 func newInstrumentedInstance(t *testing.T) *Instance {
 	t.Helper()
-	store := NewProfileStore()
-	store.backendCap = 4
+	store := profile.NewProfileStore()
+	store.SetBackendCap(4)
 	i := &Instance{
-		profile: &profileBinding{store: store, moduleID: "test"},
+		profile: &profile.Binding{Store: store, ModuleID: "test"},
 	}
 	r, _ := http.NewRequest("GET", "http://x/", nil)
-	i.trace = store.newRequestTrace("test", r)
+	i.trace = store.NewRequestTrace("test", r)
 	return i
 }
 
@@ -38,7 +40,7 @@ func TestBackendRecorderOk(t *testing.T) {
 		t.Fatalf("expected 1 backend call, got %d", got)
 	}
 	call := i.trace.BackendCalls[0]
-	if call.Outcome != BackendOutcomeOk {
+	if call.Outcome != profile.BackendOutcomeOk {
 		t.Errorf("outcome: %d, want ok", call.Outcome)
 	}
 	if call.Status != http.StatusTeapot {
@@ -57,7 +59,7 @@ func TestBackendRecorderCancelled(t *testing.T) {
 	u, _ := url.Parse("http://x/")
 	rec, _ := i.startBackendCall("api", "GET", u, 0)
 	rec.completeBackendCall(0, true, context.Canceled)
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeCancelled {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeCancelled {
 		t.Errorf("outcome: %d, want cancelled", got)
 	}
 }
@@ -67,7 +69,7 @@ func TestBackendRecorderNetworkError(t *testing.T) {
 	u, _ := url.Parse("http://x/")
 	rec, _ := i.startBackendCall("api", "GET", u, 0)
 	rec.completeBackendCall(0, false, errors.New("connect refused"))
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeNetworkError {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeNetworkError {
 		t.Errorf("outcome: %d, want network-error", got)
 	}
 }
@@ -86,7 +88,7 @@ func TestBackendRecorderSyntheticFailure(t *testing.T) {
 	*flag = true
 
 	rec.completeBackendCall(http.StatusBadGateway, false, nil)
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeSyntheticFailure {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeSyntheticFailure {
 		t.Errorf("outcome: %d, want synthetic-failure", got)
 	}
 }
@@ -96,7 +98,7 @@ func TestBackendRecorderOrphan(t *testing.T) {
 	u, _ := url.Parse("http://x/")
 	rec, _ := i.startBackendCall("api", "GET", u, 1)
 	rec.markOrphaned()
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeOrphaned {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeOrphaned {
 		t.Errorf("outcome: %d, want orphaned", got)
 	}
 }
@@ -106,7 +108,7 @@ func TestBackendRecorderIncomplete(t *testing.T) {
 	u, _ := url.Parse("http://x/")
 	rec, _ := i.startBackendCall("api", "GET", u, 1)
 	rec.markIncomplete()
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeIncomplete {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeIncomplete {
 		t.Errorf("outcome: %d, want incomplete", got)
 	}
 }
@@ -156,7 +158,7 @@ func TestBackendRecorderLateWriteSuppressed(t *testing.T) {
 	// Goroutine fires completeBackendCall after the sweep; must not flip
 	// outcome away from orphaned.
 	rec.completeBackendCall(200, false, nil)
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeOrphaned {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeOrphaned {
 		t.Errorf("late write overwrote outcome: %d", got)
 	}
 }
@@ -270,7 +272,7 @@ func TestBackendRecorderHandlerPanicProducesNetworkError(t *testing.T) {
 	panicErr := errors.New("backend handler panic: nil deref")
 	rec.completeBackendCall(0, false, panicErr)
 
-	if got := i.trace.BackendCalls[0].Outcome; got != BackendOutcomeNetworkError {
+	if got := i.trace.BackendCalls[0].Outcome; got != profile.BackendOutcomeNetworkError {
 		t.Errorf("outcome after panic: got %d, want network-error", got)
 	}
 	if got := i.trace.BackendCalls[0].Status; got != 0 {

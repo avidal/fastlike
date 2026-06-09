@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -31,10 +31,10 @@ func TestNativeSamplesEndToEnd(t *testing.T) {
 	store := NewProfileStore()
 	start := time.Unix(1700000000, 0)
 	r, _ := http.NewRequest("GET", "http://x/", nil)
-	tr := store.newRequestTrace("modX", r)
+	tr := store.NewRequestTrace("modX", r)
 	tr.WallStart = start
 	tr.WallNanos = 5_000_000 // 5ms covers the first three fixture events
-	store.completeTrace(tr)
+	store.CompleteTrace(tr)
 
 	attached := MergeNativeSamples(store, events, 12345, "modX")
 	if attached != 3 {

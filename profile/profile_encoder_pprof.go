@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bytes"
@@ -89,7 +89,7 @@ func EncodePprof(t *RequestTrace) ([]byte, error) {
 
 	// Hostcall spans: value = (duration_nanos, 1)
 	for _, s := range t.Spans {
-		name := "hostcall:" + resolveHostcallName(s.NameIdx)
+		name := "hostcall:" + ResolveHostcallName(s.NameIdx)
 		p.Sample = append(p.Sample, &profile.Sample{
 			Location: []*profile.Location{loc(name)},
 			Value:    []int64{s.Duration, 1},

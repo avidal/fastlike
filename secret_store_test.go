@@ -23,7 +23,8 @@ func TestSecretStore(t *testing.T) {
 	}
 
 	// Create an instance with a secret store
-	instance := NewInstance(wasmBytes,
+	instance := NewInstance(
+		wasmBytes,
 		WithSecretStore("my_secrets", secretLookup),
 	)
 

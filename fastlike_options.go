@@ -2,6 +2,8 @@ package fastlike
 
 import (
 	"time"
+
+	"fastlike.dev/profile"
 )
 
 // FastlikeOption is a functional option applied to a Fastlike value at
@@ -29,7 +31,7 @@ func WithInstanceOptions(opts ...Option) FastlikeOption {
 // WithProfileStore plugs an embedder-supplied ProfileStore into the Fastlike.
 // If unset and any other profile option is in play, the Fastlike creates a
 // default store via NewProfileStore().
-func WithProfileStore(store *ProfileStore) FastlikeOption {
+func WithProfileStore(store *profile.ProfileStore) FastlikeOption {
 	return func(f *Fastlike) {
 		f.profileStore = store
 	}
@@ -39,10 +41,10 @@ func WithProfileStore(store *ProfileStore) FastlikeOption {
 // is compile-time configuration: engine-level wiring for native/combined runs
 // inside compile() in a later step. Trace mode (the default when any profile
 // option is set) needs no engine support.
-func WithProfileMode(mode ProfileMode) FastlikeOption {
+func WithProfileMode(mode profile.ProfileMode) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		f.profileCompile.mode = mode
+		f.profileCompile.Mode = mode
 	}
 }
 
@@ -52,7 +54,7 @@ func WithProfileMode(mode ProfileMode) FastlikeOption {
 func WithProfileUI(addr string) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		f.profileStore.uiAddr = addr
+		f.profileStore.SetUIAddr(addr)
 	}
 }
 
@@ -61,7 +63,7 @@ func WithProfileUI(addr string) FastlikeOption {
 func WithProfileAuth(token string) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		f.profileStore.uiAuthToken = token
+		f.profileStore.SetUIAuthToken(token)
 	}
 }
 
@@ -71,7 +73,7 @@ func WithProfileAuth(token string) FastlikeOption {
 func WithProfileInsecureUI() FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		f.profileStore.uiInsecure = true
+		f.profileStore.SetUIInsecure(true)
 	}
 }
 
@@ -79,7 +81,7 @@ func WithProfileInsecureUI() FastlikeOption {
 func WithProfileDir(path string) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		f.profileStore.dir = path
+		f.profileStore.SetDir(path)
 	}
 }
 
@@ -88,10 +90,7 @@ func WithProfileDir(path string) FastlikeOption {
 func WithProfileRetain(n int) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		if n <= 0 {
-			n = defaultProfileRetain
-		}
-		f.profileStore.retain = n
+		f.profileStore.SetRetain(n)
 	}
 }
 
@@ -101,10 +100,7 @@ func WithProfileRetain(n int) FastlikeOption {
 func WithProfileAsyncGrace(d time.Duration) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		if d < 0 {
-			d = 0
-		}
-		f.profileStore.asyncGrace = d
+		f.profileStore.SetAsyncGrace(d)
 	}
 }
 
@@ -113,10 +109,7 @@ func WithProfileAsyncGrace(d time.Duration) FastlikeOption {
 func WithProfileBackendCap(n int) FastlikeOption {
 	return func(f *Fastlike) {
 		f.ensureProfileStore()
-		if n <= 0 {
-			n = defaultProfileBackendCap
-		}
-		f.profileStore.backendCap = n
+		f.profileStore.SetBackendCap(n)
 	}
 }
 
@@ -125,6 +118,6 @@ func WithProfileBackendCap(n int) FastlikeOption {
 // store, including a default one.
 func (f *Fastlike) ensureProfileStore() {
 	if f.profileStore == nil {
-		f.profileStore = NewProfileStore()
+		f.profileStore = profile.NewProfileStore()
 	}
 }

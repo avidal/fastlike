@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"net/http"
@@ -64,13 +64,13 @@ func headerAggregateTotals(summaries []HeaderSummary) (int, int) {
 	return count, bytes
 }
 
-// summarizeHeaders walks h and returns a sorted []HeaderSummary,
+// SummarizeHeaders walks h and returns a sorted []HeaderSummary,
 // redacting names that appear in redactedHeaderNames. Returns nil for
 // an empty / nil input so JSON omitempty can drop the field entirely.
 // Sort order: by Name ascending; redacted rows sort together under
 // "<redacted>" (which sorts before any canonical header name because
 // '<' < 'A').
-func summarizeHeaders(h http.Header) []HeaderSummary {
+func SummarizeHeaders(h http.Header) []HeaderSummary {
 	if len(h) == 0 {
 		return nil
 	}

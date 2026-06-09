@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ import (
 func TestNativeProfilerStrategyMapping(t *testing.T) {
 	// trace/off must never enable a native strategy.
 	for _, mode := range []ProfileMode{ProfileModeOff, ProfileModeTrace, ProfileModeDeep} {
-		strat, supported := nativeProfilerStrategy(mode)
+		strat, supported := NativeProfilerStrategy(mode)
 		if supported {
 			t.Errorf("mode %q: supported=true but should be false", mode)
 		}
@@ -25,7 +25,7 @@ func TestNativeProfilerStrategyMapping(t *testing.T) {
 
 	// native/combined map to jitdump on Linux, none elsewhere.
 	for _, mode := range []ProfileMode{ProfileModeNative, ProfileModeCombined} {
-		strat, supported := nativeProfilerStrategy(mode)
+		strat, supported := NativeProfilerStrategy(mode)
 		if runtime.GOOS == "linux" {
 			if !supported {
 				t.Errorf("linux mode %q: supported=false", mode)
@@ -53,7 +53,7 @@ func TestNativeSamplingRequested(t *testing.T) {
 		ProfileModeDeep:     false,
 	}
 	for mode, want := range cases {
-		if got := nativeSamplingRequested(mode); got != want {
+		if got := NativeSamplingRequested(mode); got != want {
 			t.Errorf("mode %q: got %v, want %v", mode, got, want)
 		}
 	}
@@ -66,7 +66,7 @@ func TestWriteWasmSymbolSidecar(t *testing.T) {
 	wasmbytes := minimalWasmWithExport(t, "_start")
 
 	dir := t.TempDir()
-	path, err := writeWasmSymbolSidecar(wasmbytes, dir, "modAbc", ProfileModeNative)
+	path, err := WriteWasmSymbolSidecar(wasmbytes, dir, "modAbc", ProfileModeNative)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
@@ -111,50 +111,11 @@ func TestWriteWasmSymbolSidecarCreatesDir(t *testing.T) {
 	wasmbytes := minimalWasmWithExport(t, "_start")
 	root := t.TempDir()
 	nested := filepath.Join(root, "subdir", "deeper")
-	if _, err := writeWasmSymbolSidecar(wasmbytes, nested, "x", ProfileModeNative); err != nil {
+	if _, err := WriteWasmSymbolSidecar(wasmbytes, nested, "x", ProfileModeNative); err != nil {
 		t.Fatalf("expected nested dir to be created: %v", err)
 	}
 	if _, err := os.Stat(nested); err != nil {
 		t.Errorf("nested dir not created: %v", err)
-	}
-}
-
-func TestMaybeEmitWasmSymbolSidecarSkipsTrace(t *testing.T) {
-	// trace and off must not produce a sidecar.
-	for _, mode := range []ProfileMode{ProfileModeOff, ProfileModeTrace, ProfileModeDeep} {
-		dir := t.TempDir()
-		f := &Fastlike{
-			moduleID:       "test",
-			profileCompile: &profileCompileConfig{mode: mode},
-			profileStore:   NewProfileStore(),
-		}
-		f.profileStore.dir = dir
-		f.maybeEmitWasmSymbolSidecar(minimalWasmWithExport(t, "_start"))
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("readdir: %v", err)
-		}
-		if len(entries) != 0 {
-			t.Errorf("mode %q produced sidecar files: %v", mode, entries)
-		}
-	}
-}
-
-func TestMaybeEmitWasmSymbolSidecarWritesForNative(t *testing.T) {
-	dir := t.TempDir()
-	f := &Fastlike{
-		moduleID:       "test",
-		profileCompile: &profileCompileConfig{mode: ProfileModeCombined},
-		profileStore:   NewProfileStore(),
-	}
-	f.profileStore.dir = dir
-	f.maybeEmitWasmSymbolSidecar(minimalWasmWithExport(t, "_start"))
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("readdir: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("expected one sidecar file, got %d: %v", len(entries), entries)
 	}
 }
 

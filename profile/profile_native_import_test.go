@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"net/http"
@@ -10,10 +10,10 @@ import (
 func newCompletedTrace(t *testing.T, store *ProfileStore, moduleID string, start time.Time, wallNanos int64) *RequestTrace {
 	t.Helper()
 	r, _ := http.NewRequest("GET", "http://x/", nil)
-	tr := store.newRequestTrace(moduleID, r)
+	tr := store.NewRequestTrace(moduleID, r)
 	tr.WallStart = start
 	tr.WallNanos = wallNanos
-	store.completeTrace(tr)
+	store.CompleteTrace(tr)
 	return tr
 }
 

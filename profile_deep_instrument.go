@@ -74,7 +74,7 @@ func (i *Instance) deepBumpStore(kind, name string) {
 	if i.trace == nil || i.trace.Deep == nil {
 		return
 	}
-	i.trace.Deep.bumpStoreAccess(kind, name)
+	i.trace.Deep.BumpStoreAccess(kind, name)
 }
 
 // deepSampleHeap records one wasm linear memory observation against
@@ -99,20 +99,5 @@ func (i *Instance) deepSampleHeap(nowOffsetNanos int64) {
 	if i.memory == nil {
 		return
 	}
-	bytes := int64(i.memory.Len())
-	d := i.trace.Deep
-	// First sample always lands; subsequent samples only land when
-	// the value changed.
-	if len(d.HeapSamples) > 0 && bytes == d.lastHeapBytes {
-		return
-	}
-	if len(d.HeapSamples) >= defaultHeapSampleCap {
-		d.HeapSamplesDropped++
-		return
-	}
-	d.HeapSamples = append(d.HeapSamples, HeapSample{
-		RelativeNanos: nowOffsetNanos,
-		MemoryBytes:   bytes,
-	})
-	d.lastHeapBytes = bytes
+	i.trace.Deep.AddHeapSample(nowOffsetNanos, int64(i.memory.Len()))
 }

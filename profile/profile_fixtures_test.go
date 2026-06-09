@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"testing"
@@ -29,8 +29,8 @@ func fixtureNormalTrace(t *testing.T) *RequestTrace {
 		GuestActiveNanos: 1_500_000,
 		HostcallNanos:    1_800_000,
 		Spans: []Span{
-			{NameIdx: hostcallNameIndex("body_downstream_get"), Start: 100_000, Duration: 200_000, RC: 0, TagSlots: [4]int64{1, 0, 0, 0}},
-			{NameIdx: hostcallNameIndex("send"), Start: 1_000_000, Duration: 1_600_000, RC: 0, TagSlots: [4]int64{1, 1, 0, 0}},
+			{NameIdx: HostcallNameIndex("body_downstream_get"), Start: 100_000, Duration: 200_000, RC: 0, TagSlots: [4]int64{1, 0, 0, 0}},
+			{NameIdx: HostcallNameIndex("send"), Start: 1_000_000, Duration: 1_600_000, RC: 0, TagSlots: [4]int64{1, 1, 0, 0}},
 		},
 		BackendCalls: []BackendCall{
 			{
@@ -78,7 +78,7 @@ func fixtureNilPhasesTrace(t *testing.T) *RequestTrace {
 		WallStart: fixtureWallStart,
 		WallNanos: 2_000_000,
 		Spans: []Span{
-			{NameIdx: hostcallNameIndex("send"), Start: 100_000, Duration: 1_800_000, RC: 0},
+			{NameIdx: HostcallNameIndex("send"), Start: 100_000, Duration: 1_800_000, RC: 0},
 		},
 		BackendCalls: []BackendCall{
 			{

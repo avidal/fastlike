@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -12,12 +12,12 @@ func newStoreWithTrace(t *testing.T) (*ProfileStore, *RequestTrace) {
 	t.Helper()
 	s := NewProfileStore()
 	r, _ := http.NewRequest("GET", "http://example.com/foo", nil)
-	tr := s.newRequestTrace("mod0001", r)
+	tr := s.NewRequestTrace("mod0001", r)
 	tr.Status = 200
 	tr.WallNanos = 5_000_000
 	tr.HostcallNanos = 1_500_000
 	tr.GuestActiveNanos = 3_500_000
-	tr.Spans = []Span{{NameIdx: hostcallNameIndex("body_downstream_get"), Duration: 1_000_000}}
+	tr.Spans = []Span{{NameIdx: HostcallNameIndex("body_downstream_get"), Duration: 1_000_000}}
 	connect := int64(250_000)
 	tr.BackendCalls = []BackendCall{{
 		PendingID:    0,
@@ -32,7 +32,7 @@ func newStoreWithTrace(t *testing.T) (*ProfileStore, *RequestTrace) {
 	}}
 	tr.Dropped = 4
 	tr.DroppedBackendCalls = 2
-	s.completeTrace(tr)
+	s.CompleteTrace(tr)
 	return s, tr
 }
 
@@ -348,14 +348,14 @@ func TestProfileUIRequestPageOmitsDeepSectionWhenAbsent(t *testing.T) {
 
 func TestProfileUIRequestPageRendersDeepWhenPresent(t *testing.T) {
 	s, tr := newStoreWithTrace(t)
-	tr.Deep = newDeepMetrics()
+	tr.Deep = NewDeepMetrics()
 	tr.Deep.BodyReadBytes = 4321
 	tr.Deep.BodyWriteBytes = 8765
 	tr.Deep.CacheLookups = 2
 	tr.Deep.CacheInserts = 1
-	tr.Deep.bumpStoreAccess("kv", "users")
-	tr.Deep.bumpStoreAccess("secret", "github_token")
-	tr.Deep.finalize()
+	tr.Deep.BumpStoreAccess("kv", "users")
+	tr.Deep.BumpStoreAccess("secret", "github_token")
+	tr.Deep.Finalize()
 
 	ui := NewProfileUI(s)
 	req := httptest.NewRequest(http.MethodGet, "/r/"+itoaUint(tr.ReqID), nil)

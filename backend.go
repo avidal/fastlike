@@ -27,16 +27,6 @@ func markSyntheticFailure(ctx context.Context, flag *bool) context.Context {
 	return context.WithValue(ctx, syntheticFailureCtxKey{}, flag)
 }
 
-func syntheticFailureFromContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	if flag, ok := ctx.Value(syntheticFailureCtxKey{}).(*bool); ok && flag != nil {
-		return *flag
-	}
-	return false
-}
-
 // Backend represents a complete backend configuration with all introspectable properties
 type Backend struct {
 	// Name is the identifier for this backend
@@ -128,7 +118,7 @@ func wrapWithReliability(h http.Handler, uptime *uint8) http.Handler {
 				*flag = true
 			}
 			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, "Backend request failed: simulated backend failure (uptime=%d%%)", pct)
+			_, _ = fmt.Fprintf(w, "Backend request failed: simulated backend failure (uptime=%d%%)", pct)
 			return
 		}
 		h.ServeHTTP(w, r)

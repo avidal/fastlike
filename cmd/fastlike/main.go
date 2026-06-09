@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"fastlike.dev/profile"
+
 	"fastlike.dev"
 )
 
@@ -76,7 +78,7 @@ func main() {
 
 	flag.Usage = func() {
 		out := flag.CommandLine.Output()
-		fmt.Fprintf(out, "Usage: %s [OPTIONS] <wasm-file> [OPTIONS]\n\nOptions:\n", os.Args[0])
+		_, _ = fmt.Fprintf(out, "Usage: %s [OPTIONS] <wasm-file> [OPTIONS]\n\nOptions:\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
@@ -200,15 +202,15 @@ func main() {
 
 	opts = append(opts, fastlike.WithVerbosity(*verbosity))
 
-	mode := fastlike.ProfileMode(*profileMode)
+	mode := profile.ProfileMode(*profileMode)
 	switch mode {
-	case fastlike.ProfileModeOff, fastlike.ProfileModeTrace, fastlike.ProfileModeNative, fastlike.ProfileModeCombined, fastlike.ProfileModeDeep:
+	case profile.ProfileModeOff, profile.ProfileModeTrace, profile.ProfileModeNative, profile.ProfileModeCombined, profile.ProfileModeDeep:
 	default:
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "invalid -profile mode %q; valid: off, trace, native, combined, deep\n", *profileMode)
 		os.Exit(1)
 	}
 
-	if err := fastlike.ValidateProfileUIAuth(*profileUI, *profileAuth, *profileInsecure); err != nil {
+	if err := profile.ValidateProfileUIAuth(*profileUI, *profileAuth, *profileInsecure); err != nil {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "%s\n", err)
 		os.Exit(1)
 	}
@@ -741,7 +743,7 @@ func startProfileUI(fl *fastlike.Fastlike, addr, token string, insecure bool) {
 
 	// Detect mode=off explicitly so the operator gets a clear message
 	// instead of a UI that always shows zero traces.
-	if fl.ProfileMode() == fastlike.ProfileModeOff {
+	if fl.ProfileMode() == profile.ProfileModeOff {
 		fmt.Printf("profiler UI requested at %s but -profile=off disables collection; not binding listener\n", addr)
 		return
 	}
@@ -752,8 +754,8 @@ func startProfileUI(fl *fastlike.Fastlike, addr, token string, insecure bool) {
 		os.Exit(1)
 	}
 
-	handler := fastlike.WrapProfileUIAuth(fastlike.NewProfileUI(store), token)
-	loopback := fastlike.IsLoopbackBindAddress(addr)
+	handler := profile.WrapProfileUIAuth(profile.NewProfileUI(store), token)
+	loopback := profile.IsLoopbackBindAddress(addr)
 	switch {
 	case loopback && token == "":
 		fmt.Printf("profiler UI at http://%s/\n", listener.Addr())

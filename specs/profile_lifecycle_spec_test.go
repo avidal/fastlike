@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"fastlike.dev/profile"
+
 	"fastlike.dev"
 )
 
@@ -26,7 +28,7 @@ func TestProfileLifecycle(t *testing.T) {
 
 	t.Run("normal-return", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -39,7 +41,7 @@ func TestProfileLifecycle(t *testing.T) {
 			st.Fatalf("expected 1 completed trace, got %d", len(traces))
 		}
 		tr := traces[0]
-		if tr.Outcome != fastlike.TraceOutcomeNormal {
+		if tr.Outcome != profile.TraceOutcomeNormal {
 			st.Errorf("outcome: got %s, want normal", tr.Outcome)
 		}
 		if tr.Status != http.StatusOK {
@@ -58,7 +60,7 @@ func TestProfileLifecycle(t *testing.T) {
 
 	t.Run("loop-fail", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -75,7 +77,7 @@ func TestProfileLifecycle(t *testing.T) {
 			st.Fatalf("expected 1 completed trace, got %d", len(traces))
 		}
 		tr := traces[0]
-		if tr.Outcome != fastlike.TraceOutcomeLoopFail {
+		if tr.Outcome != profile.TraceOutcomeLoopFail {
 			st.Errorf("outcome: got %s, want loop-fail", tr.Outcome)
 		}
 		if tr.Status != http.StatusLoopDetected {
@@ -85,7 +87,7 @@ func TestProfileLifecycle(t *testing.T) {
 
 	t.Run("trap", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -98,7 +100,7 @@ func TestProfileLifecycle(t *testing.T) {
 			st.Fatalf("expected 1 completed trace, got %d", len(traces))
 		}
 		tr := traces[0]
-		if tr.Outcome != fastlike.TraceOutcomeTrap {
+		if tr.Outcome != profile.TraceOutcomeTrap {
 			st.Errorf("outcome: got %s, want trap", tr.Outcome)
 		}
 		if tr.Status != http.StatusInternalServerError {
@@ -108,7 +110,7 @@ func TestProfileLifecycle(t *testing.T) {
 
 	t.Run("ctx-canceled", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -127,14 +129,14 @@ func TestProfileLifecycle(t *testing.T) {
 			st.Fatalf("expected 1 completed trace, got %d", len(traces))
 		}
 		tr := traces[0]
-		if tr.Outcome != fastlike.TraceOutcomeCtxCanceled {
+		if tr.Outcome != profile.TraceOutcomeCtxCanceled {
 			st.Errorf("outcome: got %s, want ctx-canceled", tr.Outcome)
 		}
 	})
 
 	t.Run("pooled-isolation", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		// Serve the same Fastlike multiple times through the pooling path.
@@ -154,7 +156,7 @@ func TestProfileLifecycle(t *testing.T) {
 				st.Errorf("duplicate ReqID %d across pooled requests", tr.ReqID)
 			}
 			seen[tr.ReqID] = struct{}{}
-			if tr.Outcome != fastlike.TraceOutcomeNormal {
+			if tr.Outcome != profile.TraceOutcomeNormal {
 				st.Errorf("outcome: got %s, want normal", tr.Outcome)
 			}
 		}
@@ -162,7 +164,7 @@ func TestProfileLifecycle(t *testing.T) {
 
 	t.Run("reload-retains-old-module-id", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 		originalID := f.ModuleID()
 
