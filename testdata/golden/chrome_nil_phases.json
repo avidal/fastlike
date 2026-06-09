@@ -1,0 +1,93 @@
+{
+  "traceEvents": [
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "name": "hostcalls"
+      }
+    },
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 2,
+      "args": {
+        "name": "backends"
+      }
+    },
+    {
+      "name": "thread_name",
+      "ph": "M",
+      "ts": 0,
+      "pid": 1,
+      "tid": 3,
+      "args": {
+        "name": "native"
+      }
+    },
+    {
+      "name": "send",
+      "cat": "hostcall",
+      "ph": "X",
+      "ts": 100,
+      "dur": 1800,
+      "pid": 1,
+      "tid": 1,
+      "args": {
+        "index": 0,
+        "rc": 0,
+        "tag_slots": [
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "mock",
+      "cat": "backend",
+      "ph": "X",
+      "ts": 100,
+      "dur": 1800,
+      "pid": 1,
+      "tid": 2,
+      "args": {
+        "index": 0,
+        "method": "POST",
+        "name": "mock",
+        "outcome": "ok",
+        "status": 200,
+        "url": "http://mock/api"
+      }
+    },
+    {
+      "name": "outcome.normal",
+      "cat": "lifecycle",
+      "ph": "i",
+      "ts": 0,
+      "pid": 1,
+      "tid": 1,
+      "s": "g",
+      "args": {
+        "method": "POST",
+        "module_id": "abc123def456",
+        "req_id": 9,
+        "status": 200,
+        "url": "http://example.com/api"
+      }
+    }
+  ],
+  "displayTimeUnit": "ms",
+  "otherData": {
+    "fastlike.module_id": "abc123def456",
+    "fastlike.outcome": "normal",
+    "fastlike.req_id": 9,
+    "fastlike.wall_nanos": 2000000
+  }
+}

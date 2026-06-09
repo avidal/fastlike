@@ -3,7 +3,7 @@ package fastlike
 import (
 	"fmt"
 
-	"github.com/bytecodealliance/wasmtime-go/v38"
+	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
 // wasmContext holds the compiled wasm module, engine, and shared linker that are reused across all requests.

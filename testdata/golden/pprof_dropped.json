@@ -1,0 +1,138 @@
+{
+  "sample_types": [
+    "wall/nanoseconds",
+    "count/count"
+  ],
+  "samples": [
+    {
+      "functions": [
+        "backend:api"
+      ],
+      "values": [
+        1500000,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "backend"
+        ],
+        [
+          "method",
+          "GET"
+        ],
+        [
+          "outcome",
+          "ok"
+        ],
+        [
+          "status",
+          "200"
+        ],
+        [
+          "url",
+          "http://upstream/v1/things"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "hostcall:body_downstream_get"
+      ],
+      "values": [
+        200000,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "hostcall"
+        ],
+        [
+          "rc",
+          "0"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "hostcall:send"
+      ],
+      "values": [
+        1600000,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "hostcall"
+        ],
+        [
+          "rc",
+          "0"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "lifecycle:dropped_backend_calls"
+      ],
+      "values": [
+        0,
+        3
+      ],
+      "labels": [
+        [
+          "category",
+          "lifecycle"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "lifecycle:dropped_spans"
+      ],
+      "values": [
+        0,
+        12
+      ],
+      "labels": [
+        [
+          "category",
+          "lifecycle"
+        ]
+      ]
+    },
+    {
+      "functions": [
+        "outcome:normal"
+      ],
+      "values": [
+        0,
+        1
+      ],
+      "labels": [
+        [
+          "category",
+          "lifecycle"
+        ],
+        [
+          "method",
+          "GET"
+        ],
+        [
+          "module_id",
+          "abc123def456"
+        ],
+        [
+          "req_id",
+          "8"
+        ],
+        [
+          "url",
+          "http://example.com/proxy"
+        ]
+      ]
+    }
+  ]
+}
