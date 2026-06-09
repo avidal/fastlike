@@ -291,6 +291,13 @@ func (i *Instance) compile(wasmbytes []byte, profileCfg *profile.CompileConfig) 
 	link(linker)
 	linklegacy(linker)
 
+	// Guests built against a newer ABI than we implement often import hostcalls
+	// they never call (the JS SDK in particular pulls in the whole surface).
+	// Define every still-unresolved import as a trap so the module instantiates;
+	// a guest that actually invokes one gets a runtime trap rather than a load
+	// failure. This only fills in imports left undefined by link/linklegacy.
+	check(linker.DefineUnknownImportsAsTraps(module))
+
 	// Store for reuse across all request instances
 	i.wasmctx = &wasmContext{
 		engine: engine,
@@ -508,6 +515,34 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "pending_req_select_v2", safeWrap6("pending_req_select_v2", func(i *Instance, pending_req_handles int32, pending_req_handles_len int32, error_detail int32, done_index_out int32, resp_handle_out int32, body_handle_out int32) int32 {
 		return i.xqd_pending_req_select_v2(pending_req_handles, pending_req_handles_len, error_detail, done_index_out, resp_handle_out, body_handle_out)
 	}))
+	_ = linker.FuncWrap("fastly_http_req", "pending_req_header_insert", safeWrap6("pending_req_header_insert", func(i *Instance, pending_req_handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, target int32) int32 {
+		return i.xqd_pending_req_header_insert(pending_req_handle, name_addr, name_size, value_addr, value_size, target)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "pending_req_header_append", safeWrap6("pending_req_header_append", func(i *Instance, pending_req_handle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, target int32) int32 {
+		return i.xqd_pending_req_header_append(pending_req_handle, name_addr, name_size, value_addr, value_size, target)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "pending_req_header_remove", safeWrap4("pending_req_header_remove", func(i *Instance, pending_req_handle int32, name_addr int32, name_size int32, target int32) int32 {
+		return i.xqd_pending_req_header_remove(pending_req_handle, name_addr, name_size, target)
+	}))
+	// GRIP and WebSocket proxy handoff (Pushpin) is not supported. These are
+	// registered as stubs so guests that merely import them still instantiate;
+	// actually calling one returns XqdErrUnsupported.
+	_ = linker.FuncWrap("fastly_http_req", "redirect_to_websocket_proxy", safeWrap2("redirect_to_websocket_proxy", func(i *Instance, backend_addr int32, backend_size int32) int32 {
+		i.abilog.Printf("redirect_to_websocket_proxy: unsupported")
+		return XqdErrUnsupported
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "redirect_to_grip_proxy", safeWrap2("redirect_to_grip_proxy", func(i *Instance, backend_addr int32, backend_size int32) int32 {
+		i.abilog.Printf("redirect_to_grip_proxy: unsupported")
+		return XqdErrUnsupported
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "redirect_to_websocket_proxy_v2", safeWrap3("redirect_to_websocket_proxy_v2", func(i *Instance, req_handle int32, backend_addr int32, backend_size int32) int32 {
+		i.abilog.Printf("redirect_to_websocket_proxy_v2: unsupported")
+		return XqdErrUnsupported
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "redirect_to_grip_proxy_v2", safeWrap3("redirect_to_grip_proxy_v2", func(i *Instance, req_handle int32, backend_addr int32, backend_size int32) int32 {
+		i.abilog.Printf("redirect_to_grip_proxy_v2: unsupported")
+		return XqdErrUnsupported
+	}))
 	_ = linker.FuncWrap("fastly_http_req", "cache_override_set", safeWrap4("cache_override_set", func(i *Instance, req_handle int32, tag int32, ttl int32, stale_while_revalidate int32) int32 {
 		return i.xqd_req_cache_override_set(req_handle, tag, ttl, stale_while_revalidate)
 	}))
@@ -543,8 +578,8 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_req", "register_dynamic_backend", safeWrap6("register_dynamic_backend", func(i *Instance, backend_addr int32, backend_size int32, target_addr int32, target_size int32, options_mask int32, options_ptr int32) int32 {
 		return i.xqd_req_register_dynamic_backend(backend_addr, backend_size, target_addr, target_size, options_mask, options_ptr)
 	}))
-	_ = linker.FuncWrap("fastly_http_req", "inspect", safeWrap6("inspect", func(i *Instance, req int32, body int32, insp_info_mask int32, insp_info int32, buf int32, buf_len int32) int32 {
-		return i.xqd_req_inspect(req, body, insp_info_mask, insp_info, buf, buf_len)
+	_ = linker.FuncWrap("fastly_http_req", "inspect", safeWrap7("inspect", func(i *Instance, req int32, body int32, insp_info_mask int32, insp_info int32, buf int32, buf_len int32, nwritten_out int32) int32 {
+		return i.xqd_req_inspect(req, body, insp_info_mask, insp_info, buf, buf_len, nwritten_out)
 	}))
 	// DEPRECATED: use fastly_http_downstream versions
 	_ = linker.FuncWrap("fastly_http_req", "downstream_client_h2_fingerprint", safeWrap3("downstream_client_h2_fingerprint", func(i *Instance, h2_out int32, h2_max_len int32, nwritten_out int32) int32 {
@@ -581,6 +616,9 @@ func link(linker *wasmtime.Linker) {
 	// xqd_response.go
 	_ = linker.FuncWrap("fastly_http_resp", "send_downstream", safeWrap3("send_downstream", func(i *Instance, resp_handle int32, body_handle int32, streaming int32) int32 {
 		return i.xqd_resp_send_downstream(resp_handle, body_handle, streaming)
+	}))
+	_ = linker.FuncWrap("fastly_http_resp", "send_downstream_pending", safeWrap1("send_downstream_pending", func(i *Instance, pending_req_handle int32) int32 {
+		return i.xqd_resp_send_downstream_pending(pending_req_handle)
 	}))
 	_ = linker.FuncWrap("fastly_http_resp", "new", safeWrap1("new", func(i *Instance, handle_out int32) int32 {
 		return i.xqd_resp_new(handle_out)

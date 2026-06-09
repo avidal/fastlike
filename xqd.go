@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"sort"
 	"strings"
 )
@@ -122,6 +123,67 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	_, err := io.Copy(i.ds_response, b)
 	if err != nil {
 		i.abilog.Printf("resp_send_downstream: copy err, got %s", err.Error())
+		return XqdError
+	}
+
+	return XqdStatusOK
+}
+
+// xqd_resp_send_downstream_pending forwards a pending request's eventual response
+// straight to the downstream client. It blocks until the pending request resolves,
+// applies the queued response-header changes, and writes the result. If the
+// request failed, it synthesizes a 502 and applies the queued error headers.
+// Returns XqdErrInvalidHandle if the pending handle is invalid, XqdStatusOK otherwise.
+func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
+	pr := i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("send_downstream_pending: invalid pending handle=%d", phandle)
+		return XqdErrInvalidHandle
+	}
+
+	if i.trace != nil {
+		pr.observeWait(i.trace.WallStart)
+	}
+
+	i.pauseExecution()
+	resp, err := pr.Wait()
+	i.resumeExecution()
+
+	// The response body (real or synthetic) is consumed here, so claim the
+	// close so the recorder's late-completion hook skips this request.
+	pr.bodyClosed.Store(true)
+
+	if err != nil {
+		i.abilog.Printf("send_downstream_pending: request failed, synthesizing 502: %s", err.Error())
+		headers := http.Header{}
+		pr.headersErr.Apply(headers)
+		for k, v := range headers {
+			i.ds_response.Header()[k] = v
+		}
+		i.ds_response.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(i.ds_response, fmt.Sprintf("Backend request failed: %s", err.Error()))
+		return XqdStatusOK
+	}
+
+	headers := resp.Header.Clone()
+	if headers == nil {
+		headers = http.Header{}
+	}
+	pr.headersResp.Apply(headers)
+
+	effectiveMode := validateAndApplyFramingMode(headers, FramingHeadersModeAutomatic, func(format string, args ...interface{}) {
+		i.abilog.Printf("send_downstream_pending: "+format, args...)
+	})
+	i.abilog.Printf("send_downstream_pending: status=%d effective_mode=%d", resp.StatusCode, effectiveMode)
+
+	for k, v := range headers {
+		i.ds_response.Header()[k] = v
+	}
+	i.ds_response.WriteHeader(resp.StatusCode)
+
+	defer func() { _ = resp.Body.Close() }()
+	if _, err := io.Copy(i.ds_response, resp.Body); err != nil {
+		i.abilog.Printf("send_downstream_pending: copy err, got %s", err.Error())
 		return XqdError
 	}
 
