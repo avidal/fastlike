@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"time"
 )
@@ -307,6 +308,77 @@ type PendingRequest struct {
 	// the guest converted to a handle). Whichever side wins the swap
 	// performs the close; the other side observes true and skips.
 	bodyClosed atomic.Bool
+
+	// headersResp and headersErr hold header changes the guest queued via
+	// pending_req_header_{insert,append,remove}. headersResp is applied to a
+	// genuine response on every reap path; headersErr is applied to the
+	// synthetic response generated when the request fails and is forwarded
+	// downstream via send_downstream_pending.
+	headersResp PendingHeaders
+	headersErr  PendingHeaders
+}
+
+// PendingHeaders is a set of header changes queued against a future response.
+// Changes are applied in the order remove, insert (overwrite), then append, so
+// a queued removal or insert of a name always wins over an earlier append.
+type PendingHeaders struct {
+	insert http.Header
+	append http.Header
+	remove map[string]struct{}
+}
+
+// Insert queues name=value, replacing any prior value and dropping any queued
+// append of the same name.
+func (p *PendingHeaders) Insert(name, value string) {
+	name = http.CanonicalHeaderKey(name)
+	delete(p.append, name)
+	delete(p.remove, name)
+	if p.insert == nil {
+		p.insert = http.Header{}
+	}
+	p.insert.Set(name, value)
+}
+
+// Append queues an additional value for name, preserving any other queued values.
+func (p *PendingHeaders) Append(name, value string) {
+	name = http.CanonicalHeaderKey(name)
+	delete(p.remove, name)
+	if p.append == nil {
+		p.append = http.Header{}
+	}
+	p.append.Add(name, value)
+}
+
+// Remove queues a deletion of name, discarding any queued insert or append of it.
+func (p *PendingHeaders) Remove(name string) {
+	name = http.CanonicalHeaderKey(name)
+	delete(p.insert, name)
+	delete(p.append, name)
+	if p.remove == nil {
+		p.remove = map[string]struct{}{}
+	}
+	p.remove[name] = struct{}{}
+}
+
+// empty reports whether no changes are queued.
+func (p *PendingHeaders) empty() bool {
+	return len(p.insert) == 0 && len(p.append) == 0 && len(p.remove) == 0
+}
+
+// Apply mutates h with the queued changes: removals first, then inserts
+// (replacing existing values), then appends.
+func (p *PendingHeaders) Apply(h http.Header) {
+	for name := range p.remove {
+		h.Del(name)
+	}
+	for name, values := range p.insert {
+		h[name] = slices.Clone(values)
+	}
+	for name, values := range p.append {
+		for _, v := range values {
+			h.Add(name, v)
+		}
+	}
 }
 
 // IsReady checks if the pending request has completed (non-blocking)

@@ -1189,6 +1189,7 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 		wh.Status = resp.Status
 		wh.StatusCode = resp.StatusCode
 		wh.Header = resp.Header.Clone()
+		applyPendingRespHeaders(pr, wh)
 		wh.Body = resp.Body
 
 		bhid, _ := i.bodies.NewReader(wh.Body)
@@ -1259,6 +1260,7 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	wh.Status = resp.Status
 	wh.StatusCode = resp.StatusCode
 	wh.Header = resp.Header.Clone()
+	applyPendingRespHeaders(pr, wh)
 	wh.Body = resp.Body
 
 	bhid, _ := i.bodies.NewReader(wh.Body)
@@ -1365,6 +1367,7 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	wh.Status = resp.Status
 	wh.StatusCode = resp.StatusCode
 	wh.Header = resp.Header.Clone()
+	applyPendingRespHeaders(pr, wh)
 	wh.Body = resp.Body
 
 	bhid, _ := i.bodies.NewReader(wh.Body)
@@ -1386,6 +1389,101 @@ func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len i
 	// For now, ignore error_detail_out and just call the base version
 	// In the future, this could populate detailed error information
 	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+}
+
+// applyPendingRespHeaders applies the response-header changes the guest queued
+// via pending_req_header_* onto a freshly created response handle.
+func applyPendingRespHeaders(pr *PendingRequest, wh *ResponseHandle) {
+	if pr.headersResp.empty() {
+		return
+	}
+	if wh.Header == nil {
+		wh.Header = http.Header{}
+	}
+	pr.headersResp.Apply(wh.Header)
+}
+
+// pendingReqHeaderTargets validates the pending handle and reads the header
+// name, then returns the queue(s) the target selects (one for Response/Error,
+// both for Any). A non-OK status means the caller should return it; the names
+// are canonicalized by the PendingHeaders methods, so the raw name is returned.
+func (i *Instance) pendingReqHeaderTargets(label string, phandle, name_addr, name_size, target int32) ([]*PendingHeaders, string, int32) {
+	pr := i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("%s: invalid pending handle=%d", label, phandle)
+		return nil, "", XqdErrInvalidHandle
+	}
+
+	if name_size > 65535 {
+		return nil, "", XqdErrInvalidArgument
+	}
+	name := make([]byte, name_size)
+	if _, err := i.memory.ReadAt(name, int64(name_addr)); err != nil {
+		return nil, "", XqdError
+	}
+
+	var targets []*PendingHeaders
+	switch target {
+	case PendingResponseKindAny:
+		targets = []*PendingHeaders{&pr.headersResp, &pr.headersErr}
+	case PendingResponseKindResponse:
+		targets = []*PendingHeaders{&pr.headersResp}
+	case PendingResponseKindError:
+		targets = []*PendingHeaders{&pr.headersErr}
+	default:
+		return nil, "", XqdErrInvalidArgument
+	}
+
+	i.abilog.Printf("%s: handle=%d header=%q target=%d", label, phandle, string(name), target)
+	return targets, string(name), XqdStatusOK
+}
+
+// xqd_pending_req_header_insert queues a response-header insert on a pending
+// request, replacing any prior value for that name. The target selects whether
+// the change applies to a real response, the synthetic failure response, or both.
+func (i *Instance) xqd_pending_req_header_insert(phandle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, target int32) int32 {
+	targets, name, st := i.pendingReqHeaderTargets("pending_req_header_insert", phandle, name_addr, name_size, target)
+	if st != XqdStatusOK {
+		return st
+	}
+	value := make([]byte, value_size)
+	if _, err := i.memory.ReadAt(value, int64(value_addr)); err != nil {
+		return XqdError
+	}
+	for _, h := range targets {
+		h.Insert(name, string(value))
+	}
+	return XqdStatusOK
+}
+
+// xqd_pending_req_header_append queues a response-header append on a pending
+// request, preserving any other values for that name.
+func (i *Instance) xqd_pending_req_header_append(phandle int32, name_addr int32, name_size int32, value_addr int32, value_size int32, target int32) int32 {
+	targets, name, st := i.pendingReqHeaderTargets("pending_req_header_append", phandle, name_addr, name_size, target)
+	if st != XqdStatusOK {
+		return st
+	}
+	value := make([]byte, value_size)
+	if _, err := i.memory.ReadAt(value, int64(value_addr)); err != nil {
+		return XqdError
+	}
+	for _, h := range targets {
+		h.Append(name, string(value))
+	}
+	return XqdStatusOK
+}
+
+// xqd_pending_req_header_remove queues the removal of a response header on a
+// pending request, discarding any previously queued insert or append of it.
+func (i *Instance) xqd_pending_req_header_remove(phandle int32, name_addr int32, name_size int32, target int32) int32 {
+	targets, name, st := i.pendingReqHeaderTargets("pending_req_header_remove", phandle, name_addr, name_size, target)
+	if st != XqdStatusOK {
+		return st
+	}
+	for _, h := range targets {
+		h.Remove(name)
+	}
+	return XqdStatusOK
 }
 
 // xqd_req_send_v2 sends a synchronous HTTP request with error detail support.
@@ -1899,9 +1997,11 @@ func (i *Instance) xqd_req_inspect(
 	insp_info int32,
 	buf int32,
 	buf_len int32,
+	nwritten_out int32,
 ) int32 {
 	i.abilog.Printf("req_inspect: NGWAF not available in local testing")
 	// NGWAF (Next-Gen Web Application Firewall) is only available in Fastly production
 	// Return unsupported for local testing
+	i.memory.PutUint32(0, int64(nwritten_out))
 	return XqdErrUnsupported
 }

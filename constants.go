@@ -21,6 +21,14 @@ const (
 	XqdErrAgain             int32 = 14 // Operation would block (try again)
 )
 
+// PendingResponseKind selects which eventual response a queued header change on a
+// pending request applies to. It mirrors the witx $pending_response_kind enum.
+const (
+	PendingResponseKindAny      int32 = 0 // apply to whatever goes downstream, real or synthetic
+	PendingResponseKindResponse int32 = 1 // apply only to a genuine response
+	PendingResponseKindError    int32 = 2 // apply only to the synthetic failure response
+)
+
 // HandleInvalid is returned when attempting to open a resource that doesn't exist
 // (e.g., opening a dictionary that was not registered).
 //
