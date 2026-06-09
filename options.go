@@ -12,20 +12,21 @@ import (
 // Option is a functional option applied to an Instance at creation time
 type Option func(*Instance)
 
+func backendURL(name string) *url.URL {
+	u, err := url.Parse("http://" + name)
+	if err != nil {
+		u, _ = url.Parse("http://localhost")
+	}
+	return u
+}
+
 // WithBackend registers an `http.Handler` identified by `name` used for subrequests targeting that
 // backend. This creates a simple backend with default settings.
 func WithBackend(name string, h http.Handler) Option {
 	return func(i *Instance) {
-		// Parse a default URL from the backend name
-		u, err := url.Parse("http://" + name)
-		if err != nil {
-			// Fallback to a simple localhost URL
-			u, _ = url.Parse("http://localhost")
-		}
-
 		backend := &Backend{
 			Name:    name,
-			URL:     u,
+			URL:     backendURL(name),
 			Handler: h,
 		}
 		i.addBackend(name, backend)
@@ -52,13 +53,9 @@ func WithBackendConfig(backend *Backend) Option {
 // is retained but no httptrace callbacks are attached.
 func WithBackendTraced(name string, h http.Handler, transport *http.Transport) Option {
 	return func(i *Instance) {
-		u, err := url.Parse("http://" + name)
-		if err != nil {
-			u, _ = url.Parse("http://localhost")
-		}
 		backend := &Backend{
 			Name:      name,
-			URL:       u,
+			URL:       backendURL(name),
 			Handler:   h,
 			Transport: transport,
 		}
@@ -78,14 +75,10 @@ func WithUnreliableBackend(name string, h http.Handler, uptime uint8) Option {
 		panic(fmt.Sprintf("WithUnreliableBackend: uptime %d out of range, must be 0..100", uptime))
 	}
 	return func(i *Instance) {
-		u, err := url.Parse("http://" + name)
-		if err != nil {
-			u, _ = url.Parse("http://localhost")
-		}
 		pct := uptime
 		i.addBackend(name, &Backend{
 			Name:          name,
-			URL:           u,
+			URL:           backendURL(name),
 			Handler:       h,
 			UptimePercent: &pct,
 		})
