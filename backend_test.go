@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -129,6 +130,65 @@ func TestAddBackend_AppliesReliabilityWrap(t *testing.T) {
 	}
 	if called != 0 {
 		t.Fatalf("inner handler ran %d times despite 0%% uptime", called)
+	}
+}
+
+func TestBackendIsHealthy_DerivedFromUptime(t *testing.T) {
+	cases := []struct {
+		name   string
+		uptime *uint8
+		want   uint32
+	}{
+		{"no uptime configured is unknown", nil, BackendHealthUnknown},
+		{"0% uptime is unhealthy", ptrU8(0), BackendHealthUnhealthy},
+		{"1% uptime is healthy", ptrU8(1), BackendHealthHealthy},
+		{"50% uptime is healthy", ptrU8(50), BackendHealthHealthy},
+		{"100% uptime is healthy", ptrU8(100), BackendHealthHealthy},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inst := &Instance{
+				backends: map[string]*Backend{
+					"api": {Name: "api", UptimePercent: tc.uptime},
+				},
+				memory: &Memory{ByteMemory(make([]byte, 4096))},
+				abilog: log.New(io.Discard, "", 0),
+			}
+
+			const namePtr int32 = 0
+			const healthOut int32 = 256
+			if _, err := inst.memory.WriteAt([]byte("api"), int64(namePtr)); err != nil {
+				t.Fatalf("write name: %v", err)
+			}
+
+			status := inst.xqd_backend_is_healthy(namePtr, int32(len("api")), healthOut)
+			if status != XqdStatusOK {
+				t.Fatalf("status = %d, want %d", status, XqdStatusOK)
+			}
+
+			if got := inst.memory.Uint32(int64(healthOut)); got != tc.want {
+				t.Errorf("health = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBackendIsHealthy_UnknownBackend(t *testing.T) {
+	inst := &Instance{
+		backends: map[string]*Backend{},
+		memory:   &Memory{ByteMemory(make([]byte, 4096))},
+		abilog:   log.New(io.Discard, "", 0),
+	}
+
+	const namePtr int32 = 0
+	if _, err := inst.memory.WriteAt([]byte("missing"), int64(namePtr)); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+
+	status := inst.xqd_backend_is_healthy(namePtr, int32(len("missing")), 256)
+	if status != XqdErrInvalidArgument {
+		t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
 	}
 }
 

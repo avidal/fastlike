@@ -130,6 +130,26 @@ func (i *Instance) getBackend(name string) *Backend {
 	return i.backends[name]
 }
 
+// backendHealth derives the value reported by the fastly_backend_is_healthy
+// hostcall from a backend's configured reliability. A nil UptimePercent means
+// no reliability was configured, so health is unknown, matching production for
+// a backend without health checks and preserving the historical default. An
+// explicit 0% uptime reads unhealthy; any positive uptime reads healthy.
+// Health is intentionally derived from delivery reliability rather than
+// configured separately: a backend simulated as always-down also reports
+// unhealthy. Note that an explicit 100% keeps UptimePercent non-nil (the
+// short circuit in wrapWithReliability only skips the failure wrapper), so it
+// reads healthy and stays distinguishable from the no-simulation nil case.
+func backendHealth(b *Backend) uint32 {
+	if b.UptimePercent == nil {
+		return BackendHealthUnknown
+	}
+	if *b.UptimePercent == 0 {
+		return BackendHealthUnhealthy
+	}
+	return BackendHealthHealthy
+}
+
 // backendExists checks whether a backend with the given name is registered.
 func (i *Instance) backendExists(name string) bool {
 	_, ok := i.backends[name]

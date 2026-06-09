@@ -170,6 +170,25 @@ func WithSecretStore(name string, fn SecretLookupFunc) Option {
 	}
 }
 
+// WithFakeValidFastlyKeys configures the set of Fastly-Key header values that
+// fastly_key_is_valid will treat as valid. Calls are additive. Empty strings
+// are ignored, so an empty Fastly-Key header is never valid. With no keys
+// configured the hostcall always reports invalid, matching production for an
+// unauthenticated request. Intended only for local testing of auth/purge flows.
+func WithFakeValidFastlyKeys(keys ...string) Option {
+	return func(i *Instance) {
+		for _, k := range keys {
+			if k == "" {
+				continue
+			}
+			if i.fakeValidFastlyKeys == nil {
+				i.fakeValidFastlyKeys = make(map[string]struct{})
+			}
+			i.fakeValidFastlyKeys[k] = struct{}{}
+		}
+	}
+}
+
 // WithSecureFunc sets a custom function to determine if a request should be considered "secure".
 // When the function returns true, the request will have:
 //   - URL scheme set to "https"
