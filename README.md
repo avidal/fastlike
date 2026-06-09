@@ -138,6 +138,18 @@ fastlike -wasm my-program.wasm -backend localhost:8000@75
 
 The suffix is recognized only when it is purely numeric and in the `0..100` range, so URLs that legitimately contain `@` (for example `http://user:pass@host`) are left alone. A trailing `@<digits>` outside `0..100` is rejected at startup. The same behavior is available programmatically through `fastlike.WithUnreliableBackend` and `fastlike.WithUnreliableDefaultBackend`.
 
+The `@N` suffix also drives what the `is_healthy` hostcall reports for the backend, since health and reliability are the same axis: a backend with no suffix reports `unknown` (the default, matching a backend without health checks), `@0` reports `unhealthy`, and any positive uptime reports `healthy`. This lets you exercise guest failover logic without a separate health flag.
+
+### Faking Valid Fastly Keys
+
+Some guest programs gate purge or admin endpoints on a valid `Fastly-Key` header via the `is_valid()` hostcall. Pass `-fake-fastly-key` (repeatable) to declare header values that should be treated as valid; any request whose `Fastly-Key` header matches reports valid, everything else reports invalid.
+
+```bash
+fastlike -wasm my-program.wasm -backend localhost:8000 -fake-fastly-key test-key -fake-fastly-key another-key
+```
+
+With no keys configured the hostcall always reports invalid, matching production for an unauthenticated request. The same behavior is available programmatically through `fastlike.WithFakeValidFastlyKeys`.
+
 ### Dictionaries and Config Stores
 
 Use JSON files for key-value lookups:

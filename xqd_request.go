@@ -1585,13 +1585,17 @@ func (i *Instance) xqd_req_downstream_client_ddos_detected(is_ddos_out int32) in
 	return XqdStatusOK
 }
 
-// xqd_req_fastly_key_is_valid checks if the request has a valid Fastly purge key
-// Always returns 0 (false) since we don't have keys to validate
+// xqd_req_fastly_key_is_valid reports whether the downstream request carries a
+// Fastly-Key header matching one of the keys configured via
+// WithFakeValidFastlyKeys. With no keys configured it always reports false.
 func (i *Instance) xqd_req_fastly_key_is_valid(is_valid_out int32) int32 {
 	i.abilog.Printf("req_fastly_key_is_valid")
 
-	// Always return false (0) since there are no keys to compare against
-	i.memory.PutUint32(0, int64(is_valid_out))
+	valid := uint32(0)
+	if i.fastlyKeyValid(i.ds_request) {
+		valid = 1
+	}
+	i.memory.PutUint32(valid, int64(is_valid_out))
 	return XqdStatusOK
 }
 

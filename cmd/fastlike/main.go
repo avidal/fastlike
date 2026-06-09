@@ -65,6 +65,9 @@ func main() {
 	loggers := make(loggerFlags)
 	flag.Var(&loggers, "logger", "<name=file> or <name> specifying log endpoints. Use name=file to log to a file, or just name to log to stdout.")
 
+	var fastlyKeys stringListFlags
+	flag.Var(&fastlyKeys, "fake-fastly-key", "a Fastly-Key header value that fastly_key_is_valid should treat as valid (repeatable)")
+
 	geoFile := flag.String("geo", "", "JSON file containing IP to geo mapping for geolocation lookups")
 
 	profileMode := flag.String("profile", "trace", "profiling mode: off, trace, native, combined, deep. Defaults to trace; collection runs even without a UI.")
@@ -200,6 +203,10 @@ func main() {
 		opts = append(opts, fastlike.WithComplianceRegion(*complianceRegion))
 	}
 
+	if len(fastlyKeys) > 0 {
+		opts = append(opts, fastlike.WithFakeValidFastlyKeys(fastlyKeys...))
+	}
+
 	opts = append(opts, fastlike.WithVerbosity(*verbosity))
 
 	mode := profile.ProfileMode(*profileMode)
@@ -256,6 +263,20 @@ func main() {
 	if err := http.ListenAndServe(*bind, fl); err != nil {
 		fmt.Printf("Error starting server, got %s\n", err.Error())
 	}
+}
+
+// stringListFlags implements flag.Value for a repeatable string flag,
+// accumulating one value per occurrence. Empty values are dropped so an
+// accidental empty flag does not register a value that can never match.
+type stringListFlags []string
+
+func (f *stringListFlags) String() string { return strings.Join(*f, ", ") }
+
+func (f *stringListFlags) Set(v string) error {
+	if v != "" {
+		*f = append(*f, v)
+	}
+	return nil
 }
 
 // backend represents a configured backend with its address and reverse proxy handler

@@ -1009,9 +1009,10 @@ func (i *Instance) xqd_http_downstream_fastly_key_is_valid(req_handle int32, is_
 		return XqdErrInvalidHandle
 	}
 
-	// In local testing, we don't validate Fastly-Key headers
-	// Return 0 (false) to match Viceroy's behavior
-	i.memory.PutUint32(0, int64(is_valid_out))
-	i.abilog.Printf("http_downstream_fastly_key_is_valid: Fastly-Key validation not available (always returns false)")
+	valid := uint32(0)
+	if i.fastlyKeyValid(req.Request) {
+		valid = 1
+	}
+	i.memory.PutUint32(valid, int64(is_valid_out))
 	return XqdStatusOK
 }

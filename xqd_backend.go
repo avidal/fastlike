@@ -27,8 +27,9 @@ func (i *Instance) xqd_backend_exists(backendNamePtr int32, backendNameLen int32
 	return XqdStatusOK
 }
 
-// xqd_backend_is_healthy checks if a backend is healthy
-// For now, we always return "unknown" health status
+// xqd_backend_is_healthy reports a backend's health, derived from its
+// configured reliability: no @N suffix reads unknown, @0 reads unhealthy, and
+// any positive uptime reads healthy. See backendHealth for the rationale.
 func (i *Instance) xqd_backend_is_healthy(backendNamePtr int32, backendNameLen int32, healthOut int32) int32 {
 	backendName, err := i.readBackendName(backendNamePtr, backendNameLen)
 	if err != nil {
@@ -37,13 +38,12 @@ func (i *Instance) xqd_backend_is_healthy(backendNamePtr int32, backendNameLen i
 
 	i.abilog.Printf("backend_is_healthy: name=%q", backendName)
 
-	// Check if backend exists
-	if !i.backendExists(backendName) {
+	b := i.getBackend(backendName)
+	if b == nil {
 		return XqdErrInvalidArgument
 	}
 
-	// Return BackendHealthUnknown (we don't track health)
-	i.memory.PutUint32(BackendHealthUnknown, int64(healthOut))
+	i.memory.PutUint32(backendHealth(b), int64(healthOut))
 	return XqdStatusOK
 }
 

@@ -119,6 +119,11 @@ type Instance struct {
 	secureFn         func(*http.Request) bool    // Determines if request is "secure" (default: checks TLS)
 	complianceRegion string                      // GDPR/data locality region (e.g., "none", "us-eu", "us")
 
+	// fakeValidFastlyKeys is the set of Fastly-Key header values that
+	// fastly_key_is_valid treats as valid. Empty/nil means no key is valid,
+	// preserving the historical always-false behavior.
+	fakeValidFastlyKeys map[string]struct{}
+
 	// Logging
 	log    *log.Logger // General fastlike logging
 	abilog *log.Logger // ABI call logging (verbose mode only)
