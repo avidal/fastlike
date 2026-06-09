@@ -6,7 +6,7 @@ Fastlike is a local development server for Fastly Compute (previously known as C
 
 ## What is Fastlike?
 
-Fastlike is a complete Go implementation of the Fastly Compute XQD ABI that runs locally using WebAssembly. It emulates Fastly's runtime environment, allowing you to:
+Fastlike is a complete Go implementation of the Fastly Compute ABI that runs locally using WebAssembly. It emulates Fastly's runtime environment, allowing you to:
 
 - Test Fastly Compute programs locally before deployment
 - Debug issues without the deployment cycle
@@ -15,7 +15,7 @@ Fastlike is a complete Go implementation of the Fastly Compute XQD ABI that runs
 
 ## Features
 
-- Full ABI Compatibility: Implements 100% of the Fastly Compute XQD ABI
+- Full ABI Compatibility: Implements 100% of the Fastly Compute ABI
 - Local Development: Run Fastly Compute programs without deploying
 - Multiple Backend Support: Configure multiple named backends
 - Hot Reloading: Automatically reload WASM modules on file changes
