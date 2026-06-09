@@ -377,10 +377,7 @@ func (f *dictionaryFlags) Set(v string) error {
 
 	// Create a lookup function that returns the value for a key, or empty string if not found
 	lookupFunc := func(key string) string {
-		if value, exists := content[key]; exists {
-			return value
-		}
-		return ""
+		return content[key]
 	}
 
 	(*f)[name] = dictionary{name: name, filename: filename, fn: lookupFunc}
@@ -502,10 +499,7 @@ func (f *configStoreFlags) Set(v string) error {
 	}
 
 	lookupFunc := func(key string) string {
-		if value, exists := content[key]; exists {
-			return value
-		}
-		return ""
+		return content[key]
 	}
 
 	(*f)[name] = configStoreEntry{name: name, filename: filename, fn: lookupFunc}

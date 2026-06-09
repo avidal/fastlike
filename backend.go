@@ -137,12 +137,7 @@ func wrapWithReliability(h http.Handler, uptime *uint8) http.Handler {
 
 // getBackend retrieves a backend by name. Returns nil if not found.
 func (i *Instance) getBackend(name string) *Backend {
-	b, ok := i.backends[name]
-	if !ok {
-		return nil
-	}
-
-	return b
+	return i.backends[name]
 }
 
 // backendExists checks whether a backend with the given name is registered.
