@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"fastlike.dev/profile"
+
 	"fastlike.dev"
 )
 
@@ -29,7 +31,7 @@ func TestProfileBackendSync(t *testing.T) {
 
 	t.Run("ok-no-transport", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -45,10 +47,10 @@ func TestProfileBackendSync(t *testing.T) {
 			st.Fatalf("expected 1 trace, got %d", len(traces))
 		}
 		if got := len(traces[0].BackendCalls); got != 1 {
-			st.Fatalf("expected 1 BackendCall, got %d", got)
+			st.Fatalf("expected 1 profile.BackendCall, got %d", got)
 		}
 		call := traces[0].BackendCalls[0]
-		if call.Outcome != fastlike.BackendOutcomeOk {
+		if call.Outcome != profile.BackendOutcomeOk {
 			st.Errorf("outcome: %d, want ok", call.Outcome)
 		}
 		if call.Status != http.StatusOK {
@@ -83,7 +85,7 @@ func TestProfileBackendSync(t *testing.T) {
 		proxy := httputil.NewSingleHostReverseProxy(u)
 		proxy.Transport = transport
 
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -93,10 +95,10 @@ func TestProfileBackendSync(t *testing.T) {
 
 		traces := ps.Recent(0)
 		if len(traces) != 1 || len(traces[0].BackendCalls) != 1 {
-			st.Fatalf("expected exactly 1 BackendCall in 1 trace, got %d traces", len(traces))
+			st.Fatalf("expected exactly 1 profile.BackendCall in 1 trace, got %d traces", len(traces))
 		}
 		call := traces[0].BackendCalls[0]
-		if call.Outcome != fastlike.BackendOutcomeOk {
+		if call.Outcome != profile.BackendOutcomeOk {
 			st.Errorf("outcome: %d, want ok", call.Outcome)
 		}
 		// Connect and TTFB should always populate for a real TCP server.
@@ -112,7 +114,7 @@ func TestProfileBackendSync(t *testing.T) {
 
 	t.Run("synthetic-failure", func(st *testing.T) {
 		st.Parallel()
-		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(fastlike.ProfileModeTrace))
+		f := fastlike.New(*wasmfile, fastlike.WithProfileMode(profile.ProfileModeTrace))
 		ps := f.ProfileStore()
 
 		w := httptest.NewRecorder()
@@ -125,10 +127,10 @@ func TestProfileBackendSync(t *testing.T) {
 
 		traces := ps.Recent(0)
 		if len(traces) != 1 || len(traces[0].BackendCalls) != 1 {
-			st.Fatalf("expected 1 BackendCall in 1 trace, got %d traces", len(traces))
+			st.Fatalf("expected 1 profile.BackendCall in 1 trace, got %d traces", len(traces))
 		}
 		call := traces[0].BackendCalls[0]
-		if call.Outcome != fastlike.BackendOutcomeSyntheticFailure {
+		if call.Outcome != profile.BackendOutcomeSyntheticFailure {
 			st.Errorf("outcome: %d, want synthetic-failure", call.Outcome)
 		}
 		if call.Status != http.StatusBadGateway {

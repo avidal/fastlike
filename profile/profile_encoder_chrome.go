@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -44,7 +44,8 @@ func EncodeChromeTrace(t *RequestTrace) ([]byte, error) {
 	events := make([]chromeEvent, 0, len(t.Spans)+len(t.BackendCalls)+len(nativeSamples)+5)
 
 	// Thread name metadata first so the viewer labels lanes correctly.
-	events = append(events,
+	events = append(
+		events,
 		chromeMeta(chromeTidHostcalls, "hostcalls"),
 		chromeMeta(chromeTidBackends, "backends"),
 		chromeMeta(chromeTidNative, "native"),
@@ -53,7 +54,7 @@ func EncodeChromeTrace(t *RequestTrace) ([]byte, error) {
 	// Hostcall spans as complete events.
 	for i, s := range t.Spans {
 		events = append(events, chromeEvent{
-			Name: resolveHostcallName(s.NameIdx),
+			Name: ResolveHostcallName(s.NameIdx),
 			Cat:  "hostcall",
 			Ph:   "X",
 			Ts:   nanosToMicrosFloat(s.Start),

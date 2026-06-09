@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"encoding/json"
@@ -39,7 +39,7 @@ func (t *RequestTrace) MarshalJSON() ([]byte, error) {
 	spans := make([]spanJSON, len(t.Spans))
 	for i, s := range t.Spans {
 		spans[i] = spanJSON{
-			Name:     resolveHostcallName(s.NameIdx),
+			Name:     ResolveHostcallName(s.NameIdx),
 			Start:    s.Start,
 			Duration: s.Duration,
 			RC:       s.RC,
@@ -53,10 +53,7 @@ func (t *RequestTrace) MarshalJSON() ([]byte, error) {
 	if len(nativeRaw) > 0 {
 		samples = make([]nativeSampleJSON, len(nativeRaw))
 		for i, s := range nativeRaw {
-			samples[i] = nativeSampleJSON{
-				RelativeNanos: s.RelativeNanos,
-				Function:      s.Function,
-			}
+			samples[i] = nativeSampleJSON(s)
 		}
 	}
 	calls := make([]backendCallJSON, len(t.BackendCalls))
@@ -82,21 +79,21 @@ func (t *RequestTrace) MarshalJSON() ([]byte, error) {
 	if t.Deep != nil {
 		access := make([]storeAccessJSON, len(t.Deep.StoreAccess))
 		for i, sa := range t.Deep.StoreAccess {
-			access[i] = storeAccessJSON{Kind: sa.Kind, Name: sa.Name, Count: sa.Count}
+			access[i] = storeAccessJSON(sa)
 		}
 		reqHeaders := make([]headerSummaryJSON, len(t.Deep.RequestHeaders))
 		for i, h := range t.Deep.RequestHeaders {
-			reqHeaders[i] = headerSummaryJSON{Name: h.Name, Count: h.Count, Bytes: h.Bytes}
+			reqHeaders[i] = headerSummaryJSON(h)
 		}
 		respHeaders := make([]headerSummaryJSON, len(t.Deep.ResponseHeaders))
 		for i, h := range t.Deep.ResponseHeaders {
-			respHeaders[i] = headerSummaryJSON{Name: h.Name, Count: h.Count, Bytes: h.Bytes}
+			respHeaders[i] = headerSummaryJSON(h)
 		}
 		var heapSamples []heapSampleJSON
 		if len(t.Deep.HeapSamples) > 0 {
 			heapSamples = make([]heapSampleJSON, len(t.Deep.HeapSamples))
 			for i, s := range t.Deep.HeapSamples {
-				heapSamples[i] = heapSampleJSON{RelativeNanos: s.RelativeNanos, MemoryBytes: s.MemoryBytes}
+				heapSamples[i] = heapSampleJSON(s)
 			}
 		}
 		deep = &deepMetricsJSON{
@@ -138,10 +135,10 @@ func (t *RequestTrace) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// resolveHostcallName looks up the interned name. Out-of-range indices fall
+// ResolveHostcallName looks up the interned name. Out-of-range indices fall
 // back to the sentinel so a forward-compatible reader never panics on a
 // trace produced by a newer fastlike with new hostcalls in the table.
-func resolveHostcallName(idx uint16) string {
+func ResolveHostcallName(idx uint16) string {
 	if int(idx) < len(hostcallNames) {
 		return hostcallNames[idx]
 	}

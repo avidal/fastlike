@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bytes"
@@ -392,7 +392,7 @@ func newRequestData(t *RequestTrace) requestData {
 	for i, s := range t.Spans {
 		row := requestSpan{
 			Idx:        i,
-			Name:       resolveHostcallName(s.NameIdx),
+			Name:       ResolveHostcallName(s.NameIdx),
 			StartMs:    fmtMs(s.Start),
 			DurationMs: fmtMs(s.Duration),
 			RC:         s.RC,

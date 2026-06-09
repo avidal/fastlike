@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ func TestRequestTraceJSONFullShape(t *testing.T) {
 		HijackedNanos:    &hijack,
 		Spans: []Span{
 			{
-				NameIdx:  hostcallNameIndex("body_downstream_get"),
+				NameIdx:  HostcallNameIndex("body_downstream_get"),
 				Start:    1000,
 				Duration: 2000,
 				RC:       0,
@@ -259,7 +259,7 @@ func TestRequestTraceJSONDeepOmittedWhenAbsent(t *testing.T) {
 }
 
 func TestRequestTraceJSONDeepPresentWhenPopulated(t *testing.T) {
-	d := newDeepMetrics()
+	d := NewDeepMetrics()
 	d.BodyReadBytes = 1234
 	d.BodyWriteBytes = 5678
 	d.CacheLookups = 3
@@ -267,10 +267,10 @@ func TestRequestTraceJSONDeepPresentWhenPopulated(t *testing.T) {
 	d.CacheHits = 2
 	d.CacheMisses = 1
 	d.CacheStale = 0
-	d.bumpStoreAccess("kv", "users")
-	d.bumpStoreAccess("kv", "users")
-	d.bumpStoreAccess("config", "flags")
-	d.finalize()
+	d.BumpStoreAccess("kv", "users")
+	d.BumpStoreAccess("kv", "users")
+	d.BumpStoreAccess("config", "flags")
+	d.Finalize()
 
 	tr := &RequestTrace{Deep: d}
 	raw, err := json.Marshal(tr)
@@ -316,13 +316,13 @@ func TestRequestTraceJSONDeepPresentWhenPopulated(t *testing.T) {
 }
 
 func TestResolveHostcallNameSentinel(t *testing.T) {
-	if got := resolveHostcallName(0); got != "<unknown>" {
+	if got := ResolveHostcallName(0); got != "<unknown>" {
 		t.Errorf("index 0: got %q, want <unknown>", got)
 	}
-	if got := resolveHostcallName(uint16(len(hostcallNames) - 1)); got == "<unknown>" {
+	if got := ResolveHostcallName(uint16(len(hostcallNames) - 1)); got == "<unknown>" {
 		t.Errorf("last valid index returned sentinel")
 	}
-	if got := resolveHostcallName(uint16(len(hostcallNames) + 5)); got != "<unknown>" {
+	if got := ResolveHostcallName(uint16(len(hostcallNames) + 5)); got != "<unknown>" {
 		t.Errorf("out-of-range: got %q, want <unknown>", got)
 	}
 }

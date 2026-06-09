@@ -3,6 +3,8 @@ package fastlike
 import (
 	"fmt"
 
+	"fastlike.dev/profile"
+
 	"github.com/bytecodealliance/wasmtime-go/v45"
 )
 
@@ -27,7 +29,7 @@ type wasmContext struct {
 // This wrapper catches panics and converts them to proper error returns.
 // The Instance is retrieved from caller.Data(), enabling the use of a shared linker.
 func safeWrap1(name string, fn func(*Instance, int32) int32) func(*wasmtime.Caller, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -46,7 +48,7 @@ func safeWrap1(name string, fn func(*Instance, int32) int32) func(*wasmtime.Call
 
 // safeWrap2 wraps a 2-argument host function with panic recovery.
 func safeWrap2(name string, fn func(*Instance, int32, int32) int32) func(*wasmtime.Caller, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -65,7 +67,7 @@ func safeWrap2(name string, fn func(*Instance, int32, int32) int32) func(*wasmti
 
 // safeWrap3 wraps a 3-argument host function with panic recovery.
 func safeWrap3(name string, fn func(*Instance, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -84,7 +86,7 @@ func safeWrap3(name string, fn func(*Instance, int32, int32, int32) int32) func(
 
 // safeWrap4 wraps a 4-argument host function with panic recovery.
 func safeWrap4(name string, fn func(*Instance, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -103,7 +105,7 @@ func safeWrap4(name string, fn func(*Instance, int32, int32, int32, int32) int32
 
 // safeWrap5 wraps a 5-argument host function with panic recovery.
 func safeWrap5(name string, fn func(*Instance, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -122,7 +124,7 @@ func safeWrap5(name string, fn func(*Instance, int32, int32, int32, int32, int32
 
 // safeWrap6 wraps a 6-argument host function with panic recovery.
 func safeWrap6(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -141,7 +143,7 @@ func safeWrap6(name string, fn func(*Instance, int32, int32, int32, int32, int32
 
 // safeWrap7 wraps a 7-argument host function with panic recovery.
 func safeWrap7(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -159,7 +161,7 @@ func safeWrap7(name string, fn func(*Instance, int32, int32, int32, int32, int32
 }
 
 func safeWrap8(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -178,7 +180,7 @@ func safeWrap8(name string, fn func(*Instance, int32, int32, int32, int32, int32
 
 // Additional wrappers for uint32 parameters (for cache functions)
 func safeWrap9(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -196,7 +198,7 @@ func safeWrap9(name string, fn func(*Instance, int32, int32, int32, int32, int32
 }
 
 func safeWrap11(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -214,7 +216,7 @@ func safeWrap11(name string, fn func(*Instance, int32, int32, int32, int32, int3
 }
 
 func safeWrap14(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l, m, n, o int32) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -233,7 +235,7 @@ func safeWrap14(name string, fn func(*Instance, int32, int32, int32, int32, int3
 
 // Additional wrappers for special parameter types
 func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.Caller, int64) int32 {
-	nameIdx := hostcallNameIndex(name)
+	nameIdx := profile.HostcallNameIndex(name)
 	return func(caller *wasmtime.Caller, a int64) (ret int32) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
@@ -258,9 +260,9 @@ func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.C
 // native or combined, SetProfiler is called on the engine config before
 // module construction so the JIT emits jitdump output for `perf` or
 // `samply`. May be nil; nil collapses to ProfileModeOff semantics. The
-// strategy mapping lives in nativeProfilerStrategy so it can be tested
+// strategy mapping lives in NativeProfilerStrategy so it can be tested
 // without instantiating wasmtime.
-func (i *Instance) compile(wasmbytes []byte, profileCfg *profileCompileConfig) {
+func (i *Instance) compile(wasmbytes []byte, profileCfg *profile.CompileConfig) {
 	// Create a wasmtime config with default settings
 	config := wasmtime.NewConfig()
 
@@ -271,7 +273,7 @@ func (i *Instance) compile(wasmbytes []byte, profileCfg *profileCompileConfig) {
 	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
 
 	if profileCfg != nil {
-		if strat, supported := nativeProfilerStrategy(profileCfg.mode); supported {
+		if strat, supported := profile.NativeProfilerStrategy(profileCfg.Mode); supported {
 			config.SetProfiler(strat)
 		}
 	}

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fastlike.dev/profile"
 )
 
 func TestHostcallNameIndex(t *testing.T) {
@@ -18,34 +20,34 @@ func TestHostcallNameIndex(t *testing.T) {
 		"write",
 	}
 	for _, name := range cases {
-		idx := hostcallNameIndex(name)
+		idx := profile.HostcallNameIndex(name)
 		if idx == 0 {
-			t.Fatalf("hostcallNameIndex(%q) returned unknown sentinel", name)
+			t.Fatalf("profile.HostcallNameIndex(%q) returned unknown sentinel", name)
 		}
-		if hostcallNames[idx] != name {
-			t.Fatalf("hostcallNames[%d]=%q, want %q", idx, hostcallNames[idx], name)
+		if profile.ResolveHostcallName(idx) != name {
+			t.Fatalf("profile.ResolveHostcallName(%d)=%q, want %q", idx, profile.ResolveHostcallName(idx), name)
 		}
 	}
-	if got := hostcallNameIndex("not_a_real_hostcall"); got != 0 {
+	if got := profile.HostcallNameIndex("not_a_real_hostcall"); got != 0 {
 		t.Fatalf("unknown hostcall index = %d, want 0", got)
 	}
 }
 
 func TestHostcallSpanRecording(t *testing.T) {
-	i := &Instance{trace: &RequestTrace{
+	i := &Instance{trace: &profile.RequestTrace{
 		WallStart: time.Now().Add(-time.Second),
-		Spans:     make([]Span, 0, 2),
+		Spans:     make([]profile.Span, 0, 2),
 	}}
 	start := i.startHostcallSpan()
 	tags := hostcallTagSlots(10, 20, 30, 40)
-	i.finishHostcallSpan(hostcallNameIndex("send"), start, XqdStatusOK, tags)
+	i.finishHostcallSpan(profile.HostcallNameIndex("send"), start, XqdStatusOK, tags)
 
 	if got, want := len(i.trace.Spans), 1; got != want {
 		t.Fatalf("span count: got %d, want %d", got, want)
 	}
 	span := i.trace.Spans[0]
-	if hostcallNames[span.NameIdx] != "send" {
-		t.Fatalf("span name: got %q", hostcallNames[span.NameIdx])
+	if profile.ResolveHostcallName(span.NameIdx) != "send" {
+		t.Fatalf("span name: got %q", profile.ResolveHostcallName(span.NameIdx))
 	}
 	if span.RC != XqdStatusOK {
 		t.Fatalf("span RC: got %d, want %d", span.RC, XqdStatusOK)
@@ -62,11 +64,11 @@ func TestHostcallSpanRecording(t *testing.T) {
 }
 
 func TestHostcallSpanDropCap(t *testing.T) {
-	i := &Instance{trace: &RequestTrace{
+	i := &Instance{trace: &profile.RequestTrace{
 		WallStart: time.Now(),
-		Spans:     make([]Span, 0, 1),
+		Spans:     make([]profile.Span, 0, 1),
 	}}
-	idx := hostcallNameIndex("write")
+	idx := profile.HostcallNameIndex("write")
 	i.finishHostcallSpan(idx, time.Now(), XqdStatusOK, hostcallTagSlots(1, 2, 3, 4))
 	i.finishHostcallSpan(idx, time.Now(), XqdStatusOK, hostcallTagSlots(5, 6, 7, 8))
 
@@ -81,7 +83,7 @@ func TestHostcallSpanDropCap(t *testing.T) {
 func TestHostcallSpanNoopWhenDisabled(t *testing.T) {
 	i := &Instance{}
 	start := i.startHostcallSpan()
-	i.finishHostcallSpan(hostcallNameIndex("send"), start, XqdStatusOK, hostcallTagSlots(1, 2, 3, 4))
+	i.finishHostcallSpan(profile.HostcallNameIndex("send"), start, XqdStatusOK, hostcallTagSlots(1, 2, 3, 4))
 	if !start.IsZero() {
 		t.Fatalf("disabled trace start = %v, want zero", start)
 	}
@@ -91,9 +93,9 @@ func TestHostcallSpanNoopWhenDisabled(t *testing.T) {
 }
 
 func TestMarkHostcallPanic(t *testing.T) {
-	i := &Instance{trace: &RequestTrace{}}
+	i := &Instance{trace: &profile.RequestTrace{}}
 	i.markHostcallPanic("send", "boom")
-	if i.trace.Outcome != TraceOutcomePanic {
+	if i.trace.Outcome != profile.TraceOutcomePanic {
 		t.Fatalf("outcome = %s, want panic", i.trace.Outcome)
 	}
 	if got := strings.Join(i.trace.Notes, "\n"); !strings.Contains(got, "hostcall send panic: boom") {
@@ -102,11 +104,11 @@ func TestMarkHostcallPanic(t *testing.T) {
 }
 
 func BenchmarkHostcallSpanRecording(b *testing.B) {
-	i := &Instance{trace: &RequestTrace{
+	i := &Instance{trace: &profile.RequestTrace{
 		WallStart: time.Now(),
-		Spans:     make([]Span, 0, defaultProfileSpanCap),
+		Spans:     make([]profile.Span, 0, profile.DefaultProfileSpanCap),
 	}}
-	idx := hostcallNameIndex("send")
+	idx := profile.HostcallNameIndex("send")
 	tags := hostcallTagSlots(1, 2, 3, 4)
 
 	b.ReportAllocs()
@@ -122,7 +124,7 @@ func BenchmarkHostcallSpanRecording(b *testing.B) {
 
 func BenchmarkHostcallSpanDisabled(b *testing.B) {
 	i := &Instance{}
-	idx := hostcallNameIndex("send")
+	idx := profile.HostcallNameIndex("send")
 	tags := hostcallTagSlots(1, 2, 3, 4)
 
 	b.ReportAllocs()

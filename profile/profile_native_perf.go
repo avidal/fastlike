@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bufio"

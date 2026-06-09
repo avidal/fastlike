@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bufio"
@@ -13,7 +13,7 @@ import (
 
 func TestTraceWriterStatusFromExplicitWriteHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	tw := newTraceResponseWriter(rec)
+	tw := NewTraceResponseWriter(rec)
 	tw.WriteHeader(http.StatusTeapot)
 	_, _ = io.WriteString(tw, "hi")
 
@@ -36,7 +36,7 @@ func TestTraceWriterStatusFromExplicitWriteHeader(t *testing.T) {
 
 func TestTraceWriterImplicitWriteHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	tw := newTraceResponseWriter(rec)
+	tw := NewTraceResponseWriter(rec)
 	_, _ = io.WriteString(tw, "no header")
 
 	if got := tw.Status(); got != http.StatusOK {
@@ -49,7 +49,7 @@ func TestTraceWriterImplicitWriteHeader(t *testing.T) {
 
 func TestTraceWriterHonorsFirstWriteHeaderOnly(t *testing.T) {
 	rec := httptest.NewRecorder()
-	tw := newTraceResponseWriter(rec)
+	tw := NewTraceResponseWriter(rec)
 	tw.WriteHeader(http.StatusCreated)
 	tw.WriteHeader(http.StatusGone)
 	if got := tw.Status(); got != http.StatusCreated {
@@ -60,7 +60,7 @@ func TestTraceWriterHonorsFirstWriteHeaderOnly(t *testing.T) {
 func TestTraceWriterFlushPreserved(t *testing.T) {
 	// httptest.ResponseRecorder satisfies http.Flusher.
 	rec := httptest.NewRecorder()
-	tw := newTraceResponseWriter(rec)
+	tw := NewTraceResponseWriter(rec)
 
 	f, ok := tw.(http.Flusher)
 	if !ok {
@@ -92,7 +92,7 @@ func (m *minimalWriter) Write(b []byte) (int, error) { return m.body.Write(b) }
 func (m *minimalWriter) WriteHeader(c int)           { m.code = c }
 
 func TestTraceWriterDoesNotForgeFlusher(t *testing.T) {
-	w := newTraceResponseWriter(&minimalWriter{})
+	w := NewTraceResponseWriter(&minimalWriter{})
 	if _, ok := w.(http.Flusher); ok {
 		t.Fatal("wrapper must not claim http.Flusher when underlying writer does not satisfy it")
 	}
@@ -121,7 +121,7 @@ func (h *hijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func TestTraceWriterHijackForwardsAndRecords(t *testing.T) {
 	hw := &hijackableWriter{minimalWriter: &minimalWriter{}}
-	tw := newTraceResponseWriter(hw)
+	tw := NewTraceResponseWriter(hw)
 
 	hj, ok := tw.(http.Hijacker)
 	if !ok {
@@ -154,7 +154,7 @@ func (rfw *readerFromWriter) ReadFrom(r io.Reader) (int64, error) {
 
 func TestTraceWriterReadFromForwardsAndCounts(t *testing.T) {
 	rfw := &readerFromWriter{minimalWriter: &minimalWriter{}}
-	tw := newTraceResponseWriter(rfw)
+	tw := NewTraceResponseWriter(rfw)
 
 	rf, ok := tw.(io.ReaderFrom)
 	if !ok {
@@ -188,7 +188,7 @@ func (pw *pusherWriter) Push(target string, _ *http.PushOptions) error {
 
 func TestTraceWriterPushForwards(t *testing.T) {
 	pw := &pusherWriter{minimalWriter: &minimalWriter{}}
-	tw := newTraceResponseWriter(pw)
+	tw := NewTraceResponseWriter(pw)
 
 	p, ok := tw.(http.Pusher)
 	if !ok {
@@ -212,7 +212,7 @@ func (a *allCapsWriter) ReadFrom(r io.Reader) (int64, error)          { return i
 func (a *allCapsWriter) Push(_ string, _ *http.PushOptions) error     { return nil }
 
 func TestTraceWriterAllCapsWrapper(t *testing.T) {
-	w := newTraceResponseWriter(&allCapsWriter{minimalWriter: &minimalWriter{}})
+	w := NewTraceResponseWriter(&allCapsWriter{minimalWriter: &minimalWriter{}})
 	if _, ok := w.(http.Flusher); !ok {
 		t.Error("Flusher missing on all-caps wrapper")
 	}

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"fastlike.dev/profile"
 )
 
 // backendCallRecorder is the per-PendingRequest handle the recorder uses to
@@ -17,14 +19,14 @@ import (
 // launched, so the goroutine only mutates fields it owns and the finalizer
 // reads everything under callMu without racing the goroutine.
 type backendCallRecorder struct {
-	trace *RequestTrace // nil when profiling is disabled or the cap was hit
-	index int           // index into trace.BackendCalls; -1 when cap was hit
+	trace *profile.RequestTrace // nil when profiling is disabled or the cap was hit
+	index int                   // index into trace.BackendCalls; -1 when cap was hit
 	// call is a direct pointer into the trace's BackendCalls backing
 	// array. The slice is pre-allocated to backendCap at trace creation,
 	// so the pointer is stable for the lifetime of the trace and async
 	// completion goroutines never read trace.BackendCalls concurrently
 	// with the wasm goroutine's append.
-	call *BackendCall
+	call *profile.BackendCall
 
 	mu sync.Mutex // guards mutations after construction; finalizer reads under this
 
@@ -65,13 +67,13 @@ func (i *Instance) startBackendCall(name, method string, target *url.URL, pendin
 		t.DroppedBackendCalls++
 		return nopBackendRecorder(), true
 	}
-	t.BackendCalls = append(t.BackendCalls, BackendCall{
+	t.BackendCalls = append(t.BackendCalls, profile.BackendCall{
 		PendingID:   pendingID,
 		Name:        name,
 		Method:      method,
 		URLRedacted: redactURL(target),
 		Started:     time.Since(t.WallStart).Nanoseconds(),
-		Outcome:     BackendOutcomeIncomplete,
+		Outcome:     profile.BackendOutcomeIncomplete,
 	})
 	flag := false
 	last := len(t.BackendCalls) - 1
@@ -198,13 +200,13 @@ func (r *backendCallRecorder) completeBackendCall(status int, cancelled bool, er
 	call.Status = status
 	switch {
 	case *r.syntheticFlag:
-		call.Outcome = BackendOutcomeSyntheticFailure
+		call.Outcome = profile.BackendOutcomeSyntheticFailure
 	case cancelled:
-		call.Outcome = BackendOutcomeCancelled
+		call.Outcome = profile.BackendOutcomeCancelled
 	case err != nil:
-		call.Outcome = BackendOutcomeNetworkError
+		call.Outcome = profile.BackendOutcomeNetworkError
 	default:
-		call.Outcome = BackendOutcomeOk
+		call.Outcome = profile.BackendOutcomeOk
 	}
 	r.fillPhasesLocked(call)
 }
@@ -227,7 +229,7 @@ func (r *backendCallRecorder) markIncomplete() {
 		return
 	}
 	call := r.call
-	call.Outcome = BackendOutcomeIncomplete
+	call.Outcome = profile.BackendOutcomeIncomplete
 	call.TotalNanos = time.Since(r.startedAt).Nanoseconds()
 	r.fillPhasesLocked(call)
 }
@@ -247,7 +249,7 @@ func (r *backendCallRecorder) markOrphaned() {
 		return
 	}
 	call := r.call
-	call.Outcome = BackendOutcomeOrphaned
+	call.Outcome = profile.BackendOutcomeOrphaned
 	if call.TotalNanos == 0 {
 		call.TotalNanos = time.Since(r.startedAt).Nanoseconds()
 	}
@@ -273,7 +275,7 @@ func (r *backendCallRecorder) disableLateWrites() {
 	r.mu.Unlock()
 }
 
-func (r *backendCallRecorder) fillPhasesLocked(call *BackendCall) {
+func (r *backendCallRecorder) fillPhasesLocked(call *profile.BackendCall) {
 	if !r.dnsStart.IsZero() && !r.dnsDone.IsZero() {
 		n := r.dnsDone.Sub(r.dnsStart).Nanoseconds()
 		call.DNSNanos = &n

@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"net/http"
@@ -7,10 +7,10 @@ import (
 )
 
 func TestSummarizeHeadersEmpty(t *testing.T) {
-	if got := summarizeHeaders(nil); got != nil {
+	if got := SummarizeHeaders(nil); got != nil {
 		t.Errorf("nil header should return nil, got %+v", got)
 	}
-	if got := summarizeHeaders(http.Header{}); got != nil {
+	if got := SummarizeHeaders(http.Header{}); got != nil {
 		t.Errorf("empty header should return nil, got %+v", got)
 	}
 }
@@ -18,7 +18,7 @@ func TestSummarizeHeadersEmpty(t *testing.T) {
 func TestSummarizeHeadersCanonicalization(t *testing.T) {
 	h := http.Header{}
 	h.Add("user-agent", "test/1")
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	if len(got) != 1 {
 		t.Fatalf("len: %d", len(got))
 	}
@@ -35,7 +35,7 @@ func TestSummarizeHeadersMultiValue(t *testing.T) {
 	h.Add("x-custom", "a")
 	h.Add("x-custom", "bb")
 	h.Add("x-custom", "ccc")
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	if len(got) != 1 {
 		t.Fatalf("len: %d", len(got))
 	}
@@ -51,14 +51,16 @@ func TestSummarizeHeadersMultiValue(t *testing.T) {
 
 func TestSummarizeHeadersRedactsDenyList(t *testing.T) {
 	// Every casing variant must hit the redaction path.
-	cases := []string{"Cookie", "COOKIE", "cookie", "CoOkIe", "set-cookie", "Set-Cookie",
+	cases := []string{
+		"Cookie", "COOKIE", "cookie", "CoOkIe", "set-cookie", "Set-Cookie",
 		"authorization", "Authorization", "AUTHORIZATION",
 		"proxy-authorization", "x-api-key", "X-API-Key", "X-Api-Key",
-		"proxy-authenticate", "www-authenticate"}
+		"proxy-authenticate", "www-authenticate",
+	}
 	for _, name := range cases {
 		h := http.Header{}
 		h.Add(name, "scary-value-must-not-leak")
-		got := summarizeHeaders(h)
+		got := SummarizeHeaders(h)
 		if len(got) != 1 {
 			t.Fatalf("%q: len %d", name, len(got))
 		}
@@ -79,7 +81,7 @@ func TestSummarizeHeadersRedactedCountsPreservedSeparately(t *testing.T) {
 	h := http.Header{}
 	h.Add("Cookie", "a=1")
 	h.Add("Authorization", "Bearer xyz")
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	if len(got) != 2 {
 		t.Fatalf("len: %d, want 2 distinct redacted rows", len(got))
 	}
@@ -95,7 +97,7 @@ func TestSummarizeHeadersMixedRedactedAndPublic(t *testing.T) {
 	h.Add("Content-Type", "application/json")
 	h.Add("Authorization", "Bearer secret-token-PROHIBITED")
 	h.Add("User-Agent", "ua/1")
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	if len(got) != 3 {
 		t.Fatalf("len: %d", len(got))
 	}
@@ -116,7 +118,7 @@ func TestSummarizeHeadersStableSort(t *testing.T) {
 	h.Add("Z-Header", "z")
 	h.Add("A-Header", "a")
 	h.Add("M-Header", "m")
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	if len(got) != 3 || got[0].Name != "A-Header" || got[1].Name != "M-Header" || got[2].Name != "Z-Header" {
 		t.Errorf("sort wrong: %+v", got)
 	}
@@ -157,7 +159,7 @@ func TestSummarizeHeadersValuesNeverEscape(t *testing.T) {
 			h.Add("X-Custom-Tracking", v)
 		}
 	}
-	got := summarizeHeaders(h)
+	got := SummarizeHeaders(h)
 	for _, row := range got {
 		for _, v := range scaryValues {
 			if strings.Contains(row.Name, v) {

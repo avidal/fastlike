@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import "sort"
 
@@ -72,12 +72,36 @@ type HeapSample struct {
 	MemoryBytes   int64
 }
 
-// defaultHeapSampleCap is the per-request ceiling on retained heap
+// DefaultHeapSampleCap is the per-request ceiling on retained heap
 // samples. Wasm memory grows in 64KB pages, so 1024 *distinct* samples
 // implies ~64MB of growth — well outside what a normal request should
 // produce. The cap is a safety valve against pathological guests, not
 // a tunable.
-const defaultHeapSampleCap = 1024
+const DefaultHeapSampleCap = 1024
+
+// AddHeapSample records one wasm linear memory observation. Samples that
+// repeat the previously recorded size are dropped (wasm memory grows
+// monotonically and usually stabilises, so hostcall boundaries would
+// otherwise record the same value many times). Once the slab reaches
+// DefaultHeapSampleCap the sample is dropped and HeapSamplesDropped is
+// incremented instead.
+func (d *DeepMetrics) AddHeapSample(relativeNanos, memoryBytes int64) {
+	if d == nil {
+		return
+	}
+	if len(d.HeapSamples) > 0 && memoryBytes == d.lastHeapBytes {
+		return
+	}
+	if len(d.HeapSamples) >= DefaultHeapSampleCap {
+		d.HeapSamplesDropped++
+		return
+	}
+	d.HeapSamples = append(d.HeapSamples, HeapSample{
+		RelativeNanos: relativeNanos,
+		MemoryBytes:   memoryBytes,
+	})
+	d.lastHeapBytes = memoryBytes
+}
 
 // HeapAggregates summarises a HeapSamples slice into three scalar
 // values: Min and Max wasm memory size observed during the request,
@@ -128,20 +152,20 @@ type storeAccessKey struct {
 	Name string
 }
 
-// newDeepMetrics allocates the per-trace deep accumulator. Caller is
+// NewDeepMetrics allocates the per-trace deep accumulator. Caller is
 // responsible for placing the result on RequestTrace.Deep only when
 // the configured mode is ProfileModeDeep.
-func newDeepMetrics() *DeepMetrics {
+func NewDeepMetrics() *DeepMetrics {
 	return &DeepMetrics{
 		storeAccess: make(map[storeAccessKey]int),
 	}
 }
 
-// bumpStoreAccess records one access to the named store of the given
+// BumpStoreAccess records one access to the named store of the given
 // kind. Safe to call on a nil receiver; the no-op path means
 // instrumentation sites can omit the nil check and the compiler
 // inlines it away on hot paths when the receiver is statically known.
-func (d *DeepMetrics) bumpStoreAccess(kind, name string) {
+func (d *DeepMetrics) BumpStoreAccess(kind, name string) {
 	if d == nil {
 		return
 	}
@@ -151,11 +175,21 @@ func (d *DeepMetrics) bumpStoreAccess(kind, name string) {
 	d.storeAccess[storeAccessKey{Kind: kind, Name: name}]++
 }
 
+// StoreAccessCount returns the number of recorded accesses against the named
+// store before Finalize flattens the accumulator. Intended for tests and
+// introspection; returns zero for an unknown (kind, name).
+func (d *DeepMetrics) StoreAccessCount(kind, name string) int {
+	if d == nil {
+		return 0
+	}
+	return d.storeAccess[storeAccessKey{Kind: kind, Name: name}]
+}
+
 // finalize flattens the accumulator map into StoreAccess. Called once
-// per trace from Instance.finalizeTrace before completeTrace hands the
+// per trace from Instance.finalizeTrace before CompleteTrace hands the
 // trace to the store. After finalize the storeAccess map is cleared so
 // the trace does not retain it.
-func (d *DeepMetrics) finalize() {
+func (d *DeepMetrics) Finalize() {
 	if d == nil || len(d.storeAccess) == 0 {
 		return
 	}

@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"bufio"
@@ -9,10 +9,21 @@ import (
 	"time"
 )
 
-// traceResponseWriter wraps an http.ResponseWriter so the profile recorder
+// ResponseObserver is the subset of TraceResponseWriter that the rest of
+// the runtime depends on: an http.ResponseWriter plus the four observation
+// accessors the recorder reads at end-of-request.
+type ResponseObserver interface {
+	http.ResponseWriter
+	Status() int
+	BytesWritten() int64
+	HeaderFlushed() *int64
+	Hijacked() *int64
+}
+
+// TraceResponseWriter wraps an http.ResponseWriter so the profile recorder
 // can observe the status code, response byte count, header-flush moment, and
 // hijack moment without changing the guest-visible behavior of the response
-// writer. It is constructed by newTraceResponseWriter, which returns one of
+// writer. It is constructed by NewTraceResponseWriter, which returns one of
 // 16 pre-built wrapper types whose method set exactly matches the
 // interfaces the underlying writer satisfied. This is the same approach
 // httpsnoop takes; inlined here to avoid a dependency on a third-party
@@ -21,7 +32,7 @@ import (
 // The wrapper is safe for concurrent observation reads (Status,
 // BytesWritten, HeaderFlushed, Hijacked) by code outside the request
 // goroutine; the recording side runs only from the request goroutine.
-type traceResponseWriter struct {
+type TraceResponseWriter struct {
 	inner http.ResponseWriter
 
 	start             time.Time
@@ -34,12 +45,12 @@ type traceResponseWriter struct {
 	wroteHeaderCalled atomic.Bool
 }
 
-// newTraceResponseWriter wraps w so observations land on the returned
-// responseObserver while preserving every optional interface w satisfies.
+// NewTraceResponseWriter wraps w so observations land on the returned
+// ResponseObserver while preserving every optional interface w satisfies.
 // The returned value is also an http.ResponseWriter so callers can use it
 // directly in place of w.
-func newTraceResponseWriter(w http.ResponseWriter) responseObserver {
-	base := &traceResponseWriter{
+func NewTraceResponseWriter(w http.ResponseWriter) ResponseObserver {
+	base := &TraceResponseWriter{
 		inner: w,
 		start: time.Now(),
 	}
@@ -50,9 +61,9 @@ func newTraceResponseWriter(w http.ResponseWriter) responseObserver {
 	return pickWrapper(base, hasFlusher, hasHijacker, hasReaderFrom, hasPusher)
 }
 
-func (t *traceResponseWriter) Header() http.Header { return t.inner.Header() }
+func (t *TraceResponseWriter) Header() http.Header { return t.inner.Header() }
 
-func (t *traceResponseWriter) WriteHeader(status int) {
+func (t *TraceResponseWriter) WriteHeader(status int) {
 	if !t.wroteHeaderCalled.Swap(true) {
 		t.status.Store(int32(status))
 		t.markHeaderFlush()
@@ -60,7 +71,7 @@ func (t *traceResponseWriter) WriteHeader(status int) {
 	t.inner.WriteHeader(status)
 }
 
-func (t *traceResponseWriter) Write(b []byte) (int, error) {
+func (t *TraceResponseWriter) Write(b []byte) (int, error) {
 	if !t.wroteHeaderCalled.Swap(true) {
 		t.status.Store(int32(http.StatusOK))
 		t.markHeaderFlush()
@@ -70,7 +81,7 @@ func (t *traceResponseWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (t *traceResponseWriter) Status() int {
+func (t *TraceResponseWriter) Status() int {
 	s := t.status.Load()
 	if s == 0 && t.wroteHeaderCalled.Load() {
 		return http.StatusOK
@@ -78,9 +89,9 @@ func (t *traceResponseWriter) Status() int {
 	return int(s)
 }
 
-func (t *traceResponseWriter) BytesWritten() int64 { return t.bytes.Load() }
+func (t *TraceResponseWriter) BytesWritten() int64 { return t.bytes.Load() }
 
-func (t *traceResponseWriter) HeaderFlushed() *int64 {
+func (t *TraceResponseWriter) HeaderFlushed() *int64 {
 	if !t.headerFlushSet.Load() {
 		return nil
 	}
@@ -88,7 +99,7 @@ func (t *traceResponseWriter) HeaderFlushed() *int64 {
 	return &v
 }
 
-func (t *traceResponseWriter) Hijacked() *int64 {
+func (t *TraceResponseWriter) Hijacked() *int64 {
 	if !t.hijackSet.Load() {
 		return nil
 	}
@@ -96,7 +107,7 @@ func (t *traceResponseWriter) Hijacked() *int64 {
 	return &v
 }
 
-func (t *traceResponseWriter) markHeaderFlush() {
+func (t *TraceResponseWriter) markHeaderFlush() {
 	if t.headerFlushSet.Load() {
 		return
 	}
@@ -104,7 +115,7 @@ func (t *traceResponseWriter) markHeaderFlush() {
 	t.headerFlushSet.Store(true)
 }
 
-func (t *traceResponseWriter) markHijack() {
+func (t *TraceResponseWriter) markHijack() {
 	if t.hijackSet.Load() {
 		return
 	}
@@ -115,14 +126,14 @@ func (t *traceResponseWriter) markHijack() {
 	}
 }
 
-func (t *traceResponseWriter) flushUnderlying() {
+func (t *TraceResponseWriter) flushUnderlying() {
 	if f, ok := t.inner.(http.Flusher); ok {
 		t.markHeaderFlush()
 		f.Flush()
 	}
 }
 
-func (t *traceResponseWriter) hijackUnderlying() (net.Conn, *bufio.ReadWriter, error) {
+func (t *TraceResponseWriter) hijackUnderlying() (net.Conn, *bufio.ReadWriter, error) {
 	h := t.inner.(http.Hijacker)
 	conn, brw, err := h.Hijack()
 	if err == nil {
@@ -131,7 +142,7 @@ func (t *traceResponseWriter) hijackUnderlying() (net.Conn, *bufio.ReadWriter, e
 	return conn, brw, err
 }
 
-func (t *traceResponseWriter) readFromUnderlying(src io.Reader) (int64, error) {
+func (t *TraceResponseWriter) readFromUnderlying(src io.Reader) (int64, error) {
 	rf := t.inner.(io.ReaderFrom)
 	if !t.wroteHeaderCalled.Swap(true) {
 		t.status.Store(int32(http.StatusOK))
@@ -142,7 +153,7 @@ func (t *traceResponseWriter) readFromUnderlying(src io.Reader) (int64, error) {
 	return n, err
 }
 
-func (t *traceResponseWriter) pushUnderlying(target string, opts *http.PushOptions) error {
+func (t *TraceResponseWriter) pushUnderlying(target string, opts *http.PushOptions) error {
 	return t.inner.(http.Pusher).Push(target, opts)
 }
 
@@ -150,7 +161,7 @@ func (t *traceResponseWriter) pushUnderlying(target string, opts *http.PushOptio
 // exactly the optional interfaces present on the underlying writer. The 16
 // types below are intentionally hand-rolled rather than generated so the
 // dispatch is grep-able.
-func pickWrapper(t *traceResponseWriter, f, h, r, p bool) responseObserver {
+func pickWrapper(t *TraceResponseWriter, f, h, r, p bool) ResponseObserver {
 	mask := 0
 	if f {
 		mask |= 1
@@ -202,22 +213,22 @@ func pickWrapper(t *traceResponseWriter, f, h, r, p bool) responseObserver {
 }
 
 type (
-	twBase struct{ *traceResponseWriter }
-	twF    struct{ *traceResponseWriter }
-	twH    struct{ *traceResponseWriter }
-	twFH   struct{ *traceResponseWriter }
-	twR    struct{ *traceResponseWriter }
-	twFR   struct{ *traceResponseWriter }
-	twHR   struct{ *traceResponseWriter }
-	twFHR  struct{ *traceResponseWriter }
-	twP    struct{ *traceResponseWriter }
-	twFP   struct{ *traceResponseWriter }
-	twHP   struct{ *traceResponseWriter }
-	twFHP  struct{ *traceResponseWriter }
-	twRP   struct{ *traceResponseWriter }
-	twFRP  struct{ *traceResponseWriter }
-	twHRP  struct{ *traceResponseWriter }
-	twFHRP struct{ *traceResponseWriter }
+	twBase struct{ *TraceResponseWriter }
+	twF    struct{ *TraceResponseWriter }
+	twH    struct{ *TraceResponseWriter }
+	twFH   struct{ *TraceResponseWriter }
+	twR    struct{ *TraceResponseWriter }
+	twFR   struct{ *TraceResponseWriter }
+	twHR   struct{ *TraceResponseWriter }
+	twFHR  struct{ *TraceResponseWriter }
+	twP    struct{ *TraceResponseWriter }
+	twFP   struct{ *TraceResponseWriter }
+	twHP   struct{ *TraceResponseWriter }
+	twFHP  struct{ *TraceResponseWriter }
+	twRP   struct{ *TraceResponseWriter }
+	twFRP  struct{ *TraceResponseWriter }
+	twHRP  struct{ *TraceResponseWriter }
+	twFHRP struct{ *TraceResponseWriter }
 )
 
 func (w twF) Flush()    { w.flushUnderlying() }
@@ -248,24 +259,31 @@ func (w twHRP) ReadFrom(src io.Reader) (int64, error)  { return w.readFromUnderl
 func (w twFHRP) ReadFrom(src io.Reader) (int64, error) { return w.readFromUnderlying(src) }
 
 func (w twP) Push(target string, opts *http.PushOptions) error { return w.pushUnderlying(target, opts) }
+
 func (w twFP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twHP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twFHP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twRP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twFRP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twHRP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }
+
 func (w twFHRP) Push(target string, opts *http.PushOptions) error {
 	return w.pushUnderlying(target, opts)
 }

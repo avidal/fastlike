@@ -1,4 +1,4 @@
-package fastlike
+package profile
 
 import (
 	"crypto/sha256"
@@ -22,8 +22,8 @@ const (
 	ProfileModeDeep     ProfileMode = "deep"
 )
 
-// includesTrace reports whether the mode includes the always-on hostcall trace.
-func (m ProfileMode) includesTrace() bool {
+// IncludesTrace reports whether the mode includes the always-on hostcall trace.
+func (m ProfileMode) IncludesTrace() bool {
 	switch m {
 	case ProfileModeTrace, ProfileModeNative, ProfileModeCombined, ProfileModeDeep:
 		return true
@@ -102,7 +102,7 @@ type RequestTrace struct {
 
 	// nativeSamplesMu guards post-completion mutations to NativeSamples.
 	// Trace fields are otherwise written once by the request goroutine
-	// before completeTrace publishes the trace, but NativeSamples can
+	// before CompleteTrace publishes the trace, but NativeSamples can
 	// be appended later by MergeNativeSamples while the UI is iterating
 	// the slice. Encoders and the UI must read NativeSamples through
 	// SnapshotNativeSamples (or take the RLock themselves) to stay
@@ -214,7 +214,7 @@ const (
 	defaultProfileRetain     = 256
 	defaultProfileAsyncGrace = 100 * time.Millisecond
 	defaultProfileBackendCap = 512
-	defaultProfileSpanCap    = 8000
+	DefaultProfileSpanCap    = 8000
 )
 
 // AsyncGrace returns the configured grace period for in-flight async backends.
@@ -226,11 +226,56 @@ func (s *ProfileStore) BackendCap() int { return s.backendCap }
 // UIAddr returns the configured UI bind address. Empty means no listener.
 func (s *ProfileStore) UIAddr() string { return s.uiAddr }
 
+// UIAuthToken returns the configured bearer token, or empty if unset.
+func (s *ProfileStore) UIAuthToken() string { return s.uiAuthToken }
+
+// UIInsecure reports whether the non-loopback-without-auth escape hatch is on.
+func (s *ProfileStore) UIInsecure() bool { return s.uiInsecure }
+
 // Dir returns the configured archive directory, or empty if disk archival is off.
 func (s *ProfileStore) Dir() string { return s.dir }
 
 // Retain returns the configured LRU size for completed traces.
 func (s *ProfileStore) Retain() int { return s.retain }
+
+// SetUIAddr sets the UI bind address. Empty disables the listener.
+func (s *ProfileStore) SetUIAddr(addr string) { s.uiAddr = addr }
+
+// SetUIAuthToken sets the bearer token enforced on the UI endpoints.
+func (s *ProfileStore) SetUIAuthToken(token string) { s.uiAuthToken = token }
+
+// SetUIInsecure allows a non-loopback UI bind without bearer auth.
+func (s *ProfileStore) SetUIInsecure(insecure bool) { s.uiInsecure = insecure }
+
+// SetDir enables disk archival of completed traces under dir.
+func (s *ProfileStore) SetDir(dir string) { s.dir = dir }
+
+// SetRetain sets the LRU size for completed traces. Values <= 0 are clamped
+// to the default.
+func (s *ProfileStore) SetRetain(n int) {
+	if n <= 0 {
+		n = defaultProfileRetain
+	}
+	s.retain = n
+}
+
+// SetAsyncGrace sets the grace period for in-flight async backends. Negative
+// values are clamped to zero, which disables the grace period.
+func (s *ProfileStore) SetAsyncGrace(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	s.asyncGrace = d
+}
+
+// SetBackendCap sets the per-request backend-call cap. Values <= 0 are
+// clamped to the default.
+func (s *ProfileStore) SetBackendCap(n int) {
+	if n <= 0 {
+		n = defaultProfileBackendCap
+	}
+	s.backendCap = n
+}
 
 // Recent returns up to n most recent completed traces, most recent first.
 // Pass n <= 0 to fetch every retained trace.
@@ -271,10 +316,10 @@ func (s *ProfileStore) InFlight() []*RequestTrace {
 	return out
 }
 
-// newRequestTrace allocates a trace, assigns a request id, and registers it
-// as in-flight. The caller owns the returned pointer until completeTrace
+// NewRequestTrace allocates a trace, assigns a request id, and registers it
+// as in-flight. The caller owns the returned pointer until CompleteTrace
 // hands it back to the store.
-func (s *ProfileStore) newRequestTrace(moduleID string, r *http.Request) *RequestTrace {
+func (s *ProfileStore) NewRequestTrace(moduleID string, r *http.Request) *RequestTrace {
 	if s == nil {
 		return nil
 	}
@@ -288,7 +333,7 @@ func (s *ProfileStore) newRequestTrace(moduleID string, r *http.Request) *Reques
 		Method:       r.Method,
 		URL:          r.URL.String(),
 		WallStart:    time.Now(),
-		Spans:        make([]Span, 0, defaultProfileSpanCap),
+		Spans:        make([]Span, 0, DefaultProfileSpanCap),
 		BackendCalls: make([]BackendCall, 0, backendCap),
 	}
 	s.mu.Lock()
@@ -297,9 +342,9 @@ func (s *ProfileStore) newRequestTrace(moduleID string, r *http.Request) *Reques
 	return t
 }
 
-// completeTrace moves a trace from in-flight to completed, evicting the
+// CompleteTrace moves a trace from in-flight to completed, evicting the
 // oldest entry when retention is exceeded.
-func (s *ProfileStore) completeTrace(t *RequestTrace) {
+func (s *ProfileStore) CompleteTrace(t *RequestTrace) {
 	if s == nil || t == nil {
 		return
 	}
@@ -312,27 +357,27 @@ func (s *ProfileStore) completeTrace(t *RequestTrace) {
 	s.mu.Unlock()
 }
 
-// profileCompileConfig is the compile-time profile configuration consumed by
+// CompileConfig is the compile-time profile configuration consumed by
 // Instance.compile. Carried from FastlikeOptions into Fastlike, then passed
 // down to compile() before NewModule is called. Engine-level wiring lives in
 // step 6; step 1 only plumbs the struct so the surface is stable.
-type profileCompileConfig struct {
-	mode ProfileMode
+type CompileConfig struct {
+	Mode ProfileMode
 }
 
-// profileBinding is the per-instance pointer back to the parent Fastlike's
+// Binding is the per-instance pointer back to the parent Fastlike's
 // profile store, captured at instance construction time. nil means profiling
 // is disabled for that instance.
-type profileBinding struct {
-	store       *ProfileStore
-	moduleID    string
-	deepEnabled bool // true when the configured mode is ProfileModeDeep
+type Binding struct {
+	Store       *ProfileStore
+	ModuleID    string
+	DeepEnabled bool // true when the configured mode is ProfileModeDeep
 }
 
-// moduleIDOf returns a short stable identifier for wasmbytes, formed from the
+// ModuleIDOf returns a short stable identifier for wasmbytes, formed from the
 // first eight bytes of its SHA-256 digest. Used to tag traces with the module
 // version they ran against so reloads do not silently merge before/after data.
-func moduleIDOf(wasmbytes []byte) string {
+func ModuleIDOf(wasmbytes []byte) string {
 	sum := sha256.Sum256(wasmbytes)
 	return hex.EncodeToString(sum[:8])
 }
@@ -654,7 +699,7 @@ var hostcallNameLookup = func() map[string]uint16 {
 	return m
 }()
 
-func hostcallNameIndex(name string) uint16 {
+func HostcallNameIndex(name string) uint16 {
 	if idx, ok := hostcallNameLookup[name]; ok {
 		return idx
 	}
