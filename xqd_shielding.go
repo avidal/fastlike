@@ -163,6 +163,7 @@ func (i *Instance) xqd_backend_for_shield(
 
 		resp, err := transport.RoundTrip(r)
 		if err != nil {
+			captureBackendSendError(r.Context(), err)
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = fmt.Fprintf(w, "Shield backend request failed: %v", err)
 			return

@@ -94,6 +94,16 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		}
 	}
 
+	// Go's Transport.ResponseHeaderTimeout (the first-byte timeout) reports this
+	// exact phrase; it maps to http_response_timeout, not the broader
+	// connection_timeout below (which is failing to open the connection).
+	if strings.Contains(errStr, "timeout awaiting response headers") {
+		return &SendErrorDetail{
+			Tag:  SendErrorDetailHttpResponseTimeout,
+			Mask: 0,
+		}
+	}
+
 	// Check for timeout errors (i/o timeout, deadline exceeded, context canceled)
 	if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") || strings.Contains(errStr, "context deadline") {
 		return &SendErrorDetail{
@@ -775,6 +785,9 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	recorder, _ := i.startBackendCall(backend, req.Method, req.URL, 0)
 	req = req.WithContext(recorder.installHTTPTrace(req.Context(), transportPresent))
 
+	var backendErr error
+	req = req.WithContext(markBackendSendError(req.Context(), &backendErr))
+
 	// Use httptest.ResponseRecorder to capture the response from the handler
 	// This provides an http.ResponseWriter interface and allows us to extract the *http.Response
 	// NOTE: The Handler interface is useful for embedders who want to process requests locally
@@ -829,6 +842,12 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	if handlerErr != nil {
 		recorder.completeBackendCall(0, false, handlerErr)
+		return XqdError
+	}
+
+	if backendErr != nil {
+		i.abilog.Printf("req_send: backend send error: %v", backendErr)
+		recorder.completeBackendCall(0, false, backendErr)
 		return XqdError
 	}
 
@@ -939,6 +958,9 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 			return
 		}
 
+		var backendErr error
+		httpReq = httpReq.WithContext(markBackendSendError(httpReq.Context(), &backendErr))
+
 		httpReq.Header = req.Header.Clone()
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
@@ -981,6 +1003,14 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		// Execute the request
 		wr := httptest.NewRecorder()
 		handler.ServeHTTP(wr, httpReq)
+
+		if backendErr != nil {
+			i.abilog.Printf("req_send_async: backend send error: %v", backendErr)
+			rec.completeBackendCall(0, ctx.Err() != nil, backendErr)
+			pr.Complete(nil, backendErr)
+			return
+		}
+
 		resp := wr.Result()
 
 		// Apply auto-decompression if enabled
@@ -1095,6 +1125,9 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 			return
 		}
 
+		var backendErr error
+		httpReq = httpReq.WithContext(markBackendSendError(httpReq.Context(), &backendErr))
+
 		httpReq.Header = req.Header.Clone()
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
@@ -1120,6 +1153,14 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		// Execute request
 		wr := httptest.NewRecorder()
 		handler.ServeHTTP(wr, httpReq)
+
+		if backendErr != nil {
+			i.abilog.Printf("req_send_async_streaming: backend send error: %v", backendErr)
+			rec.completeBackendCall(0, ctx.Err() != nil, backendErr)
+			pr.Complete(nil, backendErr)
+			return
+		}
+
 		resp := wr.Result()
 
 		// Apply auto-decompression if enabled
@@ -1211,13 +1252,23 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 	return XqdStatusOK
 }
 
-// xqd_pending_req_poll_v2 checks if an async request has completed with error detail support.
-// Currently delegates to xqd_pending_req_poll, ignoring the error_detail_out parameter.
-// Returns the same status codes as xqd_pending_req_poll.
+// xqd_pending_req_poll_v2 is xqd_pending_req_poll plus the error_detail out-param:
+// once the request completes it populates error_detail from the outcome, so a
+// backend transport failure surfaces as a send error rather than a 502. While
+// the request is still in flight the detail is left untouched.
 func (i *Instance) xqd_pending_req_poll_v2(phandle int32, error_detail_out int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
-	// For now, ignore error_detail_out and just call the base version
-	// In the future, this could populate detailed error information
-	return i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
+	pr := i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("pending_req_poll_v2: invalid pending handle=%d", phandle)
+		return XqdErrInvalidHandle
+	}
+
+	status := i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
+	if pr.IsReady() {
+		_, err := pr.Wait()
+		_ = i.writeSendErrorDetail(error_detail_out, createErrorDetailFromError(err))
+	}
+	return status
 }
 
 // xqd_pending_req_wait blocks until an async request completes.
@@ -1273,13 +1324,21 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	return XqdStatusOK
 }
 
-// xqd_pending_req_wait_v2 blocks until an async request completes with error detail support.
-// Currently delegates to xqd_pending_req_wait, ignoring the error_detail_out parameter.
-// Returns the same status codes as xqd_pending_req_wait.
+// xqd_pending_req_wait_v2 is xqd_pending_req_wait plus the error_detail out-param:
+// after the request completes it populates error_detail from the outcome, so a
+// backend transport failure surfaces as a send error rather than a 502
+// (createErrorDetailFromError writes the Ok tag on success).
 func (i *Instance) xqd_pending_req_wait_v2(phandle int32, error_detail_out int32, wh_out int32, bh_out int32) int32 {
-	// For now, ignore error_detail_out and just call the base version
-	// In the future, this could populate detailed error information
-	return i.xqd_pending_req_wait(phandle, wh_out, bh_out)
+	pr := i.pendingRequests.Get(int(phandle))
+	if pr == nil {
+		i.abilog.Printf("pending_req_wait_v2: invalid pending handle=%d", phandle)
+		return XqdErrInvalidHandle
+	}
+
+	status := i.xqd_pending_req_wait(phandle, wh_out, bh_out)
+	_, err := pr.Wait()
+	_ = i.writeSendErrorDetail(error_detail_out, createErrorDetailFromError(err))
+	return status
 }
 
 // xqd_pending_req_select blocks until the first of multiple async requests completes.
@@ -1590,6 +1649,9 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		}
 	}
 
+	var backendErr error
+	req = req.WithContext(markBackendSendError(req.Context(), &backendErr))
+
 	// Execute the request
 	wr := httptest.NewRecorder()
 
@@ -1629,6 +1691,14 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		i.abilog.Printf("req_send_v2: waiting without context (ds_context is nil)")
 		<-done
 		i.resumeExecution()
+	}
+
+	if backendErr != nil {
+		i.abilog.Printf("req_send_v2: backend send error: %v", backendErr)
+		_ = i.writeSendErrorDetail(error_detail_out, createErrorDetailFromError(backendErr))
+		i.memory.PutUint32(HandleInvalid, int64(wh_out))
+		i.memory.PutUint32(HandleInvalid, int64(bh_out))
+		return XqdError
 	}
 
 	w := wr.Result()
@@ -1968,6 +2038,7 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name
 		// Use the configured transport to make the actual request
 		resp, err := transport.RoundTrip(r)
 		if err != nil {
+			captureBackendSendError(r.Context(), err)
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
 			return

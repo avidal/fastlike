@@ -27,6 +27,27 @@ func markSyntheticFailure(ctx context.Context, flag *bool) context.Context {
 	return context.WithValue(ctx, syntheticFailureCtxKey{}, flag)
 }
 
+// backendSendErrorCtxKey is the context key a fastlike-managed backend handler
+// uses to hand a transport failure back to the send hostcall, which surfaces it
+// to the guest as a send error rather than a synthetic 502. Unexported so
+// embedders cannot collide.
+type backendSendErrorCtxKey struct{}
+
+// markBackendSendError installs errp on ctx for a backend handler to record a
+// transport failure into, to be read back after the handler returns.
+func markBackendSendError(ctx context.Context, errp *error) context.Context {
+	return context.WithValue(ctx, backendSendErrorCtxKey{}, errp)
+}
+
+// captureBackendSendError records err on the pointer installed by
+// markBackendSendError. With no pointer installed (e.g. an embedder calling the
+// handler directly) it is a no-op and the handler's synthetic 502 stands.
+func captureBackendSendError(ctx context.Context, err error) {
+	if p, ok := ctx.Value(backendSendErrorCtxKey{}).(*error); ok && p != nil {
+		*p = err
+	}
+}
+
 // Backend represents a complete backend configuration with all introspectable properties
 type Backend struct {
 	// Name is the identifier for this backend
