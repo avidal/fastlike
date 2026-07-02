@@ -47,7 +47,9 @@ func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 	}
 
 	i.abilog.Printf("resp_status_get: handle=%d status=%d", handle, w.StatusCode)
-	i.memory.PutUint32(uint32(w.StatusCode), int64(status_out))
+	// http_status is a u16 in the ABI; a 4-byte write would clobber the two
+	// bytes following the guest's out-variable.
+	i.memory.PutUint16(uint16(w.StatusCode), int64(status_out))
 	return XqdStatusOK
 }
 
