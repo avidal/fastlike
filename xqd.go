@@ -79,6 +79,19 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	return XqdStatusOK
 }
 
+// writeDownstreamHeaders copies headers onto the downstream response,
+// suppressing Go's content sniffing when they carry no Content-Type: a
+// Compute service sends exactly the headers the guest set, so a response
+// without one must not grow a synthetic one.
+func (i *Instance) writeDownstreamHeaders(headers http.Header) {
+	for k, v := range headers {
+		i.ds_response.Header()[k] = v
+	}
+	if _, ok := headers["Content-Type"]; !ok {
+		i.ds_response.Header()["Content-Type"] = nil
+	}
+}
+
 // xqd_resp_send_downstream sends the response and body to the downstream client.
 // When stream is 0, copies the body immediately. When stream is non-zero, sends
 // headers immediately and redirects the body handle's writer to the response so
@@ -105,10 +118,7 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 
 	i.abilog.Printf("resp_send_downstream: stream=%d framing_mode=%d effective_mode=%d", stream, w.framingHeadersMode, effectiveMode)
 
-	for k, v := range headers {
-		i.ds_response.Header()[k] = v
-	}
-
+	i.writeDownstreamHeaders(headers)
 	i.ds_response.WriteHeader(w.StatusCode)
 
 	if stream != 0 {
@@ -176,9 +186,7 @@ func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
 	})
 	i.abilog.Printf("send_downstream_pending: status=%d effective_mode=%d", resp.StatusCode, effectiveMode)
 
-	for k, v := range headers {
-		i.ds_response.Header()[k] = v
-	}
+	i.writeDownstreamHeaders(headers)
 	i.ds_response.WriteHeader(resp.StatusCode)
 
 	defer func() { _ = resp.Body.Close() }()

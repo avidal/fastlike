@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // SendErrorDetail represents the error details structure for send_v2/send_v3
@@ -765,17 +768,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		}
 	}
 
-	// If the backend is geolocation, we select the geobackend explicitly
-	var handler http.Handler
-	var transportPresent bool
-	if backend == "geolocation" {
-		handler = geoHandler(i.geolookup)
-	} else {
-		handler = i.getBackendHandler(backend)
-		if b := i.getBackend(backend); b != nil && b.Transport != nil {
-			transportPresent = true
-		}
-	}
+	handler, transportPresent := i.resolveBackendHandler(backend)
 
 	// Record the backend call against the active trace (no-op when
 	// profiling is disabled). The recorder owns the BackendCall slot
@@ -927,13 +920,14 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	// Create a pending request handle
 	phid, pendingReq := i.pendingRequests.New()
 
+	// Resolve the handler before launching the goroutine: dynamic backends
+	// are request-scoped, and reset() may drop them while an abandoned
+	// async send is still running.
+	handler, transportPresent := i.resolveBackendHandler(backend)
+
 	// Allocate the BackendCall slot synchronously before launching the
 	// goroutine so the recorder owns the slot independent of goroutine
 	// scheduling.
-	transportPresent := false
-	if b := i.getBackend(backend); b != nil && b.Transport != nil {
-		transportPresent = true
-	}
 	recorder, _ := i.startBackendCall(backend, r.Method, r.URL, uint32(phid))
 	pendingReq.recorder = recorder
 
@@ -941,7 +935,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	// recover guards against a handler panic — without it, the
 	// BackendCall slot would stay Incomplete forever and pr.Complete
 	// would never fire (leaking goroutines that observe pr.done).
-	go func(ctx context.Context, req *http.Request, body *BodyHandle, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
 		defer func() {
 			if rv := recover(); rv != nil {
 				err := fmt.Errorf("backend handler panic: %v", rv)
@@ -992,14 +986,6 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 			}
 		}
 
-		// Get the backend handler
-		var handler http.Handler
-		if backendName == "geolocation" {
-			handler = geoHandler(i.geolookup)
-		} else {
-			handler = i.getBackendHandler(backendName)
-		}
-
 		// Execute the request
 		wr := httptest.NewRecorder()
 		handler.ServeHTTP(wr, httpReq)
@@ -1024,7 +1010,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, b, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
+	}(i.ds_context, r.Request, b, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1083,17 +1069,18 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	// Create pending request handle
 	phid, pendingReq := i.pendingRequests.New()
 
-	transportPresent := false
-	if bk := i.getBackend(backend); bk != nil && bk.Transport != nil {
-		transportPresent = true
-	}
+	// Resolve the handler before launching the goroutine: dynamic backends
+	// are request-scoped, and reset() may drop them while an abandoned
+	// async send is still running.
+	handler, transportPresent := i.resolveBackendHandler(backend)
+
 	recorder, _ := i.startBackendCall(backend, r.Method, r.URL, uint32(phid))
 	pendingReq.recorder = recorder
 
 	// Single goroutine: buffer body writes, then send the request.
 	// defer recover guards against a handler panic — same rationale
 	// as xqd_req_send_async.
-	go func(ctx context.Context, req *http.Request, backendName string, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+	go func(ctx context.Context, req *http.Request, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
 		defer close(b.streamingDone)
 		defer func() {
 			if rv := recover(); rv != nil {
@@ -1142,14 +1129,6 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		// Apply framing mode
 		validateAndApplyFramingMode(httpReq.Header, framingMode, nil)
 
-		// Get backend handler
-		var handler http.Handler
-		if backendName == "geolocation" {
-			handler = geoHandler(i.geolookup)
-		} else {
-			handler = i.getBackendHandler(backendName)
-		}
-
 		// Execute request
 		wr := httptest.NewRecorder()
 		handler.ServeHTTP(wr, httpReq)
@@ -1170,7 +1149,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Mark pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, backend, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
+	}(i.ds_context, r.Request, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1629,13 +1608,7 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		}
 	}
 
-	// Get the backend handler
-	var handler http.Handler
-	if backend == "geolocation" {
-		handler = geoHandler(i.geolookup)
-	} else {
-		handler = i.getBackendHandler(backend)
-	}
+	handler, _ := i.resolveBackendHandler(backend)
 
 	// Check if context is already cancelled before making the request
 	if i.ds_context != nil {
@@ -1863,199 +1836,268 @@ func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings 
 	return XqdStatusOK
 }
 
-// xqd_req_register_dynamic_backend registers a backend dynamically at runtime
-// This function reads the backend configuration from guest memory and creates a new backend
-func (i *Instance) xqd_req_register_dynamic_backend(name_prefix_addr int32, name_prefix_size int32, target_addr int32, target_size int32, backend_config_mask int32, backend_config_addr int32) int32 {
-	i.abilog.Printf("req_register_dynamic_backend: name_prefix_addr=%d target_addr=%d mask=%d", name_prefix_addr, target_addr, backend_config_mask)
+// readDynamicBackendConfig reads the guest's dynamic_backend_config struct
+// field by field (little-endian, all fields 32 bits wide on wasm32).
+func (i *Instance) readDynamicBackendConfig(addr int64) DynamicBackendConfig {
+	var config DynamicBackendConfig
+	config.HostOverride = int32(i.memory.Uint32(addr + 0))
+	config.HostOverrideLen = i.memory.Uint32(addr + 4)
+	config.ConnectTimeoutMs = i.memory.Uint32(addr + 8)
+	config.FirstByteTimeoutMs = i.memory.Uint32(addr + 12)
+	config.BetweenBytesTimeoutMs = i.memory.Uint32(addr + 16)
+	config.SSLMinVersion = i.memory.Uint32(addr + 20)
+	config.SSLMaxVersion = i.memory.Uint32(addr + 24)
+	config.CertHostname = int32(i.memory.Uint32(addr + 28))
+	config.CertHostnameLen = i.memory.Uint32(addr + 32)
+	config.CACert = int32(i.memory.Uint32(addr + 36))
+	config.CACertLen = i.memory.Uint32(addr + 40)
+	config.Ciphers = int32(i.memory.Uint32(addr + 44))
+	config.CiphersLen = i.memory.Uint32(addr + 48)
+	config.SNIHostname = int32(i.memory.Uint32(addr + 52))
+	config.SNIHostnameLen = i.memory.Uint32(addr + 56)
+	config.ClientCertificate = int32(i.memory.Uint32(addr + 60))
+	config.ClientCertificateLen = i.memory.Uint32(addr + 64)
+	config.ClientKey = i.memory.Uint32(addr + 68)
+	config.HTTPKeepaliveTimeMs = i.memory.Uint32(addr + 72)
+	config.TCPKeepaliveEnable = i.memory.Uint32(addr + 76)
+	config.TCPKeepaliveIntervalSecs = i.memory.Uint32(addr + 80)
+	config.TCPKeepaliveProbes = i.memory.Uint32(addr + 84)
+	config.TCPKeepaliveTimeSecs = i.memory.Uint32(addr + 88)
+	config.MaxConnections = i.memory.Uint32(addr + 92)
+	config.MaxUse = i.memory.Uint32(addr + 96)
+	config.MaxLifetimeMs = i.memory.Uint32(addr + 100)
+	return config
+}
 
-	// Check for reserved bit - if set, return error
-	if (uint32(backend_config_mask) & BackendConfigOptionsReserved) != 0 {
+// readGuestString reads a length-prefixed string field of a dynamic backend
+// config from guest memory, applying viceroy's validation rules: a zero
+// length, a length above maxLen, or invalid UTF-8 fails registration.
+func (i *Instance) readGuestString(field string, ptr int32, length uint32, maxLen uint32) (string, bool) {
+	if length > 0 && length <= maxLen {
+		buf := make([]byte, length)
+		if _, err := i.memory.ReadAt(buf, int64(ptr)); err == nil && utf8.Valid(buf) {
+			return string(buf), true
+		}
+	}
+	i.abilog.Printf("req_register_dynamic_backend: invalid %s", field)
+	return "", false
+}
+
+// validHeaderValue reports whether s is a legal HTTP header value, using the
+// same byte rules hyper applies when viceroy builds the override header.
+func validHeaderValue(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 && s[i] != '\t' || s[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// parseBackendTarget interprets a dynamic backend target, which the ABI
+// defines as an authority: a hostname or IP address with an optional port,
+// never a full URL. The scheme comes from the use_ssl option.
+func parseBackendTarget(scheme, target string) (*url.URL, error) {
+	if target == "" || strings.ContainsAny(target, "/?#@ \t") {
+		return nil, fmt.Errorf("target %q is not a host[:port] authority", target)
+	}
+	u, err := url.Parse(scheme + "://" + target)
+	if err != nil {
+		return nil, err
+	}
+	if u.Host != target || u.Hostname() == "" {
+		return nil, fmt.Errorf("target %q is not a host[:port] authority", target)
+	}
+	return u, nil
+}
+
+// xqd_req_register_dynamic_backend registers a backend at runtime, following
+// viceroy's semantics: the target is an authority routed over https when the
+// use_ssl option is set, unknown mask bits and malformed option strings fail
+// registration, and a name collision with any existing backend is an error.
+func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size int32, target_addr int32, target_size int32, backend_config_mask int32, backend_config_addr int32) int32 {
+	mask := uint32(backend_config_mask)
+
+	if mask&BackendConfigOptionsReserved != 0 {
 		i.abilog.Printf("req_register_dynamic_backend: reserved bit is set")
 		return XqdErrInvalidArgument
 	}
-
-	// Read the backend name prefix
-	namePrefix := make([]byte, name_prefix_size)
-	_, err := i.memory.ReadAt(namePrefix, int64(name_prefix_addr))
-	if err != nil {
-		i.abilog.Printf("req_register_dynamic_backend: failed to read name prefix")
-		return XqdError
+	if unknown := mask &^ backendConfigOptionsKnown; unknown != 0 {
+		i.abilog.Printf("req_register_dynamic_backend: unknown mask bits %#x", unknown)
+		return XqdErrInvalidArgument
 	}
 
-	// Read the target URL
-	targetBuf := make([]byte, target_size)
-	_, err = i.memory.ReadAt(targetBuf, int64(target_addr))
+	backendName, err := i.readBackendName(name_addr, name_size)
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: failed to read name")
+		return XqdError
+	}
+	target, err := i.readBackendName(target_addr, target_size)
 	if err != nil {
 		i.abilog.Printf("req_register_dynamic_backend: failed to read target")
 		return XqdError
 	}
-
-	targetURL := string(targetBuf)
-	backendName := string(namePrefix)
-
-	i.abilog.Printf("req_register_dynamic_backend: name=%q target=%q", backendName, targetURL)
-
-	// Check if backend already exists
-	if i.backendExists(backendName) {
-		i.abilog.Printf("req_register_dynamic_backend: backend %q already exists", backendName)
+	if !utf8.ValidString(backendName) || !utf8.ValidString(target) {
+		i.abilog.Printf("req_register_dynamic_backend: name or target is not UTF-8")
 		return XqdErrInvalidArgument
 	}
 
-	// Read the dynamic backend config struct from memory
-	var config DynamicBackendConfig
+	i.abilog.Printf("req_register_dynamic_backend: name=%q target=%q mask=%#x", backendName, target, mask)
 
-	// Read the entire struct (it's laid out contiguously in memory)
-	// The struct is 96 bytes = 4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4+4
-	configBuf := make([]byte, 96)
-	_, err = i.memory.ReadAt(configBuf, int64(backend_config_addr))
-	if err != nil {
-		i.abilog.Printf("req_register_dynamic_backend: failed to read backend config")
+	if i.backendExists(backendName) {
+		i.abilog.Printf("req_register_dynamic_backend: backend %q already exists", backendName)
 		return XqdError
 	}
 
-	// Parse the struct fields manually (little-endian)
-	offset := 0
-	config.HostOverride = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.HostOverrideLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.ConnectTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.FirstByteTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.BetweenBytesTimeoutMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.SSLMinVersion = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.SSLMaxVersion = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.CertHostname = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.CertHostnameLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.CACert = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.CACertLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.Ciphers = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.CiphersLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.SNIHostname = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.SNIHostnameLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.ClientCertificate = int32(i.memory.Uint32(int64(backend_config_addr) + int64(offset)))
-	offset += 4
-	config.ClientCertificateLen = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.ClientKey = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.HTTPKeepaliveTimeMs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.TCPKeepaliveEnable = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.TCPKeepaliveIntervalSecs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.TCPKeepaliveProbes = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
-	offset += 4
-	config.TCPKeepaliveTimeSecs = i.memory.Uint32(int64(backend_config_addr) + int64(offset))
+	config := i.readDynamicBackendConfig(int64(backend_config_addr))
 
-	// Parse the target URL
-	u, err := url.Parse(targetURL)
-	if err != nil {
-		i.abilog.Printf("req_register_dynamic_backend: failed to parse target URL %q: %v", targetURL, err)
+	// Wiggle validates enum fields while reading the config struct, so an
+	// out-of-range TLS version fails registration under viceroy even when
+	// its option bit is unset.
+	if config.SSLMinVersion > TLSv13 || config.SSLMaxVersion > TLSv13 {
+		i.abilog.Printf("req_register_dynamic_backend: invalid TLS version")
 		return XqdErrInvalidArgument
 	}
 
-	// Create a new Backend struct
+	scheme := "http"
+	if mask&BackendConfigOptionsUseSSL != 0 {
+		scheme = "https"
+	}
+
+	u, err := parseBackendTarget(scheme, target)
+	if err != nil {
+		i.abilog.Printf("req_register_dynamic_backend: %v", err)
+		return XqdErrInvalidArgument
+	}
+
 	backend := &Backend{
 		Name:      backendName,
 		URL:       u,
 		IsDynamic: true,
-		Handler:   nil, // Will use defaultBackend or create a handler
+		UseSSL:    scheme == "https",
 	}
 
-	// Apply configuration options based on the mask
-	if (uint32(backend_config_mask) & BackendConfigOptionsHostOverride) != 0 {
-		if config.HostOverrideLen > 0 && config.HostOverrideLen <= 1024 {
-			hostOverrideBuf := make([]byte, config.HostOverrideLen)
-			_, err := i.memory.ReadAt(hostOverrideBuf, int64(config.HostOverride))
-			if err == nil {
-				backend.OverrideHost = string(hostOverrideBuf)
-				i.abilog.Printf("req_register_dynamic_backend: override_host=%q", backend.OverrideHost)
+	if mask&BackendConfigOptionsHostOverride != 0 {
+		hostOverride, ok := i.readGuestString("host override", config.HostOverride, config.HostOverrideLen, 1024)
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		if !validHeaderValue(hostOverride) {
+			i.abilog.Printf("req_register_dynamic_backend: invalid host override")
+			return XqdErrInvalidArgument
+		}
+		backend.OverrideHost = hostOverride
+	}
+
+	if mask&BackendConfigOptionsConnectTimeout != 0 {
+		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
+	}
+	if mask&BackendConfigOptionsFirstByteTimeout != 0 {
+		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
+	}
+	if mask&BackendConfigOptionsBetweenBytesTimeout != 0 {
+		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
+	}
+	if mask&BackendConfigOptionsSSLMinVersion != 0 {
+		backend.SSLMinVersion = config.SSLMinVersion
+		backend.SSLMinVersionSet = true
+	}
+	if mask&BackendConfigOptionsSSLMaxVersion != 0 {
+		backend.SSLMaxVersion = config.SSLMaxVersion
+		backend.SSLMaxVersionSet = true
+	}
+
+	if mask&BackendConfigOptionsCertHostname != 0 {
+		certHostname, ok := i.readGuestString("cert hostname", config.CertHostname, config.CertHostnameLen, 1024)
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		backend.CertHostname = certHostname
+	}
+
+	// Like viceroy, a CA certificate is only honored for backends that
+	// actually speak TLS.
+	if backend.UseSSL && mask&BackendConfigOptionsCACert != 0 {
+		caPEM, ok := i.readGuestString("CA certificate", config.CACert, config.CACertLen, 64*1024)
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(caPEM)) {
+			i.abilog.Printf("req_register_dynamic_backend: CA certificate is not valid PEM")
+			return XqdErrInvalidArgument
+		}
+		backend.CACerts = pool
+	}
+
+	if mask&BackendConfigOptionsCiphers != 0 {
+		ciphers, ok := i.readGuestString("cipher list", config.Ciphers, config.CiphersLen, 1024)
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		// Go's TLS stack chooses its own cipher suites, so the list is
+		// recorded for introspection but not enforced.
+		backend.Ciphers = ciphers
+	}
+
+	if mask&BackendConfigOptionsSNIHostname != 0 {
+		// An explicitly empty SNI hostname turns the extension off entirely.
+		if config.SNIHostnameLen == 0 {
+			backend.DisableSNI = true
+		} else {
+			sniHostname, ok := i.readGuestString("SNI hostname", config.SNIHostname, config.SNIHostnameLen, 1024)
+			if !ok {
+				return XqdErrInvalidArgument
 			}
+			backend.SNIHostname = sniHostname
 		}
 	}
 
-	if (uint32(backend_config_mask) & BackendConfigOptionsConnectTimeout) != 0 {
-		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
+	if mask&BackendConfigOptionsClientCert != 0 {
+		certPEM, ok := i.readGuestString("client certificate", config.ClientCertificate, config.ClientCertificateLen, 64*1024)
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		secret := i.secretHandles.Get(int(config.ClientKey))
+		if secret == nil {
+			i.abilog.Printf("req_register_dynamic_backend: invalid client key secret handle %d", config.ClientKey)
+			return XqdErrInvalidArgument
+		}
+		pair, err := tls.X509KeyPair([]byte(certPEM), secret.Plaintext())
+		if err != nil {
+			i.abilog.Printf("req_register_dynamic_backend: bad client certificate: %v", err)
+			return XqdErrInvalidArgument
+		}
+		backend.ClientCert = &pair
 	}
 
-	if (uint32(backend_config_mask) & BackendConfigOptionsFirstByteTimeout) != 0 {
-		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
-	}
+	backend.DontPool = mask&BackendConfigOptionsDontPool != 0
+	backend.GRPC = mask&BackendConfigOptionsGRPC != 0
 
-	if (uint32(backend_config_mask) & BackendConfigOptionsBetweenBytesTimeout) != 0 {
-		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
-	}
-
-	if (uint32(backend_config_mask) & BackendConfigOptionsUseSSL) != 0 {
-		backend.UseSSL = true
-	}
-
-	if (uint32(backend_config_mask) & BackendConfigOptionsSSLMinVersion) != 0 {
-		backend.SSLMinVersion = config.SSLMinVersion
-	}
-
-	if (uint32(backend_config_mask) & BackendConfigOptionsSSLMaxVersion) != 0 {
-		backend.SSLMaxVersion = config.SSLMaxVersion
-	}
-
-	if (uint32(backend_config_mask) & BackendConfigOptionsKeepalive) != 0 {
+	if mask&BackendConfigOptionsKeepalive != 0 {
 		backend.HTTPKeepaliveTimeMs = config.HTTPKeepaliveTimeMs
+		backend.TCPKeepaliveSet = true
 		backend.TCPKeepaliveEnable = config.TCPKeepaliveEnable != 0
 		backend.TCPKeepaliveTimeMs = config.TCPKeepaliveTimeSecs * 1000
 		backend.TCPKeepaliveIntervalMs = config.TCPKeepaliveIntervalSecs * 1000
 		backend.TCPKeepaliveProbes = config.TCPKeepaliveProbes
 	}
 
-	// Create a transport with TLS and timeout settings applied
-	transport := backend.CreateTransport()
+	if mask&BackendConfigOptionsPoolingLimits != 0 {
+		backend.MaxConnections = config.MaxConnections
+		backend.MaxUse = config.MaxUse
+		backend.MaxLifetimeMs = config.MaxLifetimeMs
+	}
 
-	// Create a simple http.Handler for the backend
-	backend.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Update the request URL to point to the backend
-		r.URL.Scheme = backend.URL.Scheme
-		r.URL.Host = backend.URL.Host
+	// The prefer_ipv4 and healthcheck options are accepted but have no
+	// local behavior; Go's dialer resolves addresses on its own and local
+	// backends have no health-checking.
 
-		// Apply host override if configured
-		if backend.OverrideHost != "" {
-			r.Host = backend.OverrideHost
-			r.Header.Set("Host", backend.OverrideHost)
-		}
+	backend.Handler = backend.newTransportHandler()
 
-		// Use the configured transport to make the actual request
-		resp, err := transport.RoundTrip(r)
-		if err != nil {
-			captureBackendSendError(r.Context(), err)
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
-			return
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	})
-
-	// Register the backend
 	i.addBackend(backendName, backend)
 
-	i.abilog.Printf("req_register_dynamic_backend: successfully registered backend %q", backendName)
+	i.abilog.Printf("req_register_dynamic_backend: registered backend %q", backendName)
 	return XqdStatusOK
 }
 
