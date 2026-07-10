@@ -2,8 +2,6 @@ package fastlike
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 )
 
@@ -155,27 +153,7 @@ func (i *Instance) xqd_backend_for_shield(
 		i.abilog.Printf("backend_for_shield: first_byte_timeout_ms=%d", backend.FirstByteTimeoutMs)
 	}
 
-	// Create a transport-backed proxy handler (same pattern as dynamic backend registration)
-	transport := backend.CreateTransport()
-	backend.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.URL.Scheme = backend.URL.Scheme
-		r.URL.Host = backend.URL.Host
-
-		resp, err := transport.RoundTrip(r)
-		if err != nil {
-			captureBackendSendError(r.Context(), err)
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = fmt.Fprintf(w, "Shield backend request failed: %v", err)
-			return
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		for k, v := range resp.Header {
-			w.Header()[k] = v
-		}
-		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body)
-	})
+	backend.Handler = backend.newTransportHandler()
 
 	// Write the backend name to the output buffer
 	nameBytes := []byte(backendName)

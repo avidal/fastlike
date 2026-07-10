@@ -128,12 +128,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(backends) == 0 {
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "at least one -backend is required\n")
-		flag.Usage()
-		os.Exit(1)
-	}
-
+	// No -backend is fine: guests can register their backends dynamically
+	// at request time, in which case unknown backend names still get the
+	// default 502 handler.
 	opts := []fastlike.Option{}
 
 	for name, backend := range backends {

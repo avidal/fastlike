@@ -309,9 +309,7 @@ func (i *Instance) xqd_backend_get_ssl_min_version(backend_addr int32, backend_s
 		return XqdErrInvalidArgument
 	}
 
-	// Return the configured min version (or 0 if not set)
-	// For local testing, SSL version information is not available
-	if b.SSLMinVersion == 0 {
+	if !b.sslMinConfigured() {
 		return XqdErrUnsupported
 	}
 
@@ -337,9 +335,7 @@ func (i *Instance) xqd_backend_get_ssl_max_version(backend_addr int32, backend_s
 		return XqdErrInvalidArgument
 	}
 
-	// Return the configured max version (or 0 if not set)
-	// For local testing, SSL version information is not available
-	if b.SSLMaxVersion == 0 {
+	if !b.sslMaxConfigured() {
 		return XqdErrUnsupported
 	}
 

@@ -181,7 +181,34 @@ const (
 	BackendConfigOptionsClientCert          uint32 = 1 << 13
 	BackendConfigOptionsGRPC                uint32 = 1 << 14
 	BackendConfigOptionsKeepalive           uint32 = 1 << 15
+	BackendConfigOptionsPoolingLimits       uint32 = 1 << 16
+	BackendConfigOptionsPreferIPv4          uint32 = 1 << 17
+	BackendConfigOptionsHealthcheck         uint32 = 1 << 18
 )
+
+// backendConfigOptionsKnown is every mask bit fastlike understands, mirroring
+// viceroy's backend_config_options flags.
+// A mask with bits outside this set indicates bad data or an ABI mismatch,
+// and registration fails the same way it does under viceroy.
+const backendConfigOptionsKnown = BackendConfigOptionsReserved |
+	BackendConfigOptionsHostOverride |
+	BackendConfigOptionsConnectTimeout |
+	BackendConfigOptionsFirstByteTimeout |
+	BackendConfigOptionsBetweenBytesTimeout |
+	BackendConfigOptionsUseSSL |
+	BackendConfigOptionsSSLMinVersion |
+	BackendConfigOptionsSSLMaxVersion |
+	BackendConfigOptionsCertHostname |
+	BackendConfigOptionsCACert |
+	BackendConfigOptionsCiphers |
+	BackendConfigOptionsSNIHostname |
+	BackendConfigOptionsDontPool |
+	BackendConfigOptionsClientCert |
+	BackendConfigOptionsGRPC |
+	BackendConfigOptionsKeepalive |
+	BackendConfigOptionsPoolingLimits |
+	BackendConfigOptionsPreferIPv4 |
+	BackendConfigOptionsHealthcheck
 
 // TLS version constants
 const (

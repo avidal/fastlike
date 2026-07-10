@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -74,7 +75,11 @@ type Instance struct {
 	// Created by body_downstream_get, used by functions like original_header_names_get
 	downstreamRequestHandle int32
 
-	// Backend configuration for subrequests
+	// Backend configuration for subrequests.
+	// backendsMu guards the map: dynamic backends are registered by the
+	// guest, removed by reset(), and looked up by abandoned async send
+	// goroutines that can outlive the request.
+	backendsMu     sync.RWMutex
 	backends       map[string]*Backend            // Named backends registered by the user
 	defaultBackend func(name string) http.Handler // Fallback when backend not found (default: 502)
 
@@ -278,6 +283,27 @@ func (i *Instance) reset() {
 	*i.cacheReplaceHandles = CacheReplaceHandles{}
 	*i.aclHandles = AclHandles{}
 	*i.asyncItems = AsyncItemHandles{}
+
+	// Dynamic backends are request-scoped: a pooled instance must not carry
+	// them into the next request, where re-registration under the same name
+	// has to succeed like it does on a fresh production instance.
+	// Idle connections are closed after releasing the lock: closing walks the
+	// pool and issues a syscall per connection, and the map is read by
+	// abandoned async send goroutines that must not block on it.
+	var transports []*http.Transport
+	i.backendsMu.Lock()
+	for name, b := range i.backends {
+		if b.IsDynamic {
+			if b.Transport != nil {
+				transports = append(transports, b.Transport)
+			}
+			delete(i.backends, name)
+		}
+	}
+	i.backendsMu.Unlock()
+	for _, t := range transports {
+		t.CloseIdleConnections()
+	}
 
 	// Clear downstream request/response state
 	i.ds_response = nil
