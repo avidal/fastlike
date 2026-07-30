@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -193,3 +195,77 @@ func TestBackendIsHealthy_UnknownBackend(t *testing.T) {
 }
 
 func ptrU8(v uint8) *uint8 { return &v }
+
+func TestOverrideHostHandler(t *testing.T) {
+	var got string
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Host
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "http://guest.example.com/", nil)
+	OverrideHostHandler(inner, "origin.example.com").ServeHTTP(httptest.NewRecorder(), r)
+
+	if got != "origin.example.com" {
+		t.Errorf("forwarded Host = %q, want %q", got, "origin.example.com")
+	}
+	if r.Host != "guest.example.com" {
+		t.Errorf("source Host = %q, want %q", r.Host, "guest.example.com")
+	}
+}
+
+func TestOverrideHostHandlerEmpty(t *testing.T) {
+	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	if got := OverrideHostHandler(inner, ""); reflect.ValueOf(got).Pointer() != reflect.ValueOf(inner).Pointer() {
+		t.Error("an empty override wrapped the handler, want it returned untouched")
+	}
+}
+
+// A backend registered with a handler of its own still has to honor
+// OverrideHost, which only the fastlike-managed transport handler used to do.
+func TestAddBackendAppliesOverrideHost(t *testing.T) {
+	var got string
+	i := &Instance{backends: map[string]*Backend{}}
+	i.addBackend("origin", &Backend{
+		Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			got = r.Host
+		}),
+		OverrideHost: "origin.example.com",
+	})
+
+	b := i.getBackend("origin")
+	b.Handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://guest.example.com/", nil))
+
+	if got != "origin.example.com" {
+		t.Errorf("forwarded Host = %q, want %q", got, "origin.example.com")
+	}
+	if b.URL == nil || b.URL.Host != "origin" {
+		t.Errorf("URL = %v, want http://origin synthesized from the name", b.URL)
+	}
+}
+
+// A fastlike-managed backend builds its handler before registration, so the
+// override has to survive the wrapping addBackend does around it.
+func TestManagedBackendSendsOverrideHost(t *testing.T) {
+	var got string
+	origin := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.Host
+	}))
+	defer origin.Close()
+
+	u, err := url.Parse(origin.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	b := &Backend{URL: u, OverrideHost: "vhost.example.org", IsDynamic: true}
+	b.Handler = b.newTransportHandler()
+
+	i := &Instance{backends: map[string]*Backend{}}
+	i.addBackend("origin", b)
+	i.getBackend("origin").Handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "http://guest.example.com/", nil))
+
+	if got != "vhost.example.org" {
+		t.Errorf("upstream saw Host = %q, want %q", got, "vhost.example.org")
+	}
+}

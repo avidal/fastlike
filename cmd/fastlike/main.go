@@ -51,7 +51,7 @@ func main() {
 	flag.Var(&backends, "backend", "<name=address[@uptime%]> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000). Append @N (0..100) to simulate reliability, e.g. -backend api=localhost:2000@50.")
 	flag.Var(&backends, "b", "alias for -backend")
 	overrideHosts := make(overrideHostFlags)
-	flag.Var(&overrideHosts, "override-host", "<name=host> overriding the Host header sent to a backend")
+	flag.Var(&overrideHosts, "override-host", "<name=host> replacing the Host header sent to a backend. Use an empty name to target the catch-all backend (ex: -override-host origin.example.com). The name must match a configured -backend.")
 
 	dictionaries := make(dictionaryFlags)
 	flag.Var(&dictionaries, "dictionary", "<name=file.json> specifying dictionaries. The JSON file supplied must only contain string values.")
@@ -133,56 +133,10 @@ func main() {
 	// No -backend is fine: guests can register their backends dynamically
 	// at request time, in which case unknown backend names still get the
 	// default 502 handler.
-	opts := []fastlike.Option{}
-
-	for name, backend := range backends {
-		proxy := backend.proxy
-		overrideHost := overrideHosts[name]
-		if overrideHost != "" {
-			proxy = withOverrideHost(proxy, overrideHost)
-		}
-		if name == "" {
-			// Catch-all backends remain plain (no traced transport); the
-			// default-backend factory pattern does not surface a transport
-			// fastlike can observe.
-			if backend.uptime != nil {
-				opts = append(opts, fastlike.WithUnreliableDefaultBackend(func(_ string) http.Handler {
-					return proxy
-				}, *backend.uptime))
-			} else {
-				opts = append(opts, fastlike.WithDefaultBackend(func(_ string) http.Handler {
-					return proxy
-				}))
-			}
-		} else {
-			// Named backends use WithBackendTraced unless extra configuration
-			// is required. Both paths retain cliTransport so the profile recorder
-			// gets DNS / connect / TLS / TTFB phase data from httptrace.ClientTrace.
-			if backend.uptime != nil || overrideHost != "" {
-				// WithBackendConfig does NOT synthesize a URL from the
-				// name the way WithBackend / WithBackendTraced do, so we
-				// have to set it explicitly here. Without it, every
-				// fastly_backend_get_host / _get_port / _is_ssl hostcall
-				// crashes on a nil *url.URL dereference. Mirror the
-				// http://name parse from options.go's other Backend
-				// constructors so the fallback string ('localhost') is
-				// identical across paths.
-				u, err := url.Parse("http://" + name)
-				if err != nil {
-					u, _ = url.Parse("http://localhost")
-				}
-				opts = append(opts, fastlike.WithBackendConfig(&fastlike.Backend{
-					Name:          name,
-					URL:           u,
-					Handler:       proxy,
-					Transport:     cliTransport,
-					UptimePercent: backend.uptime,
-					OverrideHost:  overrideHost,
-				}))
-			} else {
-				opts = append(opts, fastlike.WithBackendTraced(name, proxy, cliTransport))
-			}
-		}
+	opts, err := buildBackendOptions(backends, overrideHosts)
+	if err != nil {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "%s\n", err)
+		os.Exit(1)
 	}
 
 	for name, dictionary := range dictionaries {
@@ -305,34 +259,111 @@ type backend struct {
 	uptime  *uint8
 }
 
-// overrideHostFlags maps backend names to their outbound Host header overrides.
+// overrideHostFlags maps backend names to their outbound Host header
+// overrides. An empty name addresses the catch-all backend, the same way
+// -backend reads a value that carries no name.
 type overrideHostFlags map[string]string
 
 func (f *overrideHostFlags) String() string {
-	values := make([]string, 0, len(*f))
+	results := make([]string, 0, len(*f))
 	for name, host := range *f {
-		values = append(values, fmt.Sprintf("%s=%s", name, host))
+		results = append(results, fmt.Sprintf("%s=%s", name, host))
 	}
-	return strings.Join(values, ", ")
+	return strings.Join(results, ", ")
 }
 
-func (f *overrideHostFlags) Set(value string) error {
-	name, host, ok := strings.Cut(value, "=")
-	if !ok || name == "" || host == "" {
-		return fmt.Errorf("invalid backend host override %q; expected name=host", value)
+func (f *overrideHostFlags) Set(v string) error {
+	name, host := "", v
+	if before, after, ok := strings.Cut(v, "="); ok {
+		name, host = before, after
+	}
+
+	if err := validateOverrideHost(host); err != nil {
+		return err
 	}
 
 	(*f)[name] = host
 	return nil
 }
 
-// withOverrideHost sets the Host header forwarded by a backend proxy.
-func withOverrideHost(proxy http.Handler, host string) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		outboundRequest := request.Clone(request.Context())
-		outboundRequest.Host = host
-		proxy.ServeHTTP(writer, outboundRequest)
-	})
+// validateOverrideHost rejects values that cannot serve as a Host header,
+// applying the same host[:port] rule the ABI uses for dynamic backend targets.
+// Catching these at startup matters because Go silently blanks a Host header
+// it considers malformed rather than failing the request, leaving an upstream
+// that mysteriously sees no Host at all.
+func validateOverrideHost(host string) error {
+	if host == "" {
+		return fmt.Errorf("empty backend host override; expected [name=]host")
+	}
+	u, err := url.Parse("http://" + host)
+	if err != nil || u.Host != host || u.Hostname() == "" {
+		return fmt.Errorf("backend host override %q is not a host[:port] authority", host)
+	}
+	return nil
+}
+
+// buildBackendOptions turns the parsed -backend and -override-host flags into
+// the options that register them.
+// An override naming an unconfigured backend fails here rather than doing
+// nothing, since the symptom of that typo is an upstream quietly seeing the
+// original Host.
+func buildBackendOptions(backends backendFlags, overrideHosts overrideHostFlags) ([]fastlike.Option, error) {
+	for name := range overrideHosts {
+		if _, ok := backends[name]; ok {
+			continue
+		}
+		if name == "" {
+			return nil, fmt.Errorf("-override-host targets the catch-all backend, but no catch-all -backend is configured")
+		}
+		return nil, fmt.Errorf("-override-host names backend %q, which no -backend configures", name)
+	}
+
+	opts := make([]fastlike.Option, 0, len(backends))
+	for name, backend := range backends {
+		proxy := backend.proxy
+		overrideHost := overrideHosts[name]
+
+		if name == "" {
+			// Catch-all backends remain plain (no traced transport); the
+			// default-backend factory pattern surfaces neither a transport
+			// fastlike can observe nor a named Backend to hang the override
+			// on, so the override is applied to the handler directly.
+			proxy = fastlike.OverrideHostHandler(proxy, overrideHost)
+			if backend.uptime != nil {
+				opts = append(opts, fastlike.WithUnreliableDefaultBackend(func(_ string) http.Handler {
+					return proxy
+				}, *backend.uptime))
+			} else {
+				opts = append(opts, fastlike.WithDefaultBackend(func(_ string) http.Handler {
+					return proxy
+				}))
+			}
+			continue
+		}
+
+		// Named backends use WithBackendTraced unless extra configuration is
+		// required. Both paths keep cliTransport so the profile recorder gets
+		// DNS / connect / TLS / TTFB phase data from httptrace.ClientTrace.
+		if backend.uptime != nil || overrideHost != "" {
+			opts = append(opts, fastlike.WithBackendConfig(namedBackendConfig(name, proxy, backend.uptime, overrideHost)))
+		} else {
+			opts = append(opts, fastlike.WithBackendTraced(name, proxy, cliTransport))
+		}
+	}
+
+	return opts, nil
+}
+
+// namedBackendConfig builds the Backend for a named CLI backend carrying more
+// configuration than WithBackendTraced can express.
+func namedBackendConfig(name string, proxy http.Handler, uptime *uint8, overrideHost string) *fastlike.Backend {
+	return &fastlike.Backend{
+		Name:          name,
+		Handler:       proxy,
+		Transport:     cliTransport,
+		UptimePercent: uptime,
+		OverrideHost:  overrideHost,
+	}
 }
 
 // backendFlags implements flag.Value for parsing -backend flags

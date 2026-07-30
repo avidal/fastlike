@@ -121,6 +121,28 @@ fastlike -wasm my-program.wasm \
   -backend images=localhost:9000
 ```
 
+### Overriding the Host Header
+
+Backends usually live at an address that has nothing to do with the hostname they expect to be addressed by, which is a problem as soon as the upstream does virtual hosting.
+`-override-host` fixes that the same way the `override_host` property does in `fastly.toml`: the connection still goes to the configured address, but the `Host` header on the wire is the one you name.
+
+```bash
+# reach the origin on localhost:8000, but tell it the request is for www.example.com
+fastlike -wasm my-program.wasm \
+  -backend origin=localhost:8000 \
+  -override-host origin=www.example.com
+
+# the catch-all backend takes an override with no name
+fastlike -wasm my-program.wasm -backend localhost:8000 -override-host www.example.com
+```
+
+The override wins over whatever `Host` the guest program set on its request, which is the precedence Fastly applies.
+For a named backend the guest can also read the configured value back through the `get_override_host` hostcall.
+The catch-all is not registered under a name that hostcall can look up, so an override on it changes the header on the wire and nothing else.
+
+The value has to be a plain authority, a hostname or IP address with an optional port, so a full URL or anything carrying a path or whitespace is rejected at startup.
+So is an override that names a backend no `-backend` configured, since that is nearly always a typo and the alternative is an upstream that quietly keeps seeing the original `Host`.
+
 ### Simulating Unreliable Backends
 
 Append `@N` to a backend address to simulate flakiness, where `N` is the percentage of requests that should reach the upstream successfully. The remaining requests are answered with a synthetic 502, identical in shape to the response Fastlike emits when a real upstream is unreachable. This is handy for exercising error paths in your guest program without actually taking a backend down.

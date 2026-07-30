@@ -154,14 +154,40 @@ type Backend struct {
 }
 
 // addBackend registers a backend with the given name and configuration.
+// Every registration path funnels through here, so this is where the
+// guarantees that have to hold for any backend are established: a non-nil URL
+// for the host and port hostcalls to read, and a handler that honors
+// OverrideHost and UptimePercent.
 func (i *Instance) addBackend(name string, b *Backend) {
 	b.Name = name
+	if b.URL == nil {
+		b.URL = backendURL(name)
+	}
 	if b.Handler != nil {
-		b.Handler = wrapWithReliability(b.Handler, b.UptimePercent)
+		b.Handler = wrapWithReliability(OverrideHostHandler(b.Handler, b.OverrideHost), b.UptimePercent)
 	}
 	i.backendsMu.Lock()
 	i.backends[name] = b
 	i.backendsMu.Unlock()
+}
+
+// OverrideHostHandler returns a handler that sends every request it forwards
+// with the given Host header, and returns h untouched for an empty host.
+// The override beats whatever Host the guest set, matching the precedence
+// Fastly gives the override_host property.
+//
+// Registering a backend applies this already. It is exported for the handlers
+// that never become a named Backend, such as a default-backend factory.
+func OverrideHostHandler(h http.Handler, host string) http.Handler {
+	if host == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Copy so the caller's request survives the rewrite.
+		outbound := *r
+		outbound.Host = host
+		h.ServeHTTP(w, &outbound)
+	})
 }
 
 // wrapWithReliability returns a handler that simulates backend failures based
@@ -480,13 +506,12 @@ func (b *Backend) newTransportHandler() http.Handler {
 	transport := b.CreateTransport()
 	b.Transport = transport
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The connection goes to the registered target, while the Host
-		// header follows viceroy's precedence: the host override, then the
-		// Host header from the guest request, then the request URI's
-		// authority.
-		if b.OverrideHost != "" {
-			r.Host = b.OverrideHost
-		} else if r.Host == "" {
+		// The connection goes to the registered target, while the Host header
+		// follows viceroy's precedence: the host override, then the Host
+		// header from the guest request, then the request URI's authority.
+		// addBackend has applied any override before a request reaches here,
+		// so only the last fallback is left.
+		if r.Host == "" {
 			r.Host = r.URL.Host
 		}
 		r.URL.Scheme = b.URL.Scheme
