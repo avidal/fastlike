@@ -80,6 +80,13 @@ type Memory struct {
 	MemorySlice
 }
 
+func (m *Memory) validRange(offset int64, size uint64) bool {
+	if offset < 0 || size > uint64(m.Len()) {
+		return false
+	}
+	return uint64(offset) <= uint64(m.Len())-size
+}
+
 // ReadUint8 reads a uint8 (single byte) from the given offset in memory.
 func (m *Memory) ReadUint8(offset int64) uint8 {
 	return m.Data()[offset]
