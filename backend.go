@@ -68,6 +68,8 @@ type Backend struct {
 	// IsDynamic indicates if this backend was registered at runtime
 	IsDynamic bool
 
+	dynamicRegistration *dynamicBackendRegistration
+
 	// Timeout settings (in milliseconds)
 	ConnectTimeoutMs      uint32
 	FirstByteTimeoutMs    uint32
@@ -153,12 +155,45 @@ type Backend struct {
 	Transport *http.Transport
 }
 
-// addBackend registers a backend with the given name and configuration.
-// Every registration path funnels through here, so this is where the
-// guarantees that have to hold for any backend are established: a non-nil URL
-// for the host and port hostcalls to read, and a handler that honors
-// OverrideHost and UptimePercent.
-func (i *Instance) addBackend(name string, b *Backend) {
+type dynamicBackendRegistration struct {
+	target                      string
+	options                     uint32
+	hostOverride                string
+	connectTimeoutMs            uint32
+	firstByteTimeoutMs          uint32
+	betweenBytesTimeoutMs       uint32
+	sslMinVersion               uint32
+	sslMaxVersion               uint32
+	certHostname                string
+	caCert                      string
+	ciphers                     string
+	sniHostname                 string
+	clientCertificate           string
+	clientKeySHA256             [32]byte
+	httpKeepaliveTimeMs         uint32
+	tcpKeepaliveEnable          uint32
+	tcpKeepaliveIntervalSeconds uint32
+	tcpKeepaliveProbes          uint32
+	tcpKeepaliveTimeSeconds     uint32
+	maxConnections              uint32
+	maxUse                      uint32
+	maxLifetimeMs               uint32
+	healthcheck                 dynamicBackendHealthcheck
+}
+
+type dynamicBackendHealthcheck struct {
+	intervalMs     uint64
+	timeoutMs      uint64
+	host           string
+	method         string
+	path           string
+	expectedStatus uint16
+	window         uint32
+	threshold      uint32
+	initial        uint32
+}
+
+func prepareBackend(name string, b *Backend) {
 	b.Name = name
 	if b.URL == nil {
 		b.URL = backendURL(name)
@@ -166,9 +201,31 @@ func (i *Instance) addBackend(name string, b *Backend) {
 	if b.Handler != nil {
 		b.Handler = wrapWithReliability(OverrideHostHandler(b.Handler, b.OverrideHost), b.UptimePercent)
 	}
+}
+
+// addBackend registers a backend with the given name and configuration.
+func (i *Instance) addBackend(name string, b *Backend) {
+	prepareBackend(name, b)
 	i.backendsMu.Lock()
 	i.backends[name] = b
 	i.backendsMu.Unlock()
+}
+
+func (i *Instance) addDynamicBackend(name string, b *Backend) bool {
+	i.backendsMu.Lock()
+	defer i.backendsMu.Unlock()
+
+	if existing, ok := i.backends[name]; ok {
+		return existing.IsDynamic &&
+			existing.dynamicRegistration != nil &&
+			b.dynamicRegistration != nil &&
+			*existing.dynamicRegistration == *b.dynamicRegistration
+	}
+
+	b.Handler = b.newTransportHandler()
+	prepareBackend(name, b)
+	i.backends[name] = b
+	return true
 }
 
 // OverrideHostHandler returns a handler that sends every request it forwards
@@ -571,4 +628,21 @@ type DynamicBackendConfig struct {
 	MaxConnections uint32 // Max connections in pool (0 = unlimited)
 	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
 	MaxLifetimeMs  uint32 // Upper bound for keepalive connection lifetime (0 = unlimited)
+	Healthcheck    int32  // Pointer to health-check configuration
+}
+
+// HealthcheckConfig represents the health-check structure referenced by a dynamic backend config.
+type HealthcheckConfig struct {
+	IntervalMs     uint64
+	TimeoutMs      uint64
+	Host           int32
+	HostLen        uint32
+	Method         int32
+	MethodLen      uint32
+	Path           int32
+	PathLen        uint32
+	ExpectedStatus uint32
+	Window         uint32
+	Threshold      uint32
+	Initial        uint32
 }

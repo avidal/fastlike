@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -1838,7 +1839,15 @@ func (i *Instance) xqd_req_auto_decompress_response_set(handle int32, encodings 
 
 // readDynamicBackendConfig reads the guest's dynamic_backend_config struct
 // field by field (little-endian, all fields 32 bits wide on wasm32).
-func (i *Instance) readDynamicBackendConfig(addr int64) DynamicBackendConfig {
+const (
+	dynamicBackendConfigSize = 108
+	healthcheckConfigSize    = 56
+)
+
+func (i *Instance) readDynamicBackendConfig(addr int64) (DynamicBackendConfig, bool) {
+	if !i.memory.validRange(addr, dynamicBackendConfigSize) {
+		return DynamicBackendConfig{}, false
+	}
 	var config DynamicBackendConfig
 	config.HostOverride = int32(i.memory.Uint32(addr + 0))
 	config.HostOverrideLen = i.memory.Uint32(addr + 4)
@@ -1866,14 +1875,35 @@ func (i *Instance) readDynamicBackendConfig(addr int64) DynamicBackendConfig {
 	config.MaxConnections = i.memory.Uint32(addr + 92)
 	config.MaxUse = i.memory.Uint32(addr + 96)
 	config.MaxLifetimeMs = i.memory.Uint32(addr + 100)
-	return config
+	config.Healthcheck = int32(i.memory.Uint32(addr + 104))
+	return config, true
+}
+
+func (i *Instance) readHealthcheckConfig(addr int64) (HealthcheckConfig, bool) {
+	if !i.memory.validRange(addr, healthcheckConfigSize) {
+		return HealthcheckConfig{}, false
+	}
+	return HealthcheckConfig{
+		IntervalMs:     i.memory.Uint64(addr),
+		TimeoutMs:      i.memory.Uint64(addr + 8),
+		Host:           int32(i.memory.Uint32(addr + 16)),
+		HostLen:        i.memory.Uint32(addr + 20),
+		Method:         int32(i.memory.Uint32(addr + 24)),
+		MethodLen:      i.memory.Uint32(addr + 28),
+		Path:           int32(i.memory.Uint32(addr + 32)),
+		PathLen:        i.memory.Uint32(addr + 36),
+		ExpectedStatus: i.memory.Uint32(addr + 40),
+		Window:         i.memory.Uint32(addr + 44),
+		Threshold:      i.memory.Uint32(addr + 48),
+		Initial:        i.memory.Uint32(addr + 52),
+	}, true
 }
 
 // readGuestString reads a length-prefixed string field of a dynamic backend
 // config from guest memory, applying viceroy's validation rules: a zero
 // length, a length above maxLen, or invalid UTF-8 fails registration.
 func (i *Instance) readGuestString(field string, ptr int32, length uint32, maxLen uint32) (string, bool) {
-	if length > 0 && length <= maxLen {
+	if length > 0 && length <= maxLen && i.memory.validRange(int64(ptr), uint64(length)) {
 		buf := make([]byte, length)
 		if _, err := i.memory.ReadAt(buf, int64(ptr)); err == nil && utf8.Valid(buf) {
 			return string(buf), true
@@ -1881,6 +1911,70 @@ func (i *Instance) readGuestString(field string, ptr int32, length uint32, maxLe
 	}
 	i.abilog.Printf("req_register_dynamic_backend: invalid %s", field)
 	return "", false
+}
+
+func (i *Instance) readOptionalGuestString(field string, ptr int32, length uint32, maxLen uint32) (string, bool) {
+	if length == 0 {
+		return "", true
+	}
+	return i.readGuestString(field, ptr, length, maxLen)
+}
+
+func (i *Instance) readDynamicBackendHealthcheck(addr int64) (dynamicBackendHealthcheck, bool) {
+	const (
+		urlSizeLimit  = 8192
+		methodLimit   = 8192
+		windowLimit   = 15
+		minimumTimeMs = 1000
+		maximumTimeMs = 3600000
+	)
+
+	config, ok := i.readHealthcheckConfig(addr)
+	if !ok {
+		i.abilog.Printf("req_register_dynamic_backend: invalid healthcheck pointer")
+		return dynamicBackendHealthcheck{}, false
+	}
+	host, ok := i.readGuestString("healthcheck host", config.Host, config.HostLen, urlSizeLimit)
+	if !ok {
+		return dynamicBackendHealthcheck{}, false
+	}
+	method, ok := i.readOptionalGuestString("healthcheck method", config.Method, config.MethodLen, methodLimit)
+	if !ok {
+		return dynamicBackendHealthcheck{}, false
+	}
+	path, ok := i.readGuestString("healthcheck path", config.Path, config.PathLen, urlSizeLimit)
+	if !ok {
+		return dynamicBackendHealthcheck{}, false
+	}
+	parsedPath, err := url.ParseRequestURI(path)
+	if err != nil || parsedPath.IsAbs() || parsedPath.Host != "" {
+		i.abilog.Printf("req_register_dynamic_backend: invalid healthcheck path")
+		return dynamicBackendHealthcheck{}, false
+	}
+	pathOnly := path
+	if query := strings.IndexByte(pathOnly, '?'); query >= 0 {
+		pathOnly = pathOnly[:query]
+	}
+	if len(host)+len(pathOnly) > urlSizeLimit ||
+		config.Window > windowLimit || config.Window < 4 ||
+		config.Threshold > config.Window || config.Initial > config.Window ||
+		config.IntervalMs < minimumTimeMs || config.IntervalMs >= maximumTimeMs ||
+		config.TimeoutMs < minimumTimeMs || config.TimeoutMs >= maximumTimeMs {
+		i.abilog.Printf("req_register_dynamic_backend: invalid healthcheck configuration")
+		return dynamicBackendHealthcheck{}, false
+	}
+
+	return dynamicBackendHealthcheck{
+		intervalMs:     config.IntervalMs,
+		timeoutMs:      config.TimeoutMs,
+		host:           host,
+		method:         method,
+		path:           path,
+		expectedStatus: uint16(config.ExpectedStatus),
+		window:         config.Window,
+		threshold:      config.Threshold,
+		initial:        config.Initial,
+	}, true
 }
 
 // validHeaderValue reports whether s is a legal HTTP header value, using the
@@ -1912,9 +2006,9 @@ func parseBackendTarget(scheme, target string) (*url.URL, error) {
 }
 
 // xqd_req_register_dynamic_backend registers a backend at runtime, following
-// viceroy's semantics: the target is an authority routed over https when the
+// production semantics: the target is an authority routed over https when the
 // use_ssl option is set, unknown mask bits and malformed option strings fail
-// registration, and a name collision with any existing backend is an error.
+// registration, and an identical same-name registration reuses the backend.
 func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size int32, target_addr int32, target_size int32, backend_config_mask int32, backend_config_addr int32) int32 {
 	mask := uint32(backend_config_mask)
 
@@ -1944,12 +2038,11 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 
 	i.abilog.Printf("req_register_dynamic_backend: name=%q target=%q mask=%#x", backendName, target, mask)
 
-	if i.backendExists(backendName) {
-		i.abilog.Printf("req_register_dynamic_backend: backend %q already exists", backendName)
-		return XqdError
+	config, ok := i.readDynamicBackendConfig(int64(backend_config_addr))
+	if !ok {
+		i.abilog.Printf("req_register_dynamic_backend: invalid backend config pointer")
+		return XqdErrInvalidArgument
 	}
-
-	config := i.readDynamicBackendConfig(int64(backend_config_addr))
 
 	// Wiggle validates enum fields while reading the config struct, so an
 	// out-of-range TLS version fails registration under viceroy even when
@@ -1971,11 +2064,13 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 	}
 
 	backend := &Backend{
-		Name:      backendName,
-		URL:       u,
-		IsDynamic: true,
-		UseSSL:    scheme == "https",
+		Name:                backendName,
+		URL:                 u,
+		IsDynamic:           true,
+		UseSSL:              scheme == "https",
+		dynamicRegistration: &dynamicBackendRegistration{target: target, options: mask},
 	}
+	registration := backend.dynamicRegistration
 
 	if mask&BackendConfigOptionsHostOverride != 0 {
 		hostOverride, ok := i.readGuestString("host override", config.HostOverride, config.HostOverrideLen, 1024)
@@ -1987,24 +2082,30 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 			return XqdErrInvalidArgument
 		}
 		backend.OverrideHost = hostOverride
+		registration.hostOverride = hostOverride
 	}
 
 	if mask&BackendConfigOptionsConnectTimeout != 0 {
 		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
+		registration.connectTimeoutMs = config.ConnectTimeoutMs
 	}
 	if mask&BackendConfigOptionsFirstByteTimeout != 0 {
 		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
+		registration.firstByteTimeoutMs = config.FirstByteTimeoutMs
 	}
 	if mask&BackendConfigOptionsBetweenBytesTimeout != 0 {
 		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
+		registration.betweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
 	}
 	if mask&BackendConfigOptionsSSLMinVersion != 0 {
 		backend.SSLMinVersion = config.SSLMinVersion
 		backend.SSLMinVersionSet = true
+		registration.sslMinVersion = config.SSLMinVersion
 	}
 	if mask&BackendConfigOptionsSSLMaxVersion != 0 {
 		backend.SSLMaxVersion = config.SSLMaxVersion
 		backend.SSLMaxVersionSet = true
+		registration.sslMaxVersion = config.SSLMaxVersion
 	}
 
 	if mask&BackendConfigOptionsCertHostname != 0 {
@@ -2013,11 +2114,10 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 			return XqdErrInvalidArgument
 		}
 		backend.CertHostname = certHostname
+		registration.certHostname = certHostname
 	}
 
-	// Like viceroy, a CA certificate is only honored for backends that
-	// actually speak TLS.
-	if backend.UseSSL && mask&BackendConfigOptionsCACert != 0 {
+	if mask&BackendConfigOptionsCACert != 0 {
 		caPEM, ok := i.readGuestString("CA certificate", config.CACert, config.CACertLen, 64*1024)
 		if !ok {
 			return XqdErrInvalidArgument
@@ -2027,7 +2127,10 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 			i.abilog.Printf("req_register_dynamic_backend: CA certificate is not valid PEM")
 			return XqdErrInvalidArgument
 		}
-		backend.CACerts = pool
+		registration.caCert = caPEM
+		if backend.UseSSL {
+			backend.CACerts = pool
+		}
 	}
 
 	if mask&BackendConfigOptionsCiphers != 0 {
@@ -2038,6 +2141,7 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 		// Go's TLS stack chooses its own cipher suites, so the list is
 		// recorded for introspection but not enforced.
 		backend.Ciphers = ciphers
+		registration.ciphers = ciphers
 	}
 
 	if mask&BackendConfigOptionsSNIHostname != 0 {
@@ -2050,6 +2154,7 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 				return XqdErrInvalidArgument
 			}
 			backend.SNIHostname = sniHostname
+			registration.sniHostname = sniHostname
 		}
 	}
 
@@ -2063,12 +2168,15 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 			i.abilog.Printf("req_register_dynamic_backend: invalid client key secret handle %d", config.ClientKey)
 			return XqdErrInvalidArgument
 		}
-		pair, err := tls.X509KeyPair([]byte(certPEM), secret.Plaintext())
+		keyPEM := secret.Plaintext()
+		pair, err := tls.X509KeyPair([]byte(certPEM), keyPEM)
 		if err != nil {
 			i.abilog.Printf("req_register_dynamic_backend: bad client certificate: %v", err)
 			return XqdErrInvalidArgument
 		}
 		backend.ClientCert = &pair
+		registration.clientCertificate = certPEM
+		registration.clientKeySHA256 = sha256.Sum256(keyPEM)
 	}
 
 	backend.DontPool = mask&BackendConfigOptionsDontPool != 0
@@ -2081,21 +2189,38 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 		backend.TCPKeepaliveTimeMs = config.TCPKeepaliveTimeSecs * 1000
 		backend.TCPKeepaliveIntervalMs = config.TCPKeepaliveIntervalSecs * 1000
 		backend.TCPKeepaliveProbes = config.TCPKeepaliveProbes
+		registration.httpKeepaliveTimeMs = config.HTTPKeepaliveTimeMs
+		registration.tcpKeepaliveEnable = config.TCPKeepaliveEnable
+		registration.tcpKeepaliveIntervalSeconds = config.TCPKeepaliveIntervalSecs
+		registration.tcpKeepaliveProbes = config.TCPKeepaliveProbes
+		registration.tcpKeepaliveTimeSeconds = config.TCPKeepaliveTimeSecs
 	}
 
 	if mask&BackendConfigOptionsPoolingLimits != 0 {
 		backend.MaxConnections = config.MaxConnections
 		backend.MaxUse = config.MaxUse
 		backend.MaxLifetimeMs = config.MaxLifetimeMs
+		registration.maxConnections = config.MaxConnections
+		registration.maxUse = config.MaxUse
+		registration.maxLifetimeMs = config.MaxLifetimeMs
 	}
 
-	// The prefer_ipv4 and healthcheck options are accepted but have no
-	// local behavior; Go's dialer resolves addresses on its own and local
-	// backends have no health-checking.
+	if mask&BackendConfigOptionsHealthcheck != 0 {
+		healthcheck, ok := i.readDynamicBackendHealthcheck(int64(config.Healthcheck))
+		if !ok {
+			return XqdErrInvalidArgument
+		}
+		registration.healthcheck = healthcheck
+	}
 
-	backend.Handler = backend.newTransportHandler()
+	// prefer_ipv4 has no local behavior because Go's dialer resolves addresses.
+	// Health-check configuration is validated and recorded for comparison.
+	// Fastlike does not run active backend health checks.
 
-	i.addBackend(backendName, backend)
+	if !i.addDynamicBackend(backendName, backend) {
+		i.abilog.Printf("req_register_dynamic_backend: backend %q has conflicting properties", backendName)
+		return XqdError
+	}
 
 	i.abilog.Printf("req_register_dynamic_backend: registered backend %q", backendName)
 	return XqdStatusOK

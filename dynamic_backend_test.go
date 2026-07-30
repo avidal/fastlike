@@ -21,16 +21,19 @@ import (
 
 // Guest memory layout used by every test in this file.
 const (
-	dynNameAddr   int32 = 0
-	dynTargetAddr int32 = 128
-	dynCfgAddr    int32 = 512
-	dynStrAddr    int32 = 1024
+	dynNameAddr           int32 = 0
+	dynTargetAddr         int32 = 128
+	dynCfgAddr            int32 = 512
+	dynStrAddr            int32 = 1024
+	dynHealthcheckAddr    int32 = 4096
+	dynHealthcheckStrAddr int32 = 8192
 )
 
 // Offsets of the dynamic_backend_config fields poked by tests.
 const (
 	cfgHostOverridePtr = 0
 	cfgHostOverrideLen = 4
+	cfgConnectTimeout  = 8
 	cfgSSLMinVersion   = 20
 	cfgCertHostnamePtr = 28
 	cfgCertHostnameLen = 32
@@ -44,6 +47,19 @@ const (
 	cfgMaxConnections  = 92
 	cfgMaxUse          = 96
 	cfgMaxLifetimeMs   = 100
+	cfgHealthcheckPtr  = 104
+	hcIntervalMs       = 0
+	hcTimeoutMs        = 8
+	hcHostPtr          = 16
+	hcHostLen          = 20
+	hcMethodPtr        = 24
+	hcMethodLen        = 28
+	hcPathPtr          = 32
+	hcPathLen          = 36
+	hcExpectedStatus   = 40
+	hcWindow           = 44
+	hcThreshold        = 48
+	hcInitial          = 52
 )
 
 func newDynInstance() *Instance {
@@ -85,11 +101,37 @@ func pokeCfgString(t *testing.T, inst *Instance, ptrOffset, lenOffset int64, add
 	return addr + int32(len(s))
 }
 
+func pokeHealthcheckString(t *testing.T, inst *Instance, ptrOffset, lenOffset int64, addr int32, s string) int32 {
+	t.Helper()
+	writeStr(t, inst, int64(addr), s)
+	inst.memory.PutUint32(uint32(addr), int64(dynHealthcheckAddr)+ptrOffset)
+	inst.memory.PutUint32(uint32(len(s)), int64(dynHealthcheckAddr)+lenOffset)
+	return addr + int32(len(s))
+}
+
+func pokeValidHealthcheck(t *testing.T, inst *Instance) {
+	t.Helper()
+	pokeCfgU32(inst, cfgHealthcheckPtr, uint32(dynHealthcheckAddr))
+	inst.memory.PutUint64(15000, int64(dynHealthcheckAddr)+hcIntervalMs)
+	inst.memory.PutUint64(5000, int64(dynHealthcheckAddr)+hcTimeoutMs)
+	next := pokeHealthcheckString(t, inst, hcHostPtr, hcHostLen, dynHealthcheckStrAddr, "health.example.org")
+	next = pokeHealthcheckString(t, inst, hcMethodPtr, hcMethodLen, next, "GET")
+	pokeHealthcheckString(t, inst, hcPathPtr, hcPathLen, next, "/health")
+	inst.memory.PutUint32(200, int64(dynHealthcheckAddr)+hcExpectedStatus)
+	inst.memory.PutUint32(5, int64(dynHealthcheckAddr)+hcWindow)
+	inst.memory.PutUint32(3, int64(dynHealthcheckAddr)+hcThreshold)
+	inst.memory.PutUint32(4, int64(dynHealthcheckAddr)+hcInitial)
+}
+
 func registerDyn(t *testing.T, inst *Instance, name, target string, mask uint32) int32 {
+	return registerDynWithConfig(t, inst, name, target, mask, dynCfgAddr)
+}
+
+func registerDynWithConfig(t *testing.T, inst *Instance, name, target string, mask uint32, configAddr int32) int32 {
 	t.Helper()
 	nameAddr, nameSize := writeStr(t, inst, int64(dynNameAddr), name)
 	targetAddr, targetSize := writeStr(t, inst, int64(dynTargetAddr), target)
-	return inst.xqd_req_register_dynamic_backend(nameAddr, nameSize, targetAddr, targetSize, int32(mask), dynCfgAddr)
+	return inst.xqd_req_register_dynamic_backend(nameAddr, nameSize, targetAddr, targetSize, int32(mask), configAddr)
 }
 
 func TestRegisterDynamicBackend_TargetForms(t *testing.T) {
@@ -140,19 +182,23 @@ func TestRegisterDynamicBackend_TargetForms(t *testing.T) {
 
 func TestRegisterDynamicBackend_MaskValidation(t *testing.T) {
 	cases := []struct {
-		name   string
-		mask   uint32
-		status int32
+		name      string
+		mask      uint32
+		configure func(*Instance)
+		status    int32
 	}{
-		{"reserved bit", BackendConfigOptionsReserved, XqdErrInvalidArgument},
-		{"unknown bit", 1 << 19, XqdErrInvalidArgument},
-		{"healthcheck accepted", BackendConfigOptionsHealthcheck, XqdStatusOK},
-		{"prefer ipv4 accepted", BackendConfigOptionsPreferIPv4, XqdStatusOK},
+		{"reserved bit", BackendConfigOptionsReserved, nil, XqdErrInvalidArgument},
+		{"unknown bit", 1 << 19, nil, XqdErrInvalidArgument},
+		{"healthcheck accepted", BackendConfigOptionsHealthcheck, func(inst *Instance) { pokeValidHealthcheck(t, inst) }, XqdStatusOK},
+		{"prefer ipv4 accepted", BackendConfigOptionsPreferIPv4, nil, XqdStatusOK},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			inst := newDynInstance()
+			if tc.configure != nil {
+				tc.configure(inst)
+			}
 			if status := registerDyn(t, inst, "origin", "origin.example.org", tc.mask); status != tc.status {
 				t.Errorf("status = %d, want %d", status, tc.status)
 			}
@@ -161,18 +207,267 @@ func TestRegisterDynamicBackend_MaskValidation(t *testing.T) {
 }
 
 func TestRegisterDynamicBackend_NameCollision(t *testing.T) {
-	inst := newDynInstance()
-	inst.backends["static"] = &Backend{Name: "static"}
+	t.Run("static backend", func(t *testing.T) {
+		inst := newDynInstance()
+		inst.backends["static"] = &Backend{Name: "static"}
 
-	if status := registerDyn(t, inst, "static", "origin.example.org", 0); status != XqdError {
-		t.Errorf("collision with static backend: status = %d, want %d", status, XqdError)
+		if status := registerDyn(t, inst, "static", "origin.example.org", 0); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+	})
+
+	t.Run("identical dynamic backend", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("identical registration: status = %d, want %d", status, XqdStatusOK)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("identical registration replaced the existing backend")
+		}
+	})
+
+	t.Run("different target", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		if status := registerDyn(t, inst, "origin", "other.example.org", 0); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("conflicting registration replaced the existing backend")
+		}
+	})
+
+	t.Run("different configuration", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeCfgU32(inst, cfgConnectTimeout, 100)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsConnectTimeout); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		pokeCfgU32(inst, cfgConnectTimeout, 200)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsConnectTimeout); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("conflicting registration replaced the existing backend")
+		}
+	})
+
+	t.Run("different option mask", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsConnectTimeout); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+	})
+
+	t.Run("invalid duplicate configuration", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		pokeCfgU32(inst, cfgHostOverridePtr, uint32(dynStrAddr))
+		pokeCfgU32(inst, cfgHostOverrideLen, 0)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHostOverride); status != XqdErrInvalidArgument {
+			t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
+		}
+	})
+
+	t.Run("identical healthcheck", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeValidHealthcheck(t, inst)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("identical registration: status = %d, want %d", status, XqdStatusOK)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("identical registration replaced the existing backend")
+		}
+	})
+
+	t.Run("different healthcheck", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeValidHealthcheck(t, inst)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		inst.memory.PutUint64(16000, int64(dynHealthcheckAddr)+hcIntervalMs)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("conflicting registration replaced the existing backend")
+		}
+	})
+
+	t.Run("healthcheck status uses ABI width", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeValidHealthcheck(t, inst)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		inst.memory.PutUint32(1<<16|200, int64(dynHealthcheckAddr)+hcExpectedStatus)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("equivalent registration: status = %d, want %d", status, XqdStatusOK)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("equivalent registration replaced the existing backend")
+		}
+	})
+
+	t.Run("invalid duplicate healthcheck", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeValidHealthcheck(t, inst)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		inst.memory.PutUint64(0, int64(dynHealthcheckAddr)+hcTimeoutMs)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdErrInvalidArgument {
+			t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
+		}
+	})
+
+	t.Run("out of range duplicate configuration", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		configAddr := int32(inst.memory.Len() - dynamicBackendConfigSize + 1)
+		if status := registerDynWithConfig(t, inst, "origin", "origin.example.org", 0, configAddr); status != XqdErrInvalidArgument {
+			t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
+		}
+	})
+
+	t.Run("out of range duplicate healthcheck", func(t *testing.T) {
+		inst := newDynInstance()
+		pokeValidHealthcheck(t, inst)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		pokeCfgU32(inst, cfgHealthcheckPtr, uint32(inst.memory.Len()-healthcheckConfigSize+1))
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHealthcheck); status != XqdErrInvalidArgument {
+			t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
+		}
+	})
+
+	t.Run("out of range duplicate string", func(t *testing.T) {
+		inst := newDynInstance()
+		if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		pokeCfgU32(inst, cfgHostOverridePtr, uint32(inst.memory.Len()-3))
+		pokeCfgU32(inst, cfgHostOverrideLen, 4)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsHostOverride); status != XqdErrInvalidArgument {
+			t.Errorf("status = %d, want %d", status, XqdErrInvalidArgument)
+		}
+	})
+
+	t.Run("different CA certificate without TLS", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		t.Cleanup(server.Close)
+		firstPEM := serverCertPEM(server)
+		secondPEM := firstPEM + firstPEM
+
+		inst := newDynInstance()
+		pokeCfgString(t, inst, cfgCACertPtr, cfgCACertLen, dynStrAddr, firstPEM)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsCACert); status != XqdStatusOK {
+			t.Fatalf("first registration: status = %d", status)
+		}
+		first := inst.getBackend("origin")
+		pokeCfgString(t, inst, cfgCACertPtr, cfgCACertLen, dynStrAddr, secondPEM)
+		if status := registerDyn(t, inst, "origin", "origin.example.org", BackendConfigOptionsCACert); status != XqdError {
+			t.Errorf("status = %d, want %d", status, XqdError)
+		}
+		if got := inst.getBackend("origin"); got != first {
+			t.Fatal("conflicting registration replaced the existing backend")
+		}
+	})
+}
+
+func TestAddDynamicBackendConcurrentRegistration(t *testing.T) {
+	candidate := func(target string) *Backend {
+		return &Backend{
+			URL:                 backendURL(target),
+			IsDynamic:           true,
+			dynamicRegistration: &dynamicBackendRegistration{target: target},
+		}
 	}
-	if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdStatusOK {
-		t.Fatalf("first registration: status = %d", status)
-	}
-	if status := registerDyn(t, inst, "origin", "origin.example.org", 0); status != XqdError {
-		t.Errorf("re-registration: status = %d, want %d", status, XqdError)
-	}
+
+	t.Run("identical", func(t *testing.T) {
+		inst := newDynInstance()
+		const workers = 16
+		candidates := make([]*Backend, workers)
+		results := make([]bool, workers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for n := range workers {
+			candidates[n] = candidate("origin.example.org")
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				results[n] = inst.addDynamicBackend("origin", candidates[n])
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		transports := 0
+		for n := range workers {
+			if !results[n] {
+				t.Fatalf("registration %d failed", n)
+			}
+			if candidates[n].Transport != nil {
+				transports++
+			}
+		}
+		if transports != 1 {
+			t.Fatalf("created %d transports, want 1", transports)
+		}
+	})
+
+	t.Run("conflicting", func(t *testing.T) {
+		inst := newDynInstance()
+		candidates := []*Backend{candidate("origin.example.org"), candidate("other.example.org")}
+		results := make([]bool, len(candidates))
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for n := range candidates {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				results[n] = inst.addDynamicBackend("origin", candidates[n])
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		if results[0] == results[1] {
+			t.Fatalf("results = %v, want exactly one success", results)
+		}
+		winner := 0
+		if results[1] {
+			winner = 1
+		}
+		if got := inst.getBackend("origin"); got != candidates[winner] {
+			t.Fatal("registered backend does not match the successful candidate")
+		}
+	})
 }
 
 func TestRegisterDynamicBackend_OptionValidation(t *testing.T) {

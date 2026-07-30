@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"io"
 	"strconv"
 )
 
@@ -468,6 +469,9 @@ func (i *Instance) xqd_backend_get_tcp_keepalive_time(backend_addr int32, backen
 // readBackendName is a helper function to read a backend name from guest memory.
 // Returns the backend name as a string, or an error if the memory read fails.
 func (i *Instance) readBackendName(namePtr int32, nameLen int32) (string, error) {
+	if nameLen < 0 || !i.memory.validRange(int64(namePtr), uint64(nameLen)) {
+		return "", io.ErrUnexpectedEOF
+	}
 	buf := make([]byte, nameLen)
 	_, err := i.memory.ReadAt(buf, int64(namePtr))
 	if err != nil {
