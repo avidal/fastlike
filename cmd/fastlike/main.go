@@ -50,6 +50,8 @@ func main() {
 	backends := make(backendFlags)
 	flag.Var(&backends, "backend", "<name=address[@uptime%]> specifying backends. Use an empty name to specify a catch-all backend (ex: -backend localhost:2000). Append @N (0..100) to simulate reliability, e.g. -backend api=localhost:2000@50.")
 	flag.Var(&backends, "b", "alias for -backend")
+	overrideHosts := make(overrideHostFlags)
+	flag.Var(&overrideHosts, "override-host", "<name=host> overriding the Host header sent to a backend")
 
 	dictionaries := make(dictionaryFlags)
 	flag.Var(&dictionaries, "dictionary", "<name=file.json> specifying dictionaries. The JSON file supplied must only contain string values.")
@@ -135,6 +137,10 @@ func main() {
 
 	for name, backend := range backends {
 		proxy := backend.proxy
+		overrideHost := overrideHosts[name]
+		if overrideHost != "" {
+			proxy = withOverrideHost(proxy, overrideHost)
+		}
 		if name == "" {
 			// Catch-all backends remain plain (no traced transport); the
 			// default-backend factory pattern does not surface a transport
@@ -149,11 +155,10 @@ func main() {
 				}))
 			}
 		} else {
-			// Named backends register via WithBackendTraced so the profile
-			// recorder gets DNS / connect / TLS / TTFB phase data from
-			// httptrace.ClientTrace. The reliability wrapper still applies;
-			// addBackend wraps the handler before the recorder observes it.
-			if backend.uptime != nil {
+			// Named backends use WithBackendTraced unless extra configuration
+			// is required. Both paths retain cliTransport so the profile recorder
+			// gets DNS / connect / TLS / TTFB phase data from httptrace.ClientTrace.
+			if backend.uptime != nil || overrideHost != "" {
 				// WithBackendConfig does NOT synthesize a URL from the
 				// name the way WithBackend / WithBackendTraced do, so we
 				// have to set it explicitly here. Without it, every
@@ -172,6 +177,7 @@ func main() {
 					Handler:       proxy,
 					Transport:     cliTransport,
 					UptimePercent: backend.uptime,
+					OverrideHost:  overrideHost,
 				}))
 			} else {
 				opts = append(opts, fastlike.WithBackendTraced(name, proxy, cliTransport))
@@ -297,6 +303,36 @@ type backend struct {
 	address string
 	proxy   http.Handler
 	uptime  *uint8
+}
+
+// overrideHostFlags maps backend names to their outbound Host header overrides.
+type overrideHostFlags map[string]string
+
+func (f *overrideHostFlags) String() string {
+	values := make([]string, 0, len(*f))
+	for name, host := range *f {
+		values = append(values, fmt.Sprintf("%s=%s", name, host))
+	}
+	return strings.Join(values, ", ")
+}
+
+func (f *overrideHostFlags) Set(value string) error {
+	name, host, ok := strings.Cut(value, "=")
+	if !ok || name == "" || host == "" {
+		return fmt.Errorf("invalid backend host override %q; expected name=host", value)
+	}
+
+	(*f)[name] = host
+	return nil
+}
+
+// withOverrideHost sets the Host header forwarded by a backend proxy.
+func withOverrideHost(proxy http.Handler, host string) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		outboundRequest := request.Clone(request.Context())
+		outboundRequest.Host = host
+		proxy.ServeHTTP(writer, outboundRequest)
+	})
 }
 
 // backendFlags implements flag.Value for parsing -backend flags
