@@ -252,6 +252,29 @@ func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.C
 	}
 }
 
+// newEngineConfig builds the wasmtime config every engine in Fastlike is created from,
+// so that they all accept the same guests. profileCfg may be nil.
+func newEngineConfig(profileCfg *profile.CompileConfig) *wasmtime.Config {
+	config := wasmtime.NewConfig()
+
+	// Enable compilation caching for faster startup
+	check(config.CacheConfigLoadDefault())
+
+	// Wide arithmetic is accepted by Fastly's production runtime.
+	config.SetWasmWideArithmetic(true)
+
+	// Note: Epoch interruption is temporarily disabled due to bugs in wasmtime-go v37
+	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
+
+	if profileCfg != nil {
+		if strat, supported := profile.NativeProfilerStrategy(profileCfg.Mode); supported {
+			config.SetProfiler(strat)
+		}
+	}
+
+	return config
+}
+
 // compile creates a wasm engine, module, and shared linker from the provided wasm bytes.
 // The compiled artifacts are stored in wasmContext for reuse across requests.
 // This is called once per Fastlike instance (or when reloading).
@@ -263,20 +286,7 @@ func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.C
 // strategy mapping lives in NativeProfilerStrategy so it can be tested
 // without instantiating wasmtime.
 func (i *Instance) compile(wasmbytes []byte, profileCfg *profile.CompileConfig) {
-	// Create a wasmtime config with default settings
-	config := wasmtime.NewConfig()
-
-	// Enable compilation caching for faster startup
-	check(config.CacheConfigLoadDefault())
-
-	// Note: Epoch interruption is temporarily disabled due to bugs in wasmtime-go v37
-	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
-
-	if profileCfg != nil {
-		if strat, supported := profile.NativeProfilerStrategy(profileCfg.Mode); supported {
-			config.SetProfiler(strat)
-		}
-	}
+	config := newEngineConfig(profileCfg)
 
 	// Create the engine and compile the module
 	engine := wasmtime.NewEngineWithConfig(config)
