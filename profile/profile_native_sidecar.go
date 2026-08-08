@@ -91,7 +91,10 @@ func WriteWasmSymbolSidecar(wasmbytes []byte, dir, moduleID string, mode Profile
 // which wasmtime-go v38 does not surface through a Go API. If that
 // changes, this function grows; the manifest schema is additive.
 func extractWasmExports(wasmbytes []byte) ([]wasmSymbolEntry, error) {
-	engine := wasmtime.NewEngine()
+	// Must accept the same guests as the serving engine.
+	config := wasmtime.NewConfig()
+	config.SetWasmWideArithmetic(true)
+	engine := wasmtime.NewEngineWithConfig(config)
 	module, err := wasmtime.NewModule(engine, wasmbytes)
 	if err != nil {
 		return nil, err
