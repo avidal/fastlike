@@ -263,6 +263,10 @@ func newEngineConfig(profileCfg *profile.CompileConfig) *wasmtime.Config {
 	// Wide arithmetic is accepted by Fastly's production runtime.
 	config.SetWasmWideArithmetic(true)
 
+	// Production Fastly servers seem to use deterministic lowerings,
+	// making swizzle instructions slow and relaxed-simd essentially useless, sigh.
+	config.SetWasmRelaxedSIMDDeterministic(true)
+
 	// Note: Epoch interruption is temporarily disabled due to bugs in wasmtime-go v37
 	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
 
