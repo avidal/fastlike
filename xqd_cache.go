@@ -148,7 +148,7 @@ func (i *Instance) xqd_cache_busy_handle_wait(
 ) int32 {
 	i.abilog.Println("xqd_cache_busy_handle_wait")
 
-	busyHandle := i.cacheBusyHandles.Get(int(busy_handle))
+	busyHandle := i.cacheBusyHandles.Take(int(busy_handle))
 	if busyHandle == nil {
 		return XqdErrInvalidHandle
 	}
@@ -317,12 +317,10 @@ func (i *Instance) xqd_cache_transaction_cancel(cache_handle int32) int32 {
 func (i *Instance) xqd_cache_close_busy(busy_handle int32) int32 {
 	i.abilog.Println("xqd_cache_close_busy")
 
-	busyHandle := i.cacheBusyHandles.Get(int(busy_handle))
+	busyHandle := i.cacheBusyHandles.Take(int(busy_handle))
 	if busyHandle == nil {
 		return XqdErrInvalidHandle
 	}
-
-	// Nothing to do - just validates the handle exists
 
 	return XqdStatusOK
 }
@@ -331,12 +329,10 @@ func (i *Instance) xqd_cache_close_busy(busy_handle int32) int32 {
 func (i *Instance) xqd_cache_close(cache_handle int32) int32 {
 	i.abilog.Println("xqd_cache_close")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
+	handle := i.cacheHandles.Take(int(cache_handle))
 	if handle == nil {
 		return XqdErrInvalidHandle
 	}
-
-	// Nothing to do - just validates the handle exists
 
 	return XqdStatusOK
 }

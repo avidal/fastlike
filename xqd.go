@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -32,6 +33,18 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	// Create a new request handle and clone the downstream request into it
 	rhid, rh := i.requests.New()
 	rh.Request = i.ds_request.Clone(context.Background())
+	switch {
+	case i.ds_request.ProtoMajor == 3:
+		rh.version = Http3
+	case i.ds_request.ProtoMajor == 2:
+		rh.version = Http2
+	case i.ds_request.ProtoMajor == 1 && i.ds_request.ProtoMinor == 0:
+		rh.version = Http10
+	case i.ds_request.ProtoMajor == 0 && i.ds_request.ProtoMinor == 9:
+		rh.version = Http09
+	default:
+		rh.version = Http11
+	}
 
 	// The downstream request URL doesn't include host or scheme, so we populate them
 	rh.URL.Host = i.ds_request.Host
@@ -67,6 +80,7 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 		_, _ = io.Copy(bh, i.ds_request.Body)
 		_ = i.ds_request.Body.Close()
 	}
+	bh.trailers = i.ds_request.Trailer.Clone()
 
 	i.memory.PutUint32(uint32(rhid), int64(request_handle_out))
 	i.memory.PutUint32(uint32(bhid), int64(body_handle_out))
@@ -93,20 +107,33 @@ func (i *Instance) writeDownstreamHeaders(headers http.Header) {
 }
 
 // xqd_resp_send_downstream sends the response and body to the downstream client.
-// When stream is 0, copies the body immediately. When stream is non-zero, sends
-// headers immediately and redirects the body handle's writer to the response so
+// When stream is 1, sends headers immediately and streams future body writes.
+// Other values copy the body immediately.
+// Streaming redirects the body handle's writer to the response so
 // that future body_write calls stream directly to the client.
 // Respects the framing headers mode set on the response handle.
 // Returns XqdErrInvalidHandle if handles are invalid, XqdStatusOK on success.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
-	w, b := i.responses.Get(int(whandle)), i.bodies.Get(int(bhandle))
+	w := i.responses.Get(int(whandle))
 	if w == nil {
 		i.abilog.Printf("resp_send_downstream: invalid response handle %d", whandle)
 		return XqdErrInvalidHandle
-	} else if b == nil {
+	}
+	w = i.responses.Take(int(whandle))
+	if w.StatusCode >= 100 && w.StatusCode < 200 && w.StatusCode != http.StatusEarlyHints {
+		return XqdErrInvalidArgument
+	}
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
 		i.abilog.Printf("resp_send_downstream: invalid body handle %d", bhandle)
 		return XqdErrInvalidHandle
 	}
+	if b.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
+	streaming := stream == 1
+	b.isDownstreamStream = streaming
+	b.downstreamTrailers = i.ds_response.Header()
 
 	// Clone headers so we don't modify the original
 	headers := w.Header.Clone()
@@ -121,7 +148,7 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	i.writeDownstreamHeaders(headers)
 	i.ds_response.WriteHeader(w.StatusCode)
 
-	if stream != 0 {
+	if streaming {
 		// Streaming mode: redirect the body handle's writer to the HTTP
 		// response so that future body_write calls go directly to the client.
 		b.RedirectWriter(i.ds_response)
@@ -129,6 +156,7 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	}
 
 	// Non-streaming: copy body immediately and close.
+	b = i.bodies.Take(int(bhandle))
 	defer func() { _ = b.Close() }()
 	_, err := io.Copy(i.ds_response, b)
 	if err != nil {
@@ -154,6 +182,7 @@ func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
 	if i.trace != nil {
 		pr.observeWait(i.trace.WallStart)
 	}
+	pr = i.pendingRequests.Take(int(phandle))
 
 	i.pauseExecution()
 	resp, err := pr.Wait()
@@ -193,6 +222,9 @@ func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
 	if _, err := io.Copy(i.ds_response, resp.Body); err != nil {
 		i.abilog.Printf("send_downstream_pending: copy err, got %s", err.Error())
 		return XqdError
+	}
+	for name, values := range resp.Trailer {
+		i.ds_response.Header()[http.TrailerPrefix+http.CanonicalHeaderKey(name)] = slices.Clone(values)
 	}
 
 	return XqdStatusOK

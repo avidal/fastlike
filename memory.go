@@ -3,6 +3,7 @@ package fastlike
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
 
 	"github.com/bytecodealliance/wasmtime-go/v45"
 )
@@ -64,7 +65,7 @@ func (m *wasmMemory) Cap() int {
 func (m *wasmMemory) Data() []byte {
 	// Check if cached slice is still valid
 	// If memory has grown, the slice needs to be rebuilt
-	if m.slice != nil && cap(m.slice) == int(m.mem.Size(m.store)) {
+	if m.slice != nil && len(m.slice) == int(m.mem.DataSize(m.store)) {
 		return m.slice
 	}
 
@@ -129,13 +130,6 @@ func (m *Memory) PutInt32(v int32, offset int64) {
 	_, _ = m.WriteAt(b.Bytes(), offset)
 }
 
-// PutInt64 writes an int64 in little-endian byte order to the given offset in memory.
-func (m *Memory) PutInt64(v int64, offset int64) {
-	b := new(bytes.Buffer)
-	_ = binary.Write(b, binary.LittleEndian, v)
-	_, _ = m.WriteAt(b.Bytes(), offset)
-}
-
 // PutUint64 writes a uint64 in little-endian byte order to the given offset in memory.
 func (m *Memory) PutUint64(v uint64, offset int64) {
 	binary.LittleEndian.PutUint64(m.Data()[offset:], v)
@@ -144,15 +138,36 @@ func (m *Memory) PutUint64(v uint64, offset int64) {
 // ReadAt reads len(p) bytes from memory starting at the given offset.
 // It implements io.ReaderAt.
 func (m *Memory) ReadAt(p []byte, offset int64) (int, error) {
-	n := copy(p, m.Data()[offset:])
-	return n, nil
+	if !m.validRange(offset, uint64(len(p))) {
+		return 0, io.EOF
+	}
+	return copy(p, m.Data()[offset:]), nil
 }
 
 // WriteAt writes len(p) bytes to memory starting at the given offset.
 // It implements io.WriterAt.
 func (m *Memory) WriteAt(p []byte, offset int64) (int, error) {
-	n := copy(m.Data()[offset:], p)
-	return n, nil
+	if !m.validRange(offset, uint64(len(p))) {
+		return 0, io.ErrShortWrite
+	}
+	return copy(m.Data()[offset:], p), nil
+}
+
+// Uint64At reads a uint64 after validating the complete guest-memory range.
+func (m *Memory) Uint64At(offset int64) (uint64, error) {
+	var buf [8]byte
+	if _, err := m.ReadAt(buf[:], offset); err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(buf[:]), nil
+}
+
+// PutUint32At writes a uint32 after validating the complete guest-memory range.
+func (m *Memory) PutUint32At(v uint32, offset int64) error {
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], v)
+	_, err := m.WriteAt(buf[:], offset)
+	return err
 }
 
 // ReadUint32 reads a uint32 from the given offset (convenience wrapper for int32 offsets).

@@ -7,9 +7,26 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+const (
+	pendingRequestHandleBase = 0x10000000
+	kvLookupHandleBase       = 0x20000000
+	kvInsertHandleBase       = 0x30000000
+	kvDeleteHandleBase       = 0x40000000
+	kvListHandleBase         = 0x50000000
+	cacheBusyHandleBase      = 0x60000000
+	requestPromiseHandleBase = 0x68000000
+	asyncItemHandleBase      = 0x70000000
+)
+
+func namespacedHandleIndex(id, base, length int) (int, bool) {
+	idx := id - base - 1
+	return idx, idx >= 0 && idx < length
+}
 
 // FramingHeadersMode controls how HTTP framing headers (Content-Length, Transfer-Encoding) are handled.
 type FramingHeadersMode int32
@@ -33,7 +50,7 @@ type RequestHandle struct {
 	originalHeaders []string
 	// tlsState contains the TLS connection state if the downstream request was over TLS
 	tlsState *tls.ConnectionState
-	// version stores the HTTP version (0=Http09, 1=Http10, 2=Http11). Defaults to 2 (Http11).
+	// version stores an Http* ABI version constant. It defaults to Http11.
 	version int32
 	// framingHeadersMode controls how Content-Length and Transfer-Encoding headers are handled
 	framingHeadersMode FramingHeadersMode
@@ -52,6 +69,16 @@ func (rhs *RequestHandles) Get(id int) *RequestHandle {
 	}
 
 	return rhs.handles[id-1]
+}
+
+// Take removes and returns the request handle identified by id.
+func (rhs *RequestHandles) Take(id int) *RequestHandle {
+	if id <= 0 || id > len(rhs.handles) {
+		return nil
+	}
+	request := rhs.handles[id-1]
+	rhs.handles[id-1] = nil
+	return request
 }
 
 // New creates a new RequestHandle and returns its handle id and the handle itself.
@@ -99,6 +126,16 @@ func (rhs *ResponseHandles) Get(id int) *ResponseHandle {
 	return rhs.handles[id-1]
 }
 
+// Take removes and returns the response handle identified by id.
+func (rhs *ResponseHandles) Take(id int) *ResponseHandle {
+	if id <= 0 || id > len(rhs.handles) {
+		return nil
+	}
+	response := rhs.handles[id-1]
+	rhs.handles[id-1] = nil
+	return response
+}
+
 // New creates a new ResponseHandle and returns its handle id and the handle itself.
 // Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
@@ -128,29 +165,75 @@ type BodyHandle struct {
 	// The reader/writer/closer fields wrap this buffer.
 	buf *bytes.Buffer
 
-	// length is the total number of bytes in the body
-	length int64
+	// length is the number of readable bytes when lengthKnown is true.
+	length      int64
+	lengthKnown bool
 
 	// trailers are HTTP trailers that come after the body in chunked transfer encoding
-	trailers http.Header
-
+	trailers      http.Header
+	trailerSource func() http.Header
 	trailersReady bool
 
 	// Streaming body support (for send_async_streaming XQD call)
-	isStreaming      bool
-	streamingChan    chan []byte   // buffered channel for backpressure control
-	streamingDone    chan struct{} // closed when streaming completes or is cancelled
-	streamingWritten int64         // total bytes written to streaming body so far
+	isStreaming        bool
+	isDownstreamStream bool
+	downstreamTrailers http.Header
+	streamingChan      chan []byte   // buffered channel for backpressure control
+	streamingDone      chan struct{} // closed when streaming completes or is cancelled
+	streamingAbandon   chan struct{} // closed when the guest abandons an incomplete stream
+	streamingStopOnce  sync.Once
+	streamingReadyMu   sync.Mutex
+	streamingSpace     chan struct{} // closed when a full channel next becomes writable or stops
+	streamingWritten   int64         // total bytes written to streaming body so far
+}
+
+type joinedBodyCloser struct {
+	first  io.Closer
+	second io.Closer
+}
+
+func (c joinedBodyCloser) Close() error {
+	firstErr := c.first.Close()
+	secondErr := c.second.Close()
+	if firstErr != nil {
+		return firstErr
+	}
+	return secondErr
+}
+
+func joinBodyClosers(first, second io.Closer) io.Closer {
+	if first == nil {
+		return second
+	}
+	if second == nil {
+		return first
+	}
+	return joinedBodyCloser{first: first, second: second}
 }
 
 // Close implements io.Closer for a BodyHandle.
 // For streaming bodies, this signals the drain goroutine to finish
 // by sending a nil sentinel to the channel.
 func (b *BodyHandle) Close() error {
+	if b.downstreamTrailers != nil {
+		for name, values := range b.currentTrailers() {
+			b.downstreamTrailers[http.TrailerPrefix+http.CanonicalHeaderKey(name)] = slices.Clone(values)
+		}
+	}
 	if b.isStreaming && b.streamingChan != nil {
 		select {
 		case b.streamingChan <- nil:
 		default:
+			// A full channel must not turn a successful close into an
+			// incomplete stream. Queue the finish marker as soon as the
+			// consumer makes room, unless it has already stopped.
+			go func() {
+				select {
+				case b.streamingChan <- nil:
+				case <-b.streamingDone:
+				case <-b.streamingAbandon:
+				}
+			}()
 		}
 	}
 	if b.closer != nil {
@@ -159,29 +242,113 @@ func (b *BodyHandle) Close() error {
 	return nil
 }
 
+func (b *BodyHandle) currentTrailers() http.Header {
+	var source http.Header
+	if b.trailerSource != nil {
+		source = b.trailerSource()
+	}
+	if len(b.trailers) == 0 {
+		return source
+	}
+	if len(source) == 0 {
+		return b.trailers
+	}
+	merged := source.Clone()
+	for name, values := range b.trailers {
+		merged[name] = append(merged[name], values...)
+	}
+	return merged
+}
+
+func closedStreamingReadyChannel() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// streamingReadyChannel becomes readable when a write would no longer block.
+// A fresh channel is created for each full-buffer epoch, preventing a readiness
+// notification from an earlier drain from being reused after the buffer refills.
+func (b *BodyHandle) streamingReadyChannel() <-chan struct{} {
+	if b.isDownstreamStream {
+		return closedStreamingReadyChannel()
+	}
+	if !b.isStreaming || b.streamingChan == nil {
+		return nil
+	}
+
+	b.streamingReadyMu.Lock()
+	defer b.streamingReadyMu.Unlock()
+
+	select {
+	case <-b.streamingDone:
+		return closedStreamingReadyChannel()
+	case <-b.streamingAbandon:
+		return closedStreamingReadyChannel()
+	default:
+	}
+	if len(b.streamingChan) < cap(b.streamingChan) {
+		return closedStreamingReadyChannel()
+	}
+	if b.streamingSpace == nil {
+		b.streamingSpace = make(chan struct{})
+	}
+	return b.streamingSpace
+}
+
+// signalStreamingSpace wakes waiters after the consumer removes an item or
+// stops. The next full-buffer observation creates a new notification channel.
+func (b *BodyHandle) signalStreamingSpace() {
+	b.streamingReadyMu.Lock()
+	if b.streamingSpace != nil {
+		close(b.streamingSpace)
+		b.streamingSpace = nil
+	}
+	b.streamingReadyMu.Unlock()
+}
+
 // Read implements io.Reader for a BodyHandle
 func (b *BodyHandle) Read(p []byte) (int, error) {
-	return b.reader.Read(p)
+	n, err := b.reader.Read(p)
+	if b.lengthKnown {
+		if int64(n) > b.length {
+			b.lengthKnown = false
+		} else {
+			b.length -= int64(n)
+		}
+	}
+	return n, err
 }
 
 // Write implements io.Writer for a BodyHandle
 func (b *BodyHandle) Write(p []byte) (int, error) {
 	n, e := b.writer.Write(p)
-	b.length += int64(n)
+	b.growKnownLength(int64(n))
 	return n, e
 }
 
 // Size returns the length of the body in bytes, or -1 if the length is unknown.
 func (b *BodyHandle) Size() int64 {
-	if b.length == 0 {
+	if b.isStreaming || !b.lengthKnown {
 		return -1
 	}
 	return b.length
 }
 
+func (b *BodyHandle) growKnownLength(n int64) {
+	if !b.lengthKnown {
+		return
+	}
+	if n < 0 || b.length > (1<<63-1)-n {
+		b.lengthKnown = false
+		return
+	}
+	b.length += n
+}
+
 // IsStreaming returns true if this body handle is a streaming body
 func (b *BodyHandle) IsStreaming() bool {
-	return b.isStreaming
+	return b.isStreaming || b.isDownstreamStream
 }
 
 // IsStreamingReady checks if the streaming body has capacity for writes (non-blocking).
@@ -193,6 +360,8 @@ func (b *BodyHandle) IsStreamingReady() bool {
 	// Check if done (pipe closed on remote end)
 	select {
 	case <-b.streamingDone:
+		return false
+	case <-b.streamingAbandon:
 		return false
 	default:
 	}
@@ -211,6 +380,8 @@ func (b *BodyHandle) WriteStreaming(p []byte) (int, error) {
 	select {
 	case <-b.streamingDone:
 		return 0, io.ErrClosedPipe
+	case <-b.streamingAbandon:
+		return 0, io.ErrClosedPipe
 	default:
 	}
 
@@ -225,13 +396,38 @@ func (b *BodyHandle) WriteStreaming(p []byte) (int, error) {
 		return len(p), nil
 	case <-b.streamingDone:
 		return 0, io.ErrClosedPipe
+	case <-b.streamingAbandon:
+		return 0, io.ErrClosedPipe
 	}
+}
+
+// Abandon drops an incomplete streaming body without sending its finish marker.
+func (b *BodyHandle) Abandon() error {
+	if b.isStreaming && b.streamingAbandon != nil {
+		b.streamingStopOnce.Do(func() { close(b.streamingAbandon) })
+		b.signalStreamingSpace()
+		if b.closer != nil {
+			return b.closer.Close()
+		}
+		return nil
+	}
+	if b.isDownstreamStream {
+		// Abandoning a downstream stream must not run the normal finish path,
+		// which would publish its trailers as if the body completed.
+		if b.closer != nil {
+			return b.closer.Close()
+		}
+		return nil
+	}
+	return b.Close()
 }
 
 // RedirectWriter changes the body handle's writer to w. Future Write calls
 // (from body_write in the guest) go directly to w instead of the internal buffer.
 func (b *BodyHandle) RedirectWriter(w io.Writer) {
 	b.writer = w
+	b.lengthKnown = false
+	b.isDownstreamStream = true
 }
 
 // CloseStreaming closes the streaming body by sending a nil sentinel.
@@ -258,10 +454,20 @@ func (bhs *BodyHandles) Get(id int) *BodyHandle {
 	return bhs.handles[id-1]
 }
 
+// Take removes and returns the body handle identified by id.
+func (bhs *BodyHandles) Take(id int) *BodyHandle {
+	if id <= 0 || id > len(bhs.handles) {
+		return nil
+	}
+	body := bhs.handles[id-1]
+	bhs.handles[id-1] = nil
+	return body
+}
+
 // NewBuffer creates a BodyHandle backed by a buffer which can be read from or written to
 // Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (bhs *BodyHandles) NewBuffer() (int, *BodyHandle) {
-	bh := &BodyHandle{buf: new(bytes.Buffer)}
+	bh := &BodyHandle{buf: new(bytes.Buffer), lengthKnown: true}
 	bh.reader = io.Reader(bh.buf)
 	bh.writer = io.Writer(bh.buf)
 	bhs.handles = append(bhs.handles, bh)
@@ -277,6 +483,14 @@ func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
 	bh.writer = io.Discard
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles), bh
+}
+
+// NewResponseReader creates a reader body whose trailers are read from resp at
+// access time. net/http can replace resp.Trailer at EOF for unannounced trailers.
+func (bhs *BodyHandles) NewResponseReader(resp *http.Response) (int, *BodyHandle) {
+	id, bh := bhs.NewReader(resp.Body)
+	bh.trailerSource = func() http.Header { return resp.Trailer }
+	return id, bh
 }
 
 // NewWriter creates a BodyHandle whose writer is connected to the supplied Writer
@@ -439,22 +653,31 @@ type PendingRequestHandles struct {
 	handles []*PendingRequest
 }
 
-// Get returns the PendingRequest identified by id or nil if one does not exist
-// Note: IDs are 1-based (0 is reserved as invalid handle)
+// Get returns the PendingRequest identified by its opaque handle, or nil.
 func (prhs *PendingRequestHandles) Get(id int) *PendingRequest {
-	if id <= 0 || id > len(prhs.handles) {
+	idx, ok := namespacedHandleIndex(id, pendingRequestHandleBase, len(prhs.handles))
+	if !ok {
 		return nil
 	}
-
-	return prhs.handles[id-1]
+	return prhs.handles[idx]
 }
 
-// New creates a new PendingRequest and returns its handle id and the handle itself
-// Note: Returns 1-based IDs (0 is reserved as invalid handle)
+// Take removes and returns the pending request identified by id.
+func (prhs *PendingRequestHandles) Take(id int) *PendingRequest {
+	idx, ok := namespacedHandleIndex(id, pendingRequestHandleBase, len(prhs.handles))
+	if !ok {
+		return nil
+	}
+	request := prhs.handles[idx]
+	prhs.handles[idx] = nil
+	return request
+}
+
+// New creates a new PendingRequest and returns its opaque handle and the request.
 func (prhs *PendingRequestHandles) New() (int, *PendingRequest) {
 	pr := &PendingRequest{done: make(chan struct{})}
 	prhs.handles = append(prhs.handles, pr)
-	return len(prhs.handles), pr
+	return pendingRequestHandleBase + len(prhs.handles), pr
 }
 
 // Complete marks a pending request as completed with the given response or error
@@ -547,6 +770,17 @@ func (chs *CacheHandles) Get(id int) *CacheHandle {
 	return chs.handles[id-1]
 }
 
+// Take removes and returns the CacheHandle identified by id, or nil if it is
+// invalid or has already been consumed.
+func (chs *CacheHandles) Take(id int) *CacheHandle {
+	if id <= 0 || id > len(chs.handles) || chs.handles[id-1] == nil {
+		return nil
+	}
+	handle := chs.handles[id-1]
+	chs.handles[id-1] = nil
+	return handle
+}
+
 // New creates a new CacheHandle and returns its handle id
 // Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (chs *CacheHandles) New(tx *CacheTransaction) int {
@@ -565,21 +799,32 @@ type CacheBusyHandles struct {
 	handles []*CacheBusyHandle
 }
 
-// Get returns the CacheBusyHandle identified by id or nil if one does not exist
-// Note: IDs are 1-based (0 is reserved as invalid handle)
+// Get returns the CacheBusyHandle identified by id or nil if one does not exist.
 func (cbhs *CacheBusyHandles) Get(id int) *CacheBusyHandle {
-	if id <= 0 || id > len(cbhs.handles) {
+	idx, ok := namespacedHandleIndex(id, cacheBusyHandleBase, len(cbhs.handles))
+	if !ok {
 		return nil
 	}
-	return cbhs.handles[id-1]
+	return cbhs.handles[idx]
+}
+
+// Take removes and returns the CacheBusyHandle identified by id, or nil if it
+// is invalid or has already been consumed.
+func (cbhs *CacheBusyHandles) Take(id int) *CacheBusyHandle {
+	idx, ok := namespacedHandleIndex(id, cacheBusyHandleBase, len(cbhs.handles))
+	if !ok || cbhs.handles[idx] == nil {
+		return nil
+	}
+	handle := cbhs.handles[idx]
+	cbhs.handles[idx] = nil
+	return handle
 }
 
 // New creates a new CacheBusyHandle and returns its handle id
-// Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (cbhs *CacheBusyHandles) New(tx *CacheTransaction) int {
 	cbh := &CacheBusyHandle{Transaction: tx}
 	cbhs.handles = append(cbhs.handles, cbh)
-	return len(cbhs.handles)
+	return cacheBusyHandleBase + len(cbhs.handles)
 }
 
 // CacheReplaceHandle represents a cache replace operation
@@ -649,7 +894,6 @@ const (
 	AsyncItemTypeKVDelete
 	AsyncItemTypeKVList
 	AsyncItemTypeCacheBusy
-	AsyncItemTypeRequestPromise
 )
 
 // AsyncItemHandle represents a unified handle for async I/O operations.
@@ -669,24 +913,23 @@ type AsyncItemHandles struct {
 	handles []*AsyncItemHandle
 }
 
-// Get returns the AsyncItemHandle identified by id or nil if one does not exist
-// Note: IDs are 1-based (0 is reserved as invalid handle)
+// Get returns the AsyncItemHandle identified by its opaque handle, or nil.
 func (aihs *AsyncItemHandles) Get(id int) *AsyncItemHandle {
-	if id <= 0 || id > len(aihs.handles) {
+	idx, ok := namespacedHandleIndex(id, asyncItemHandleBase, len(aihs.handles))
+	if !ok {
 		return nil
 	}
-	return aihs.handles[id-1]
+	return aihs.handles[idx]
 }
 
-// New creates a new AsyncItemHandle and returns its handle id
-// Note: Returns 1-based IDs (0 is reserved as invalid handle)
+// New creates a new AsyncItemHandle and returns its opaque handle.
 func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
 	aih := &AsyncItemHandle{
 		Type:     itemType,
 		HandleID: handleID,
 	}
 	aihs.handles = append(aihs.handles, aih)
-	return len(aihs.handles)
+	return asyncItemHandleBase + len(aihs.handles)
 }
 
 // RequestPromise represents a promise for receiving an additional downstream request.
@@ -697,9 +940,10 @@ func (aihs *AsyncItemHandles) New(itemType AsyncItemType, handleID int) int {
 // In local testing environments, request promises never receive requests and will timeout/fail,
 // as fastlike is designed for single-request-per-instance semantics.
 type RequestPromise struct {
-	done chan struct{} // closed when a request arrives, times out, or is abandoned
-	req  *http.Request // the received request (nil if timed out or abandoned)
-	err  error         // error if promise was abandoned or timed out
+	done         chan struct{} // closed when a request arrives, times out, or is abandoned
+	req          *http.Request // the received request (nil if timed out or abandoned)
+	err          error         // error if promise was abandoned or timed out
+	completeOnce sync.Once
 }
 
 // IsReady checks if the request promise has completed (non-blocking)
@@ -720,9 +964,11 @@ func (rp *RequestPromise) Wait() (*http.Request, error) {
 
 // Complete marks a request promise as completed with the given request or error
 func (rp *RequestPromise) Complete(req *http.Request, err error) {
-	rp.req = req
-	rp.err = err
-	close(rp.done)
+	rp.completeOnce.Do(func() {
+		rp.req = req
+		rp.err = err
+		close(rp.done)
+	})
 }
 
 // RequestPromiseHandles is a slice of RequestPromise with methods to get and create
@@ -730,19 +976,29 @@ type RequestPromiseHandles struct {
 	handles []*RequestPromise
 }
 
-// Get returns the RequestPromise identified by id or nil if one does not exist
-// Note: IDs are 1-based (0 is reserved as invalid handle)
+// Get returns the RequestPromise identified by its opaque handle, or nil.
 func (rphs *RequestPromiseHandles) Get(id int) *RequestPromise {
-	if id <= 0 || id > len(rphs.handles) {
+	idx, ok := namespacedHandleIndex(id, requestPromiseHandleBase, len(rphs.handles))
+	if !ok {
 		return nil
 	}
-	return rphs.handles[id-1]
+	return rphs.handles[idx]
 }
 
-// New creates a new RequestPromise and returns its handle id and the handle itself
-// Note: Returns 1-based IDs (0 is reserved as invalid handle)
+// Take removes and returns the request promise identified by id.
+func (rphs *RequestPromiseHandles) Take(id int) *RequestPromise {
+	idx, ok := namespacedHandleIndex(id, requestPromiseHandleBase, len(rphs.handles))
+	if !ok {
+		return nil
+	}
+	promise := rphs.handles[idx]
+	rphs.handles[idx] = nil
+	return promise
+}
+
+// New creates a new RequestPromise and returns its opaque handle and the promise.
 func (rphs *RequestPromiseHandles) New() (int, *RequestPromise) {
 	rp := &RequestPromise{done: make(chan struct{})}
 	rphs.handles = append(rphs.handles, rp)
-	return len(rphs.handles), rp
+	return requestPromiseHandleBase + len(rphs.handles), rp
 }

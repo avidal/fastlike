@@ -3,8 +3,18 @@ package fastlike
 import (
 	"crypto/tls"
 	"errors"
+	"math"
 	"time"
 )
+
+const nextRequestOptionsMaskTimeout int32 = 1 << 1
+
+func nextRequestTimeout(milliseconds uint64) time.Duration {
+	if milliseconds > uint64(math.MaxInt64)/uint64(time.Millisecond) {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(milliseconds) * time.Millisecond
+}
 
 // xqd_http_downstream_next_request creates a request promise for receiving an additional downstream request.
 // In production Fastly, this enables session reuse where one wasm execution handles multiple requests.
@@ -14,34 +24,38 @@ import (
 func (i *Instance) xqd_http_downstream_next_request(options_mask int32, options_ptr int32, handle_out int32) int32 {
 	i.abilog.Printf("http_downstream_next_request: options_mask=%d", options_mask)
 
-	// Create a new request promise handle
+	// Fastly servers read the complete options record regardless of the mask. The
+	// timeout field is u64, and the timeout flag is bit 1 (bit 0 is reserved).
+	timeoutMs, err := i.memory.Uint64At(int64(options_ptr))
+	if err != nil || !i.memory.validRange(int64(handle_out), 4) {
+		return XqdError
+	}
+	timeout := 10 * time.Second // local default when no explicit timeout is set
+	if options_mask&nextRequestOptionsMaskTimeout != 0 {
+		timeout = nextRequestTimeout(timeoutMs)
+	}
+
+	// Create the promise only after all guest-memory reads have succeeded.
 	promiseID, promise := i.requestPromises.New()
 
-	// In local testing, we don't support session reuse, so we'll immediately fail the promise
-	// with a timeout error. In production, this would register for the next downstream request.
-	//
-	// For now, we return the handle and let next_request_wait time out or the guest can
-	// call next_request_abandon to cancel it.
+	// In local testing, session reuse is unsupported, so the promise completes
+	// with a timeout unless the guest abandons it first.
 	go func() {
-		// Parse timeout from options if provided
-		timeout := 10 * time.Second // default timeout
-		if options_mask&0x1 != 0 {  // NextRequestOptionsMask::TIMEOUT
-			// Read timeout_ms from options struct (first field, u32)
-			timeoutMs := i.memory.Uint32(int64(options_ptr))
-			if timeoutMs > 0 {
-				timeout = time.Duration(timeoutMs) * time.Millisecond
-			}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			promise.Complete(nil, errors.New("no additional downstream requests in local testing"))
+		case <-promise.done:
+			// Abandonment completed the promise; do not retain this goroutine until
+			// the original timeout.
 		}
-
-		// Wait for timeout (simulating no new requests arriving)
-		time.Sleep(timeout)
-
-		// Complete with timeout error
-		promise.Complete(nil, errors.New("no additional downstream requests in local testing"))
 	}()
 
 	// Write the promise handle to the output pointer
-	i.memory.PutUint32(uint32(promiseID), int64(handle_out))
+	if err := i.memory.PutUint32At(uint32(promiseID), int64(handle_out)); err != nil {
+		return XqdError
+	}
 	i.abilog.Printf("http_downstream_next_request: promise_handle=%d", promiseID)
 
 	return XqdStatusOK
@@ -58,7 +72,7 @@ func (i *Instance) xqd_http_downstream_next_request_wait(
 ) int32 {
 	i.abilog.Printf("http_downstream_next_request_wait: promise_handle=%d", promise_handle)
 
-	promise := i.requestPromises.Get(int(promise_handle))
+	promise := i.requestPromises.Take(int(promise_handle))
 	if promise == nil {
 		i.abilog.Printf("http_downstream_next_request_wait: invalid promise handle")
 		return XqdErrInvalidHandle
@@ -68,13 +82,12 @@ func (i *Instance) xqd_http_downstream_next_request_wait(
 	req, err := promise.Wait()
 	if err != nil {
 		i.abilog.Printf("http_downstream_next_request_wait: %v", err)
-		// Return error code for no more requests
-		return XqdErrAgain // EWOULDBLOCK - no additional requests available
+		return XqdErrNone
 	}
 
 	if req == nil {
 		// No request received (timed out)
-		return XqdErrAgain
+		return XqdErrNone
 	}
 
 	// Create handles for the new request and body
@@ -97,21 +110,13 @@ func (i *Instance) xqd_http_downstream_next_request_wait(
 func (i *Instance) xqd_http_downstream_next_request_abandon(promise_handle int32) int32 {
 	i.abilog.Printf("http_downstream_next_request_abandon: promise_handle=%d", promise_handle)
 
-	promise := i.requestPromises.Get(int(promise_handle))
+	promise := i.requestPromises.Take(int(promise_handle))
 	if promise == nil {
 		i.abilog.Printf("http_downstream_next_request_abandon: invalid promise handle")
 		return XqdErrInvalidHandle
 	}
 
-	// Complete the promise with an abandonment error
-	// This is safe to call multiple times (subsequent calls will be no-ops due to closed channel)
-	go func() {
-		defer func() {
-			// Recover from panic if channel is already closed
-			_ = recover()
-		}()
-		promise.Complete(nil, errors.New("request promise abandoned"))
-	}()
+	promise.Complete(nil, errors.New("request promise abandoned"))
 
 	return XqdStatusOK
 }

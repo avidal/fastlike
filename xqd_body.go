@@ -3,6 +3,7 @@ package fastlike
 import (
 	"bytes"
 	"io"
+	"sort"
 )
 
 // xqd_body_new creates a new empty body handle.
@@ -18,8 +19,8 @@ func (i *Instance) xqd_body_new(handle_out int32) int32 {
 // xqd_body_write writes data to a body handle from guest memory.
 // Reads size bytes from addr and writes them to the body identified by handle.
 // The body_end parameter controls write position: BodyWriteEndBack (0) appends to back,
-// BodyWriteEndFront (1) prepends to front. For streaming bodies, body_end also signals
-// when to close the stream. The number of bytes written is stored in nwritten_out.
+// while BodyWriteEndFront (1) prepends to front. Streams are finished by body_close.
+// The number of bytes written is stored in nwritten_out.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
 // or XqdError if memory operations fail.
 func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end int32, nwritten_out int32) int32 {
@@ -31,7 +32,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	}
 
 	// Check if this is a streaming body (used with async streaming requests)
-	if body.IsStreaming() {
+	if body.isStreaming {
 		if body_end == BodyWriteEndFront {
 			i.abilog.Printf("body_write: front-write not supported on streaming bodies")
 			return XqdErrUnsupported
@@ -59,6 +60,10 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 		return XqdStatusOK
 	}
+	if body.isDownstreamStream && body_end == BodyWriteEndFront {
+		i.abilog.Printf("body_write: front-write not supported on streaming bodies")
+		return XqdErrUnsupported
+	}
 
 	// Non-streaming body logic
 	// Read the data from guest memory
@@ -76,6 +81,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	if body_end == writeEndFront {
 		// Prepend: Create a MultiReader that reads new data first, then existing content
 		body.reader = io.MultiReader(bytes.NewReader(data), body.reader)
+		body.growKnownLength(int64(len(data)))
 		i.deepBumpBodyWrite(int64(size))
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
 		return XqdStatusOK
@@ -107,6 +113,12 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
+	if body.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
+	if maxlen < 0 || !i.memory.validRange(int64(addr), uint64(maxlen)) || !i.memory.validRange(int64(nread_out), 4) {
+		return XqdError
+	}
 
 	i.abilog.Printf("body_read: handle=%d addr=%d maxlen=%d", handle, addr, maxlen)
 
@@ -133,7 +145,9 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 
 	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, ncopied)
 	i.deepBumpBodyRead(ncopied)
-	i.memory.PutUint32(uint32(nwritten), int64(nread_out))
+	if err := i.memory.PutUint32At(uint32(nwritten), int64(nread_out)); err != nil {
+		return XqdError
+	}
 
 	if ncopied == 0 && maxlen > 0 {
 		body.trailersReady = true
@@ -145,7 +159,7 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 // xqd_body_append appends the contents of one body to another.
 // Combines src_handle body with dst_handle by creating a MultiReader that reads
 // from dst first, then src. This is a zero-copy operation that chains the readers.
-// Both handles must be valid body handles.
+// Both handles must be valid body handles. The source handle is consumed.
 // Returns XqdStatusOK on success or XqdErrInvalidHandle if either handle is invalid.
 func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	i.abilog.Printf("body_append: dst=%d src=%d", dst_handle, src_handle)
@@ -154,15 +168,54 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 	if dst == nil {
 		return XqdErrInvalidHandle
 	}
+	if dst_handle == src_handle {
+		if !dst.IsStreaming() {
+			// The source is consumed once the non-streaming destination has
+			// validated, even though reacquiring that same destination then fails.
+			consumed := i.bodies.Take(int(src_handle))
+			_ = consumed.Close()
+		}
+		return XqdErrInvalidHandle
+	}
 
 	src := i.bodies.Get(int(src_handle))
-	if src == nil {
+	// Fastly servers take sources only from the non-streaming body map. A streaming
+	// source is therefore invalid and must remain owned by its original handle.
+	if src == nil || src.IsStreaming() {
 		return XqdErrInvalidHandle
+	}
+	src = i.bodies.Take(int(src_handle))
+	if dst.isStreaming {
+		defer func() { _ = src.Close() }()
+		data, err := io.ReadAll(src)
+		if err != nil {
+			return XqdError
+		}
+		if len(data) == 0 {
+			return XqdStatusOK
+		}
+		if _, err := dst.WriteStreaming(data); err != nil {
+			return XqdError
+		}
+		return XqdStatusOK
+	}
+	if dst.isDownstreamStream {
+		defer func() { _ = src.Close() }()
+		if _, err := io.Copy(dst, src); err != nil {
+			return XqdError
+		}
+		return XqdStatusOK
 	}
 
 	// Chain the readers: dst content followed by src content
 	// This is efficient as it doesn't copy data, just creates a composite reader
 	dst.reader = io.MultiReader(dst.reader, src)
+	dst.closer = joinBodyClosers(dst.closer, src)
+	if srcLength := src.Size(); srcLength < 0 {
+		dst.lengthKnown = false
+	} else {
+		dst.growKnownLength(srcLength)
+	}
 
 	return XqdStatusOK
 }
@@ -172,7 +225,7 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 // Returns XqdStatusOK on success or XqdErrInvalidHandle if the handle is invalid
 // or the close operation fails.
 func (i *Instance) xqd_body_close(handle int32) int32 {
-	body := i.bodies.Get(int(handle))
+	body := i.bodies.Take(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
@@ -203,12 +256,18 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	// Read the trailer value from guest memory
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 
 	// Initialize the trailer map if this is the first trailer
@@ -231,8 +290,7 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 // contains the number of bytes written. Call repeatedly with the ending cursor until
 // it equals -1 to retrieve all names.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
-// XqdErrInvalidArgument if the body is a streaming body, or XqdErrAgain if the body
-// has not been fully read yet (trailers not available).
+// XqdErrAgain if the body has not been fully read yet (trailers not available).
 func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	i.abilog.Printf("body_trailer_names_get: handle=%d cursor=%d", handle, cursor)
 
@@ -242,27 +300,27 @@ func (i *Instance) xqd_body_trailer_names_get(handle int32, addr int32, maxlen i
 	}
 
 	if body.IsStreaming() {
-		return XqdErrInvalidArgument
+		return XqdErrInvalidHandle
 	}
 	if !body.trailersReady {
 		return XqdErrAgain
 	}
 
 	names := []string{}
-	for n := range body.trailers {
+	for n := range body.currentTrailers() {
 		names = append(names, n)
 	}
+	sort.Strings(names)
 
 	return xqd_multivalue(i.memory, names, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
 // xqd_body_trailer_value_get retrieves the first value of a trailer header.
 // Reads the trailer name from guest memory at name_addr (name_size bytes) and writes
-// the first value for that trailer to value_addr (up to value_maxlen bytes), null-terminated.
-// If the trailer doesn't exist or has no values, nwritten_out is set to 0.
+// the first value for that trailer to value_addr (up to value_maxlen bytes).
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
-// XqdErrInvalidArgument if the body is a streaming body, XqdErrAgain if the body has not
-// been fully read yet, XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
+// XqdErrInvalidArgument if the trailer is absent, XqdErrAgain if the body has not been
+// fully read yet, XqdErrBufferLength if the buffer is too small, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, name_size int32, value_addr int32, value_maxlen int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -270,10 +328,13 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 	}
 
 	if body.IsStreaming() {
-		return XqdErrInvalidArgument
+		return XqdErrInvalidHandle
 	}
 	if !body.trailersReady {
 		return XqdErrAgain
+	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
 	}
 
 	nameBuf := make([]byte, name_size)
@@ -281,27 +342,24 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 	if err != nil {
 		return XqdError
 	}
-
-	// Get all values for this trailer name
-	values := body.trailers.Values(string(nameBuf))
-	if len(values) == 0 {
-		// No values found - return 0 bytes written
-		i.memory.PutUint32(0, int64(nwritten_out))
-		return XqdStatusOK
+	if !validHTTPHeaderName(nameBuf) {
+		return XqdErrInvalidArgument
 	}
 
-	// Get the first value and prepare to null-terminate it
-	value := []byte(values[0])
+	// Get all values for this trailer name
+	values := body.currentTrailers().Values(string(nameBuf))
+	if len(values) == 0 {
+		return XqdErrInvalidArgument
+	}
 
-	// Check if buffer is large enough (including null terminator)
-	if len(value)+1 > int(value_maxlen) {
+	// Get the first value
+	value := []byte(values[0])
+	i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
+
+	if len(value) > int(value_maxlen) {
 		return XqdErrBufferLength
 	}
 
-	// Append null terminator
-	value = append(value, '\x00')
-
-	// Write the null-terminated value to guest memory
 	nwritten, err := i.memory.WriteAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
@@ -319,8 +377,7 @@ func (i *Instance) xqd_body_trailer_value_get(handle int32, name_addr int32, nam
 // to handle results that exceed maxlen buffer size. The ending_cursor_out indicates the
 // position for the next call, and nwritten_out contains the number of bytes written.
 // Returns XqdStatusOK on success, XqdErrInvalidHandle if the body handle is invalid,
-// XqdErrInvalidArgument if the body is a streaming body, XqdErrAgain if the body has not
-// been fully read yet, or XqdError if memory operations fail.
+// XqdErrAgain if the body has not been fully read yet, or XqdError if memory operations fail.
 func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -328,10 +385,13 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 	}
 
 	if body.IsStreaming() {
-		return XqdErrInvalidArgument
+		return XqdErrInvalidHandle
 	}
 	if !body.trailersReady {
 		return XqdErrAgain
+	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
 	}
 
 	buf := make([]byte, name_size)
@@ -339,9 +399,12 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
+	}
 
 	// Get all values for this trailer name
-	values := body.trailers.Values(string(buf))
+	values := body.currentTrailers().Values(string(buf))
 
 	i.abilog.Printf("body_trailer_values_get: handle=%d name=%q cursor=%d", handle, string(buf), cursor)
 
@@ -357,14 +420,12 @@ func (i *Instance) xqd_body_trailer_values_get(handle int32, name_addr int32, na
 func (i *Instance) xqd_body_abandon(handle int32) int32 {
 	i.abilog.Printf("body_abandon: handle=%d", handle)
 
-	body := i.bodies.Get(int(handle))
+	body := i.bodies.Take(int(handle))
 	if body == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Close and drop the body without finishing it properly
-	// This is used when streaming is incomplete or failed
-	if err := body.Close(); err != nil {
+	if err := body.Abandon(); err != nil {
 		return XqdError
 	}
 

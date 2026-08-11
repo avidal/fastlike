@@ -178,45 +178,69 @@ func (i *Instance) getAsyncItemChannel(item *AsyncItemHandle) <-chan struct{} {
 // Returns nil if the handle is invalid or not recognized.
 func (i *Instance) getHandleChannel(handle int) <-chan struct{} {
 	// Try as async item handle first
-	asyncItem := i.asyncItems.Get(handle)
-	if asyncItem != nil {
-		return i.getAsyncItemChannel(asyncItem)
+	if i.asyncItems != nil {
+		asyncItem := i.asyncItems.Get(handle)
+		if asyncItem != nil {
+			return i.getAsyncItemChannel(asyncItem)
+		}
 	}
 
 	// Try as pending request handle
-	pr := i.pendingRequests.Get(handle)
-	if pr != nil {
-		return pr.done
+	if i.pendingRequests != nil {
+		pr := i.pendingRequests.Get(handle)
+		if pr != nil {
+			return pr.done
+		}
 	}
 
 	// Try as body handle (for streaming writes)
-	body := i.bodies.Get(handle)
-	if body != nil {
-		return i.getBodyChannel(body)
+	if i.bodies != nil {
+		body := i.bodies.Get(handle)
+		if body != nil {
+			return i.getBodyChannel(body)
+		}
+	}
+
+	if i.kvLookups != nil {
+		if lookup := i.kvLookups.Get(handle); lookup != nil {
+			return lookup.done
+		}
+	}
+	if i.kvInserts != nil {
+		if insert := i.kvInserts.Get(handle); insert != nil {
+			return insert.done
+		}
+	}
+	if i.kvDeletes != nil {
+		if deletion := i.kvDeletes.Get(handle); deletion != nil {
+			return deletion.done
+		}
+	}
+	if i.kvLists != nil {
+		if list := i.kvLists.Get(handle); list != nil {
+			return list.done
+		}
+	}
+	if i.cacheBusyHandles != nil {
+		if busy := i.cacheBusyHandles.Get(handle); busy != nil && busy.Transaction != nil {
+			return busy.Transaction.ready
+		}
+	}
+	if i.requestPromises != nil {
+		if promise := i.requestPromises.Get(handle); promise != nil {
+			return promise.done
+		}
 	}
 
 	return nil
 }
 
 // getBodyChannel returns a completion channel for a body handle.
-// For streaming bodies, returns the body's streaming done channel.
+// For streaming bodies, returns a channel that signals write capacity.
 // For non-streaming bodies, returns an already-closed channel (always ready).
 func (i *Instance) getBodyChannel(body *BodyHandle) <-chan struct{} {
 	if body.IsStreaming() {
-		// For streaming bodies, return the streaming done channel
-		// This channel is closed when streaming completes or has capacity
-		if body.streamingDone != nil {
-			return body.streamingDone
-		}
-		// If no done channel, check if ready now
-		if body.IsStreamingReady() {
-			ch := make(chan struct{})
-			close(ch)
-			return ch
-		}
-		// Streaming body without done channel and not ready - return nil
-		// This will cause the handle to be treated as invalid
-		return nil
+		return body.streamingReadyChannel()
 	}
 
 	// Non-streaming bodies are always ready

@@ -242,6 +242,9 @@ func newInstanceWithProfile(wasmbytes []byte, compileCfg *profile.CompileConfig,
 func (i *Instance) reset() {
 	// Close all HTTP request bodies
 	for _, r := range i.requests.handles {
+		if r == nil {
+			continue
+		}
 		if r.Body != nil {
 			_ = r.Body.Close()
 		}
@@ -249,6 +252,9 @@ func (i *Instance) reset() {
 
 	// Close all HTTP response bodies
 	for _, w := range i.responses.handles {
+		if w == nil {
+			continue
+		}
 		if w.Body != nil {
 			_ = w.Body.Close()
 		}
@@ -256,11 +262,24 @@ func (i *Instance) reset() {
 
 	// Close all body handles and release buffers
 	for _, b := range i.bodies.handles {
-		if b.closer != nil {
+		if b == nil {
+			continue
+		}
+		if b.IsStreaming() {
+			_ = b.Abandon()
+		} else if b.closer != nil {
 			_ = b.closer.Close()
 		}
 		if b.buf != nil {
 			b.buf = nil
+		}
+	}
+
+	// Wake local next-request timers before dropping their handles so the
+	// timeout goroutines do not outlive the request that created them.
+	for _, promise := range i.requestPromises.handles {
+		if promise != nil {
+			promise.Complete(nil, context.Canceled)
 		}
 	}
 
