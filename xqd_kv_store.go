@@ -100,8 +100,8 @@ func (i *Instance) xqd_kv_store_lookup_wait(
 ) int32 {
 	i.abilog.Println("xqd_kv_store_lookup_wait")
 
-	// Get the lookup handle
-	lookup := i.kvLookups.Get(int(lookupHandle))
+	// Waiting consumes the pending operation handle.
+	lookup := i.kvLookups.Take(int(lookupHandle))
 	if lookup == nil {
 		return XqdErrInvalidHandle
 	}
@@ -161,8 +161,8 @@ func (i *Instance) xqd_kv_store_lookup_wait_v2(
 ) int32 {
 	i.abilog.Println("xqd_kv_store_lookup_wait_v2")
 
-	// Get the lookup handle
-	lookup := i.kvLookups.Get(int(lookupHandle))
+	// Waiting consumes the pending operation handle.
+	lookup := i.kvLookups.Take(int(lookupHandle))
 	if lookup == nil {
 		return XqdErrInvalidHandle
 	}
@@ -319,8 +319,8 @@ func (i *Instance) xqd_kv_store_insert_wait(
 ) int32 {
 	i.abilog.Println("xqd_kv_store_insert_wait")
 
-	// Get the insert handle
-	insert := i.kvInserts.Get(int(insertHandle))
+	// Waiting consumes the pending operation handle.
+	insert := i.kvInserts.Take(int(insertHandle))
 	if insert == nil {
 		return XqdErrInvalidHandle
 	}
@@ -399,8 +399,8 @@ func (i *Instance) xqd_kv_store_delete_wait(
 ) int32 {
 	i.abilog.Println("xqd_kv_store_delete_wait")
 
-	// Get the delete handle
-	del := i.kvDeletes.Get(int(deleteHandle))
+	// Waiting consumes the pending operation handle.
+	del := i.kvDeletes.Take(int(deleteHandle))
 	if del == nil {
 		return XqdErrInvalidHandle
 	}
@@ -511,8 +511,8 @@ func (i *Instance) xqd_kv_store_list_wait(
 ) int32 {
 	i.abilog.Println("xqd_kv_store_list_wait")
 
-	// Get the list handle
-	list := i.kvLists.Get(int(listHandle))
+	// Waiting consumes the pending operation handle.
+	list := i.kvLists.Take(int(listHandle))
 	if list == nil {
 		return XqdErrInvalidHandle
 	}

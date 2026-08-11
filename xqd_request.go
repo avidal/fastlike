@@ -20,6 +20,28 @@ import (
 	"unicode/utf8"
 )
 
+var errStreamingBodyAbandoned = errors.New("streaming body abandoned")
+
+const maxPendingRequests int32 = 16 * 1024
+
+// cachingSendError marks the transport outcome for which Fastly servers expose a
+// populated SendErrorDetail from the pending-request v2 calls. Other errors
+// deliberately receive an Ok detail even though the hostcall itself failed.
+type cachingSendError struct {
+	err error
+}
+
+func (e *cachingSendError) Error() string { return e.err.Error() }
+func (e *cachingSendError) Unwrap() error { return e.err }
+
+func pendingRequestErrorDetail(err error) *SendErrorDetail {
+	var sendErr *cachingSendError
+	if errors.As(err, &sendErr) {
+		return createErrorDetailFromError(sendErr.err)
+	}
+	return createErrorDetailFromError(nil)
+}
+
 // SendErrorDetail represents the error details structure for send_v2/send_v3
 // This matches the C struct layout expected by the guest
 type SendErrorDetail struct {
@@ -210,6 +232,42 @@ func applyAutoDecompression(resp *http.Response, autoDecompressEncodings uint32)
 	return nil
 }
 
+func applyAutomaticBodyLength(req *http.Request, body *BodyHandle) {
+	if length := body.Size(); length >= 0 {
+		if length == 0 && requestMethodHasNoExpectedPayload(req.Method) {
+			req.Header.Del("Content-Length")
+			req.ContentLength = 0
+			return
+		}
+		req.Header.Set("Content-Length", fmt.Sprintf("%d", length))
+		req.ContentLength = length
+	}
+}
+
+func requestMethodHasNoExpectedPayload(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodConnect, http.MethodDelete, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func applyRequestHTTPVersion(req *http.Request, version int32) {
+	switch version {
+	case Http09:
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/0.9", 0, 9
+	case Http10:
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/1.0", 1, 0
+	case Http2:
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+	case Http3:
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/3.0", 3, 0
+	default:
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/1.1", 1, 1
+	}
+}
+
 // xqd_req_version_get retrieves the HTTP protocol version for the request.
 // Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK on success.
 func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
@@ -225,7 +283,7 @@ func (i *Instance) xqd_req_version_get(handle int32, version_out int32) int32 {
 }
 
 // xqd_req_version_set sets the HTTP protocol version for the request.
-// Only HTTP/0.9, HTTP/1.0, and HTTP/1.1 are supported.
+// Supports every version represented by the ABI: HTTP/0.9 through HTTP/3.
 // Returns XqdErrInvalidHandle, XqdErrInvalidArgument, or XqdStatusOK.
 func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 	i.abilog.Printf("req_version_set: handle=%d version=%d", handle, version)
@@ -236,8 +294,7 @@ func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 		return XqdErrInvalidHandle
 	}
 
-	// Validate that the version is one of the supported HTTP versions
-	if version != Http09 && version != Http10 && version != Http11 {
+	if version < Http09 || version > Http3 {
 		i.abilog.Printf("req_version_set: invalid version %d", version)
 		return XqdErrInvalidArgument
 	}
@@ -301,8 +358,8 @@ func (i *Instance) xqd_req_method_get(handle int32, addr int32, maxlen int32, nw
 }
 
 // xqd_req_method_set sets the HTTP method for the request.
-// Reads the method string from guest memory at addr and validates it against standard HTTP methods.
-// Returns XqdErrInvalidHandle if handle is invalid, XqdErrHttpParse if method is invalid, or XqdStatusOK on success.
+// Reads the method string from guest memory at addr and validates it as an HTTP token.
+// Returns XqdErrInvalidHandle if handle is invalid, XqdErrInvalidArgument if method is invalid, or XqdStatusOK on success.
 func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
@@ -315,30 +372,14 @@ func (i *Instance) xqd_req_method_set(handle int32, addr int32, size int32) int3
 		return XqdError
 	}
 
-	// Validate that the method is one of the standard HTTP methods (case-insensitive)
-	// We use null-terminated concatenation as a simple string set for validation
-	validMethods := strings.Join([]string{
-		http.MethodGet,
-		http.MethodHead,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodConnect,
-		http.MethodOptions,
-		http.MethodTrace,
-	}, "\x00")
-
-	methodUpper := strings.ToUpper(string(method))
-	if !strings.Contains(validMethods, methodUpper) {
+	if !validHTTPHeaderName(method) {
 		i.abilog.Printf("req_method_set: invalid method=%q", method)
-		return XqdErrHttpParse
+		return XqdErrInvalidArgument
 	}
 
 	i.abilog.Printf("req_method_set: handle=%d method=%q", handle, method)
 
-	// Store the method in uppercase (HTTP methods are case-sensitive and should be uppercase)
-	r.Method = methodUpper
+	r.Method = string(method)
 	return XqdStatusOK
 }
 
@@ -404,9 +445,8 @@ func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_siz
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("req_header_remove: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("req_header_remove: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -415,11 +455,14 @@ func (i *Instance) xqd_req_header_remove(handle int32, name_addr int32, name_siz
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	header := http.CanonicalHeaderKey(string(name))
 
-	// Check if the header exists before removing
-	if r.Header.Get(header) == "" {
+	// Map membership distinguishes an absent header from a present empty value.
+	if _, exists := r.Header[header]; !exists {
 		i.abilog.Printf("req_header_remove: header %q not found\n", header)
 		return XqdErrInvalidArgument
 	}
@@ -438,9 +481,8 @@ func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_siz
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("req_header_insert: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("req_header_insert: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -449,11 +491,17 @@ func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_siz
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(name))
@@ -478,9 +526,8 @@ func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_siz
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("req_header_append: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("req_header_append: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -489,11 +536,17 @@ func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_siz
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(name))
@@ -518,10 +571,8 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("req_header_value_get: header name too long: %d bytes (max 65535)\n", name_size)
-		i.memory.PutUint32(0, int64(nwritten_out))
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("req_header_value_get: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -529,6 +580,9 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(buf))
@@ -539,7 +593,6 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 	values, exists := r.Header[header]
 	if !exists || len(values) == 0 {
 		i.abilog.Printf("req_header_value_get: header %q not found\n", header)
-		i.memory.PutUint32(0, int64(nwritten_out))
 		return XqdErrInvalidArgument
 	}
 
@@ -563,18 +616,24 @@ func (i *Instance) xqd_req_header_value_get(handle int32, name_addr int32, name_
 }
 
 // xqd_req_header_values_get retrieves all values for a specific header.
-// Uses cursor-based pagination to support headers with multiple values. Values are sorted alphabetically.
+// Uses cursor-based pagination to support headers with multiple values.
 // Returns XqdErrInvalidHandle if handle is invalid, XqdErrBufferLength if buffer is too small, or XqdStatusOK on success.
 func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	r := i.requests.Get(int(handle))
 	if r == nil {
 		return XqdErrInvalidHandle
 	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
+	}
 
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(buf))
@@ -585,9 +644,6 @@ func (i *Instance) xqd_req_header_values_get(handle int32, name_addr int32, name
 	if !ok {
 		values = []string{}
 	}
-
-	// Sort the values otherwise cursors don't work
-	sort.Strings(values[:])
 
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
@@ -601,6 +657,9 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 	if r == nil {
 		return XqdErrInvalidHandle
 	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
+	}
 
 	// Read the header name
 	buf := make([]byte, name_size)
@@ -608,26 +667,33 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
+	}
 
 	header := http.CanonicalHeaderKey(string(buf))
 
-	// Read the values buffer. Values are separated by NUL bytes.
-	if values_size <= 0 {
+	// Read the values buffer. Values are separated and terminated by NUL
+	// bytes. An empty buffer is the empty value list and clears the header.
+	if values_size < 0 {
 		return XqdErrInvalidArgument
 	}
-	buf = make([]byte, values_size)
-	_, err = i.memory.ReadAt(buf, int64(values_addr))
-	if err != nil {
-		return XqdError
-	}
+	values := make([][]byte, 0)
+	if values_size > 0 {
+		buf = make([]byte, values_size)
+		_, err = i.memory.ReadAt(buf, int64(values_addr))
+		if err != nil {
+			return XqdError
+		}
 
-	// Trim a trailing NUL if present, then split on NUL
-	if len(buf) > 0 && buf[len(buf)-1] == 0 {
-		buf = buf[:len(buf)-1]
+		parts := bytes.Split(buf, []byte("\x00"))
+		values = parts[:len(parts)-1]
 	}
-
-	// Split on null bytes to get individual values
-	values := bytes.Split(buf, []byte("\x00"))
+	for _, value := range values {
+		if !validHTTPHeaderValue(value) {
+			return XqdErrInvalidArgument
+		}
+	}
 
 	i.abilog.Printf("req_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
 
@@ -696,12 +762,6 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		return XqdErrInvalidHandle
 	}
 
-	b := i.bodies.Get(int(bhandle))
-	if b == nil {
-		i.abilog.Printf("req_send: invalid body handle=%d", bhandle)
-		return XqdErrInvalidHandle
-	}
-
 	buf := make([]byte, backend_size)
 	_, err := i.memory.ReadAt(buf, int64(backend_addr))
 	if err != nil {
@@ -715,6 +775,17 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 		i.abilog.Printf("req_send: URL not set for request handle %d", rhandle)
 		return XqdErrHttpUserInvalid
 	}
+	r = i.requests.Take(int(rhandle))
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+	if b.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
+	b = i.bodies.Take(int(bhandle))
+	defer func() { _ = b.Close() }()
 
 	i.abilog.Printf("req_send: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
@@ -722,8 +793,10 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	if err != nil {
 		return XqdErrHttpUserInvalid
 	}
+	applyRequestHTTPVersion(req, r.version)
 
 	req.Header = r.Header.Clone()
+	req.Trailer = b.trailers.Clone()
 
 	// Ensure headers are initialized
 	if req.Header == nil {
@@ -751,14 +824,7 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 
 	// Set Content-Length only in automatic mode (when framing headers are managed by the library)
 	if effectiveMode == FramingHeadersModeAutomatic {
-		// Set Content-Length if not already set or if ContentLength field is uninitialized
-		// This ensures the backend receives proper content length information
-		if req.Header.Get("content-length") == "" {
-			req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
-			req.ContentLength = b.Size()
-		} else if req.ContentLength <= 0 {
-			req.ContentLength = b.Size()
-		}
+		applyAutomaticBodyLength(req, b)
 	} else {
 		// Manual mode: use the Content-Length from headers if present
 		if cl := req.Header.Get("Content-Length"); cl != "" {
@@ -856,9 +922,10 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	wh.Status = w.Status
 	wh.StatusCode = w.StatusCode
 	wh.Header = w.Header.Clone()
+	wh.Trailer = w.Trailer
 	wh.Body = w.Body
 
-	bhid, _ := i.bodies.NewReader(wh.Body)
+	bhid, _ := i.bodies.NewResponseReader(w)
 
 	i.abilog.Printf("req_send: response handle=%d body=%d", whid, bhid)
 
@@ -868,18 +935,16 @@ func (i *Instance) xqd_req_send(rhandle int32, bhandle int32, backend_addr, back
 	return XqdStatusOK
 }
 
-// xqd_req_close marks a request handle to close the connection after use.
-// Sets the Close flag on the request, indicating connection should not be reused.
+// xqd_req_close consumes a request handle.
 // Returns XqdErrInvalidHandle if handle is invalid, or XqdStatusOK on success.
 func (i *Instance) xqd_req_close(handle int32) int32 {
-	r := i.requests.Get(int(handle))
+	r := i.requests.Take(int(handle))
 	if r == nil {
 		i.abilog.Printf("req_close: invalid handle %d", handle)
 		return XqdErrInvalidHandle
 	}
 
 	i.abilog.Printf("req_close: handle=%d", handle)
-	r.Close = true
 	return XqdStatusOK
 }
 
@@ -892,13 +957,6 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	r := i.requests.Get(int(rhandle))
 	if r == nil {
 		i.abilog.Printf("req_send_async: invalid request handle=%d", rhandle)
-		return XqdErrInvalidHandle
-	}
-
-	// Validate body handle
-	b := i.bodies.Get(int(bhandle))
-	if b == nil {
-		i.abilog.Printf("req_send_async: invalid body handle=%d", bhandle)
 		return XqdErrInvalidHandle
 	}
 
@@ -915,6 +973,16 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		i.abilog.Printf("req_send_async: URL not set for request handle %d", rhandle)
 		return XqdErrHttpUserInvalid
 	}
+	r = i.requests.Take(int(rhandle))
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_async: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+	if b.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
+	b = i.bodies.Take(int(bhandle))
 
 	i.abilog.Printf("req_send_async: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
@@ -936,7 +1004,8 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 	// recover guards against a handler panic — without it, the
 	// BackendCall slot would stay Incomplete forever and pr.Complete
 	// would never fire (leaking goroutines that observe pr.done).
-	go func(ctx context.Context, req *http.Request, body *BodyHandle, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+	go func(ctx context.Context, req *http.Request, body *BodyHandle, version int32, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+		defer func() { _ = body.Close() }()
 		defer func() {
 			if rv := recover(); rv != nil {
 				err := fmt.Errorf("backend handler panic: %v", rv)
@@ -952,11 +1021,13 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 			pr.Complete(nil, err)
 			return
 		}
+		applyRequestHTTPVersion(httpReq, version)
 
 		var backendErr error
 		httpReq = httpReq.WithContext(markBackendSendError(httpReq.Context(), &backendErr))
 
 		httpReq.Header = req.Header.Clone()
+		httpReq.Trailer = body.trailers.Clone()
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
 		}
@@ -971,12 +1042,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 
 		// Set Content-Length only in automatic mode
 		if effectiveMode == FramingHeadersModeAutomatic {
-			if httpReq.Header.Get("content-length") == "" {
-				httpReq.Header.Add("content-length", fmt.Sprintf("%d", body.Size()))
-				httpReq.ContentLength = body.Size()
-			} else if httpReq.ContentLength <= 0 {
-				httpReq.ContentLength = body.Size()
-			}
+			applyAutomaticBodyLength(httpReq, body)
 		} else {
 			// Manual mode: use the Content-Length from headers if present
 			if cl := httpReq.Header.Get("Content-Length"); cl != "" {
@@ -994,7 +1060,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 		if backendErr != nil {
 			i.abilog.Printf("req_send_async: backend send error: %v", backendErr)
 			rec.completeBackendCall(0, ctx.Err() != nil, backendErr)
-			pr.Complete(nil, backendErr)
+			pr.Complete(nil, &cachingSendError{err: backendErr})
 			return
 		}
 
@@ -1011,7 +1077,7 @@ func (i *Instance) xqd_req_send_async(rhandle int32, bhandle int32, backend_addr
 
 		// Mark the pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, b, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
+	}(i.ds_context, r.Request, b, r.version, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write the pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1032,13 +1098,6 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		return XqdErrInvalidHandle
 	}
 
-	// Validate body handle
-	b := i.bodies.Get(int(bhandle))
-	if b == nil {
-		i.abilog.Printf("req_send_async_streaming: invalid body handle=%d", bhandle)
-		return XqdErrInvalidHandle
-	}
-
 	// Read backend name
 	buf := make([]byte, backend_size)
 	_, err := i.memory.ReadAt(buf, int64(backend_addr))
@@ -1052,11 +1111,20 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		i.abilog.Printf("req_send_async_streaming: URL not set for request handle %d", rhandle)
 		return XqdErrHttpUserInvalid
 	}
+	r = i.requests.Take(int(rhandle))
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_async_streaming: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+	if b.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
 
 	i.abilog.Printf("req_send_async_streaming: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
 	// Read initial body content
-	initialBody, _ := io.ReadAll(b)
+	initialBody, initialBodyErr := io.ReadAll(b)
 
 	// Convert body handle to streaming mode. Guest writes go to the
 	// channel; a goroutine buffers them and sends the HTTP request
@@ -1065,6 +1133,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	b.isStreaming = true
 	b.streamingChan = make(chan []byte, 128)
 	b.streamingDone = make(chan struct{})
+	b.streamingAbandon = make(chan struct{})
 	b.streamingWritten = 0
 
 	// Create pending request handle
@@ -1081,8 +1150,11 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 	// Single goroutine: buffer body writes, then send the request.
 	// defer recover guards against a handler panic — same rationale
 	// as xqd_req_send_async.
-	go func(ctx context.Context, req *http.Request, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
-		defer close(b.streamingDone)
+	go func(ctx context.Context, req *http.Request, version int32, pr *PendingRequest, autoDecompress uint32, framingMode FramingHeadersMode, rec *backendCallRecorder, tracedTransport bool) {
+		defer func() {
+			close(b.streamingDone)
+			b.signalStreamingSpace()
+		}()
 		defer func() {
 			if rv := recover(); rv != nil {
 				err := fmt.Errorf("backend handler panic: %v", rv)
@@ -1091,17 +1163,44 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 				pr.Complete(nil, err)
 			}
 		}()
+		if initialBodyErr != nil {
+			rec.completeBackendCall(0, false, initialBodyErr)
+			pr.Complete(nil, initialBodyErr)
+			return
+		}
 
 		// Accumulate body data
 		var buf bytes.Buffer
 		if len(initialBody) > 0 {
 			buf.Write(initialBody)
 		}
-		for chunk := range b.streamingChan {
-			if chunk == nil {
-				break
+		if ctx == nil {
+			ctx = context.Background()
+		}
+	streaming:
+		for {
+			select {
+			case <-ctx.Done():
+				err := ctx.Err()
+				rec.completeBackendCall(0, true, err)
+				pr.Complete(nil, err)
+				return
+			case <-b.streamingAbandon:
+				rec.completeBackendCall(0, false, errStreamingBodyAbandoned)
+				pr.Complete(nil, errStreamingBodyAbandoned)
+				return
+			case chunk := <-b.streamingChan:
+				b.signalStreamingSpace()
+				if chunk == nil {
+					break streaming
+				}
+				buf.Write(chunk)
 			}
-			buf.Write(chunk)
+		}
+		if err := ctx.Err(); err != nil {
+			rec.completeBackendCall(0, true, err)
+			pr.Complete(nil, err)
+			return
 		}
 
 		// Body is complete — send the request with known Content-Length
@@ -1112,11 +1211,13 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 			pr.Complete(nil, err)
 			return
 		}
+		applyRequestHTTPVersion(httpReq, version)
 
 		var backendErr error
 		httpReq = httpReq.WithContext(markBackendSendError(httpReq.Context(), &backendErr))
 
 		httpReq.Header = req.Header.Clone()
+		httpReq.Trailer = b.trailers.Clone()
 		if httpReq.Header == nil {
 			httpReq.Header = http.Header{}
 		}
@@ -1137,7 +1238,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 		if backendErr != nil {
 			i.abilog.Printf("req_send_async_streaming: backend send error: %v", backendErr)
 			rec.completeBackendCall(0, ctx.Err() != nil, backendErr)
-			pr.Complete(nil, backendErr)
+			pr.Complete(nil, &cachingSendError{err: backendErr})
 			return
 		}
 
@@ -1150,7 +1251,7 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 
 		// Mark pending request as complete
 		pr.Complete(resp, nil)
-	}(i.ds_context, r.Request, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
+	}(i.ds_context, r.Request, r.version, pendingReq, r.autoDecompressEncodings, r.framingHeadersMode, recorder, transportPresent)
 
 	// Write pending request handle to guest memory
 	i.memory.PutUint32(uint32(phid), int64(ph_out))
@@ -1160,10 +1261,11 @@ func (i *Instance) xqd_req_send_async_streaming(rhandle int32, bhandle int32, ba
 }
 
 // xqd_req_send_async_v2 sends an asynchronous HTTP request with optional streaming.
-// Delegates to xqd_req_send_async_streaming if streaming is non-zero, otherwise calls xqd_req_send_async.
+// Delegates to xqd_req_send_async_streaming only when streaming is exactly one;
+// all other values use xqd_req_send_async.
 // Returns the same status codes as the delegated function.
 func (i *Instance) xqd_req_send_async_v2(rhandle int32, bhandle int32, backend_addr, backend_size int32, streaming int32, ph_out int32) int32 {
-	if streaming != 0 {
+	if streaming == 1 {
 		return i.xqd_req_send_async_streaming(rhandle, bhandle, backend_addr, backend_size, ph_out)
 	}
 	return i.xqd_req_send_async(rhandle, bhandle, backend_addr, backend_size, ph_out)
@@ -1189,6 +1291,7 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 
 	// Check if ready (non-blocking)
 	if pr.IsReady() {
+		pr = i.pendingRequests.Take(int(phandle))
 		// Request is complete, get the response
 		resp, err := pr.Wait() // Won't block since IsReady returned true
 		if err != nil {
@@ -1210,10 +1313,11 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 		wh.Status = resp.Status
 		wh.StatusCode = resp.StatusCode
 		wh.Header = resp.Header.Clone()
+		wh.Trailer = resp.Trailer
 		applyPendingRespHeaders(pr, wh)
 		wh.Body = resp.Body
 
-		bhid, _ := i.bodies.NewReader(wh.Body)
+		bhid, _ := i.bodies.NewResponseReader(resp)
 
 		i.abilog.Printf("pending_req_poll: response ready, handle=%d body=%d", whid, bhid)
 
@@ -1233,9 +1337,8 @@ func (i *Instance) xqd_pending_req_poll(phandle int32, is_done_out int32, wh_out
 }
 
 // xqd_pending_req_poll_v2 is xqd_pending_req_poll plus the error_detail out-param:
-// once the request completes it populates error_detail from the outcome, so a
-// backend transport failure surfaces as a send error rather than a 502. While
-// the request is still in flight the detail is left untouched.
+// it always initializes error_detail, using the Ok tag while the request is
+// still in flight and the completed outcome once it is ready.
 func (i *Instance) xqd_pending_req_poll_v2(phandle int32, error_detail_out int32, is_done_out int32, wh_out int32, bh_out int32) int32 {
 	pr := i.pendingRequests.Get(int(phandle))
 	if pr == nil {
@@ -1244,10 +1347,11 @@ func (i *Instance) xqd_pending_req_poll_v2(phandle int32, error_detail_out int32
 	}
 
 	status := i.xqd_pending_req_poll(phandle, is_done_out, wh_out, bh_out)
+	var err error
 	if pr.IsReady() {
-		_, err := pr.Wait()
-		_ = i.writeSendErrorDetail(error_detail_out, createErrorDetailFromError(err))
+		_, err = pr.Wait()
 	}
+	_ = i.writeSendErrorDetail(error_detail_out, pendingRequestErrorDetail(err))
 	return status
 }
 
@@ -1267,6 +1371,7 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	if i.trace != nil {
 		pr.observeWait(i.trace.WallStart)
 	}
+	pr = i.pendingRequests.Take(int(phandle))
 
 	// Pause CPU time tracking while waiting for the async request
 	i.pauseExecution()
@@ -1291,10 +1396,11 @@ func (i *Instance) xqd_pending_req_wait(phandle int32, wh_out int32, bh_out int3
 	wh.Status = resp.Status
 	wh.StatusCode = resp.StatusCode
 	wh.Header = resp.Header.Clone()
+	wh.Trailer = resp.Trailer
 	applyPendingRespHeaders(pr, wh)
 	wh.Body = resp.Body
 
-	bhid, _ := i.bodies.NewReader(wh.Body)
+	bhid, _ := i.bodies.NewResponseReader(resp)
 
 	i.abilog.Printf("pending_req_wait: response complete, handle=%d body=%d", whid, bhid)
 
@@ -1317,18 +1423,32 @@ func (i *Instance) xqd_pending_req_wait_v2(phandle int32, error_detail_out int32
 
 	status := i.xqd_pending_req_wait(phandle, wh_out, bh_out)
 	_, err := pr.Wait()
-	_ = i.writeSendErrorDetail(error_detail_out, createErrorDetailFromError(err))
+	_ = i.writeSendErrorDetail(error_detail_out, pendingRequestErrorDetail(err))
 	return status
 }
 
 // xqd_pending_req_select blocks until the first of multiple async requests completes.
 // Takes an array of pending request handles and returns the index of the first one to complete.
 // Pauses CPU time tracking while waiting. Uses goroutines to monitor all pending requests simultaneously.
-// Returns XqdErrInvalidArgument if handle list is empty, XqdErrInvalidHandle if any handle is invalid, XqdError if request failed, or XqdStatusOK on success.
+// Returns XqdErrInvalidArgument if the handle list is empty and
+// XqdErrInvalidHandle if any handle is invalid. A selected request failure is
+// reported through invalid output handles (and through error_detail in v2).
 func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
+	status, _ := i.pendingReqSelect(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+	return status
+}
+
+func (i *Instance) pendingReqSelect(phandles_addr int32, phandles_len int32, done_idx_out int32, wh_out int32, bh_out int32) (int32, error) {
 	if phandles_len == 0 {
 		i.abilog.Printf("pending_req_select: empty handle list")
-		return XqdErrInvalidArgument
+		return XqdErrInvalidArgument, nil
+	}
+	if uint32(phandles_len) >= uint32(maxPendingRequests) {
+		i.abilog.Printf("pending_req_select: handle list too long: %d", phandles_len)
+		return XqdErrBufferLength, nil
+	}
+	if !i.memory.validRange(int64(phandles_addr), uint64(phandles_len)*4) {
+		return XqdError, nil
 	}
 
 	i.abilog.Printf("pending_req_select: selecting from %d pending requests", phandles_len)
@@ -1346,7 +1466,6 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	type selectCase struct {
 		index   int
 		channel <-chan struct{}
-		pr      *PendingRequest
 	}
 
 	cases := make([]selectCase, 0, len(handles))
@@ -1354,12 +1473,11 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 		pr := i.pendingRequests.Get(int(handle))
 		if pr == nil {
 			i.abilog.Printf("pending_req_select: invalid handle=%d at index=%d", handle, idx)
-			return XqdErrInvalidHandle
+			return XqdErrInvalidHandle, nil
 		}
 		cases = append(cases, selectCase{
 			index:   idx,
 			channel: pr.done,
-			pr:      pr,
 		})
 		if i.trace != nil {
 			pr.observeWait(i.trace.WallStart)
@@ -1384,7 +1502,7 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	// Resume CPU time tracking after a request completes
 	i.resumeExecution()
 
-	pr := cases[doneIndex].pr
+	pr := i.pendingRequests.Take(int(handles[doneIndex]))
 
 	i.abilog.Printf("pending_req_select: request at index %d completed first", doneIndex)
 
@@ -1395,7 +1513,7 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 		i.memory.PutUint32(uint32(doneIndex), int64(done_idx_out))
 		i.memory.PutUint32(HandleInvalid, int64(wh_out))
 		i.memory.PutUint32(HandleInvalid, int64(bh_out))
-		return XqdError
+		return XqdStatusOK, err
 	}
 
 	// Response handed off to a response handle reset() will close.
@@ -1406,10 +1524,11 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	wh.Status = resp.Status
 	wh.StatusCode = resp.StatusCode
 	wh.Header = resp.Header.Clone()
+	wh.Trailer = resp.Trailer
 	applyPendingRespHeaders(pr, wh)
 	wh.Body = resp.Body
 
-	bhid, _ := i.bodies.NewReader(wh.Body)
+	bhid, _ := i.bodies.NewResponseReader(resp)
 
 	i.abilog.Printf("pending_req_select: response handle=%d body=%d", whid, bhid)
 
@@ -1418,16 +1537,17 @@ func (i *Instance) xqd_pending_req_select(phandles_addr int32, phandles_len int3
 	i.memory.PutUint32(uint32(whid), int64(wh_out))
 	i.memory.PutUint32(uint32(bhid), int64(bh_out))
 
-	return XqdStatusOK
+	return XqdStatusOK, nil
 }
 
 // xqd_pending_req_select_v2 blocks until the first of multiple async requests completes with error detail support.
-// Currently delegates to xqd_pending_req_select, ignoring the error_detail_out parameter.
 // Returns the same status codes as xqd_pending_req_select.
 func (i *Instance) xqd_pending_req_select_v2(phandles_addr int32, phandles_len int32, error_detail_out int32, done_idx_out int32, wh_out int32, bh_out int32) int32 {
-	// For now, ignore error_detail_out and just call the base version
-	// In the future, this could populate detailed error information
-	return i.xqd_pending_req_select(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+	status, selectedErr := i.pendingReqSelect(phandles_addr, phandles_len, done_idx_out, wh_out, bh_out)
+	if selectedErr != nil {
+		_ = i.writeSendErrorDetail(error_detail_out, pendingRequestErrorDetail(selectedErr))
+	}
+	return status
 }
 
 // applyPendingRespHeaders applies the response-header changes the guest queued
@@ -1453,12 +1573,15 @@ func (i *Instance) pendingReqHeaderTargets(label string, phandle, name_addr, nam
 		return nil, "", XqdErrInvalidHandle
 	}
 
-	if name_size > 65535 {
+	if !validHTTPHeaderNameSize(name_size) {
 		return nil, "", XqdErrInvalidArgument
 	}
 	name := make([]byte, name_size)
 	if _, err := i.memory.ReadAt(name, int64(name_addr)); err != nil {
 		return nil, "", XqdError
+	}
+	if !validHTTPHeaderName(name) {
+		return nil, "", XqdErrInvalidArgument
 	}
 
 	var targets []*PendingHeaders
@@ -1489,6 +1612,9 @@ func (i *Instance) xqd_pending_req_header_insert(phandle int32, name_addr int32,
 	if _, err := i.memory.ReadAt(value, int64(value_addr)); err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
+	}
 	for _, h := range targets {
 		h.Insert(name, string(value))
 	}
@@ -1505,6 +1631,9 @@ func (i *Instance) xqd_pending_req_header_append(phandle int32, name_addr int32,
 	value := make([]byte, value_size)
 	if _, err := i.memory.ReadAt(value, int64(value_addr)); err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 	for _, h := range targets {
 		h.Append(name, string(value))
@@ -1537,13 +1666,6 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		return XqdErrInvalidHandle
 	}
 
-	// Validate body handle
-	b := i.bodies.Get(int(bhandle))
-	if b == nil {
-		i.abilog.Printf("req_send_v2: invalid body handle=%d", bhandle)
-		return XqdErrInvalidHandle
-	}
-
 	// Read backend name
 	buf := make([]byte, backend_size)
 	_, err := i.memory.ReadAt(buf, int64(backend_addr))
@@ -1562,7 +1684,17 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		_ = i.writeSendErrorDetail(error_detail_out, errorDetail)
 		return XqdErrHttpUserInvalid
 	}
-
+	r = i.requests.Take(int(rhandle))
+	b := i.bodies.Get(int(bhandle))
+	if b == nil {
+		i.abilog.Printf("req_send_v2: invalid body handle=%d", bhandle)
+		return XqdErrInvalidHandle
+	}
+	if b.IsStreaming() {
+		return XqdErrInvalidHandle
+	}
+	b = i.bodies.Take(int(bhandle))
+	defer func() { _ = b.Close() }()
 	i.abilog.Printf("req_send_v2: handle=%d body=%d backend=%q uri=%q", rhandle, bhandle, backend, r.URL)
 
 	// Build the HTTP request
@@ -1572,8 +1704,10 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 		_ = i.writeSendErrorDetail(error_detail_out, errorDetail)
 		return XqdErrHttpUserInvalid
 	}
+	applyRequestHTTPVersion(req, r.version)
 
 	req.Header = r.Header.Clone()
+	req.Trailer = b.trailers.Clone()
 
 	if req.Header == nil {
 		req.Header = http.Header{}
@@ -1593,12 +1727,7 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 
 	// Set Content-Length only in automatic mode
 	if effectiveMode == FramingHeadersModeAutomatic {
-		if req.Header.Get("content-length") == "" {
-			req.Header.Add("content-length", fmt.Sprintf("%d", b.Size()))
-			req.ContentLength = b.Size()
-		} else if req.ContentLength <= 0 {
-			req.ContentLength = b.Size()
-		}
+		applyAutomaticBodyLength(req, b)
 	} else {
 		// Manual mode: use the Content-Length from headers if present
 		if cl := req.Header.Get("Content-Length"); cl != "" {
@@ -1685,9 +1814,10 @@ func (i *Instance) xqd_req_send_v2(rhandle int32, bhandle int32, backend_addr, b
 	wh.Status = w.Status
 	wh.StatusCode = w.StatusCode
 	wh.Header = w.Header.Clone()
+	wh.Trailer = w.Trailer
 	wh.Body = w.Body
 
-	bhid, _ := i.bodies.NewReader(wh.Body)
+	bhid, _ := i.bodies.NewResponseReader(w)
 
 	i.abilog.Printf("req_send_v2: response handle=%d body=%d", whid, bhid)
 

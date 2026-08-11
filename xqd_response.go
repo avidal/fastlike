@@ -54,15 +54,15 @@ func (i *Instance) xqd_resp_status_get(handle int32, status_out int32) int32 {
 }
 
 // xqd_resp_version_set sets the HTTP protocol version for a response handle.
-// Only HTTP/0.9, HTTP/1.0, and HTTP/1.1 are supported. Returns XqdErrInvalidArgument for unsupported versions.
+// Supports every version represented by the ABI: HTTP/0.9 through HTTP/3.
+// Returns XqdErrInvalidArgument for unknown versions.
 func (i *Instance) xqd_resp_version_set(handle int32, version int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Validate that the version is one of the supported HTTP versions
-	if version != Http09 && version != Http10 && version != Http11 {
+	if version < Http09 || version > Http3 {
 		i.abilog.Printf("resp_version_set: invalid version %d", version)
 		return XqdErrInvalidArgument
 	}
@@ -112,18 +112,16 @@ func (i *Instance) xqd_resp_header_names_get(handle int32, addr int32, maxlen in
 
 // xqd_resp_header_value_get retrieves the first value of a specific response header.
 // The header name is read from guest memory, and the first value is written back to guest memory.
-// If the header doesn't exist, nwritten_out is set to 0 but XqdStatusOK is returned.
-// Returns XqdErrBufferLength if the buffer is too small, XqdErrInvalidArgument if the name is too long.
+// Returns XqdErrBufferLength if the buffer is too small, or XqdErrInvalidArgument if the
+// name is too long or the header is absent.
 func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("resp_header_value_get: header name too long: %d bytes (max 65535)\n", name_size)
-		i.memory.PutUint32(0, int64(nwritten_out))
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("resp_header_value_get: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -132,13 +130,19 @@ func (i *Instance) xqd_resp_header_value_get(handle int32, name_addr int32, name
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
+	}
 
 	header := http.CanonicalHeaderKey(string(buf))
 
 	i.abilog.Printf("resp_header_value_get: handle=%d header=%q\n", handle, header)
 
-	// Get the first value for this header (returns "" if not found)
-	value := w.Header.Get(header)
+	values, exists := w.Header[header]
+	if !exists || len(values) == 0 {
+		return XqdErrInvalidArgument
+	}
+	value := values[0]
 
 	// Always write the length needed
 	i.memory.PutUint32(uint32(len(value)), int64(nwritten_out))
@@ -165,9 +169,8 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("resp_header_remove: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("resp_header_remove: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -176,11 +179,14 @@ func (i *Instance) xqd_resp_header_remove(handle int32, name_addr int32, name_si
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	header := http.CanonicalHeaderKey(string(name))
 
-	// Check if the header exists before removing
-	if w.Header.Get(header) == "" {
+	// Map membership distinguishes an absent header from a present empty value.
+	if _, exists := w.Header[header]; !exists {
 		i.abilog.Printf("resp_header_remove: header %q not found\n", header)
 		return XqdErrInvalidArgument
 	}
@@ -198,9 +204,8 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("resp_header_insert: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("resp_header_insert: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -209,11 +214,17 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(name))
@@ -237,9 +248,8 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 		return XqdErrInvalidHandle
 	}
 
-	// Validate header name length (MAX_HEADER_NAME_LEN = 65535)
-	if name_size > 65535 {
-		i.abilog.Printf("resp_header_append: header name too long: %d bytes (max 65535)\n", name_size)
+	if !validHTTPHeaderNameSize(name_size) {
+		i.abilog.Printf("resp_header_append: invalid header name length: %d bytes (max %d)\n", name_size, maxHTTPHeaderNameLen)
 		return XqdErrInvalidArgument
 	}
 
@@ -248,11 +258,17 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(name) {
+		return XqdErrInvalidArgument
+	}
 
 	value := make([]byte, value_size)
 	_, err = i.memory.ReadAt(value, int64(value_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderValue(value) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(name))
@@ -269,17 +285,23 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 }
 
 // xqd_resp_header_values_get retrieves all values for a specific response header using cursor-based pagination.
-// Returns a sorted list of header values for the specified header name.
+// Values are returned in their stored order.
 func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, name_size int32, addr int32, maxlen int32, cursor int32, ending_cursor_out int32, nwritten_out int32) int32 {
 	w := i.responses.Get(int(handle))
 	if w == nil {
 		return XqdErrInvalidHandle
+	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
 	}
 
 	buf := make([]byte, name_size)
 	_, err := i.memory.ReadAt(buf, int64(name_addr))
 	if err != nil {
 		return XqdError
+	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
 	}
 
 	header := http.CanonicalHeaderKey(string(buf))
@@ -292,9 +314,6 @@ func (i *Instance) xqd_resp_header_values_get(handle int32, name_addr int32, nam
 		values = []string{}
 	}
 
-	// Sort the values for consistent ordering (required for cursor-based pagination)
-	sort.Strings(values)
-
 	return xqd_multivalue(i.memory, values, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
@@ -306,6 +325,9 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	if w == nil {
 		return XqdErrInvalidHandle
 	}
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
+	}
 
 	// Read the header name
 	buf := make([]byte, name_size)
@@ -313,26 +335,33 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	if err != nil {
 		return XqdError
 	}
+	if !validHTTPHeaderName(buf) {
+		return XqdErrInvalidArgument
+	}
 
 	header := http.CanonicalHeaderKey(string(buf))
 
-	// Read the values buffer. Values are separated by NUL bytes.
-	if values_size <= 0 {
+	// Read the values buffer. Values are separated and terminated by NUL
+	// bytes. An empty buffer is the empty value list and clears the header.
+	if values_size < 0 {
 		return XqdErrInvalidArgument
 	}
-	buf = make([]byte, values_size)
-	_, err = i.memory.ReadAt(buf, int64(values_addr))
-	if err != nil {
-		return XqdError
-	}
+	values := make([][]byte, 0)
+	if values_size > 0 {
+		buf = make([]byte, values_size)
+		_, err = i.memory.ReadAt(buf, int64(values_addr))
+		if err != nil {
+			return XqdError
+		}
 
-	// Trim a trailing NUL if present, then split on NUL
-	if len(buf) > 0 && buf[len(buf)-1] == 0 {
-		buf = buf[:len(buf)-1]
+		parts := bytes.Split(buf, []byte("\x00"))
+		values = parts[:len(parts)-1]
 	}
-
-	// Split on null bytes to get individual values
-	values := bytes.Split(buf, []byte("\x00"))
+	for _, value := range values {
+		if !validHTTPHeaderValue(value) {
+			return XqdErrInvalidArgument
+		}
+	}
 
 	i.abilog.Printf("resp_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
 
@@ -349,17 +378,15 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 	return XqdStatusOK
 }
 
-// xqd_resp_close marks a response to have the Connection: close header semantics.
-// This indicates that the connection should be closed after the response is sent.
+// xqd_resp_close consumes a response handle.
 func (i *Instance) xqd_resp_close(handle int32) int32 {
-	r := i.responses.Get(int(handle))
+	r := i.responses.Take(int(handle))
 	if r == nil {
 		i.abilog.Printf("resp_close: invalid handle %d", handle)
 		return XqdErrInvalidHandle
 	}
 
 	i.abilog.Printf("resp_close: handle=%d", handle)
-	r.Close = true
 	return XqdStatusOK
 }
 

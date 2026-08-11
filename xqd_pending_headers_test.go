@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -92,6 +93,118 @@ func TestPendingReqHeaderInvalidHandle(t *testing.T) {
 	}
 	if st := i.xqd_pending_req_header_remove(999, na, ns, PendingResponseKindAny); st != XqdErrInvalidHandle {
 		t.Errorf("remove bad handle = %d, want %d", st, XqdErrInvalidHandle)
+	}
+}
+
+func TestPendingReqHeaderRejectsInvalidSyntax(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	badNameAddr, badNameSize := writeStr(t, i, 100, "Bad Name")
+	valueAddr, valueSize := writeStr(t, i, 200, "value")
+	if st := i.xqd_pending_req_header_insert(int32(phid), badNameAddr, badNameSize, valueAddr, valueSize, PendingResponseKindAny); st != XqdErrInvalidArgument {
+		t.Fatalf("insert with invalid name = %d, want %d", st, XqdErrInvalidArgument)
+	}
+
+	nameAddr, nameSize := writeStr(t, i, 300, "X-Good")
+	badValueAddr, badValueSize := writeStr(t, i, 400, "bad\nvalue")
+	if st := i.xqd_pending_req_header_append(int32(phid), nameAddr, nameSize, badValueAddr, badValueSize, PendingResponseKindAny); st != XqdErrInvalidArgument {
+		t.Fatalf("append with invalid value = %d, want %d", st, XqdErrInvalidArgument)
+	}
+	if !pr.headersResp.empty() || !pr.headersErr.empty() {
+		t.Fatal("invalid pending-header mutations changed queued headers")
+	}
+}
+
+func TestPendingReqWaitConsumesPendingHandle(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	pr.Complete(&http.Response{
+		Status:     "204 No Content",
+		StatusCode: http.StatusNoContent,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil)
+
+	if status := i.xqd_pending_req_wait(int32(phid), 100, 104); status != XqdStatusOK {
+		t.Fatalf("pending_req_wait status = %d, want %d", status, XqdStatusOK)
+	}
+	if status := i.xqd_pending_req_wait(int32(phid), 108, 112); status != XqdErrInvalidHandle {
+		t.Fatalf("second pending_req_wait status = %d, want %d", status, XqdErrInvalidHandle)
+	}
+}
+
+func TestPendingReqPollConsumesReadyHandle(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	pr.Complete(&http.Response{
+		Status:     "204 No Content",
+		StatusCode: http.StatusNoContent,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil)
+
+	if status := i.xqd_pending_req_poll(int32(phid), 100, 104, 108); status != XqdStatusOK {
+		t.Fatalf("pending_req_poll status = %d, want %d", status, XqdStatusOK)
+	}
+	if status := i.xqd_pending_req_poll(int32(phid), 112, 116, 120); status != XqdErrInvalidHandle {
+		t.Fatalf("second pending_req_poll status = %d, want %d", status, XqdErrInvalidHandle)
+	}
+}
+
+func TestPendingReqSelectSuppressesSelectedRequestError(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	pr.Complete(nil, errors.New("backend failed"))
+	i.memory.PutUint32(uint32(phid), 0)
+
+	if status := i.xqd_pending_req_select(0, 1, 100, 104, 108); status != XqdStatusOK {
+		t.Fatalf("pending_req_select status = %d, want %d", status, XqdStatusOK)
+	}
+	if got := i.memory.Uint32(100); got != 0 {
+		t.Fatalf("selected index = %d, want 0", got)
+	}
+	if got := i.memory.Uint32(104); got != HandleInvalid {
+		t.Fatalf("response handle = %#x, want invalid %#x", got, uint32(HandleInvalid))
+	}
+	if got := i.memory.Uint32(108); got != HandleInvalid {
+		t.Fatalf("body handle = %#x, want invalid %#x", got, uint32(HandleInvalid))
+	}
+}
+
+func TestPendingReqSelectV2WritesOkDetailForNonCachingError(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	pr.Complete(nil, errors.New("backend failed"))
+	i.memory.PutUint32(uint32(phid), 0)
+	i.memory.PutUint32(0xdeadbeef, 100)
+
+	if status := i.xqd_pending_req_select_v2(0, 1, 100, 104, 108, 112); status != XqdStatusOK {
+		t.Fatalf("pending_req_select_v2 status = %d, want %d", status, XqdStatusOK)
+	}
+	if got := i.memory.Uint32(100); got != SendErrorDetailOk {
+		t.Fatalf("error detail tag = %d, want %d", got, SendErrorDetailOk)
+	}
+}
+
+func TestPendingReqSelectV2WritesCachingSendErrorDetail(t *testing.T) {
+	i := newPendingTestInstance()
+	phid, pr := i.pendingRequests.New()
+	pr.Complete(nil, &cachingSendError{err: errors.New("backend failed")})
+	i.memory.PutUint32(uint32(phid), 0)
+	i.memory.PutUint32(0xdeadbeef, 100)
+
+	if status := i.xqd_pending_req_select_v2(0, 1, 100, 104, 108, 112); status != XqdStatusOK {
+		t.Fatalf("pending_req_select_v2 status = %d, want %d", status, XqdStatusOK)
+	}
+	if got := i.memory.Uint32(100); got != SendErrorDetailInternalError {
+		t.Fatalf("error detail tag = %d, want %d", got, SendErrorDetailInternalError)
+	}
+}
+
+func TestPendingReqSelectRejectsRuntimeMaximum(t *testing.T) {
+	i := newPendingTestInstance()
+	if status := i.xqd_pending_req_select(0, maxPendingRequests, 100, 104, 108); status != XqdErrBufferLength {
+		t.Fatalf("pending_req_select status = %d, want %d", status, XqdErrBufferLength)
 	}
 }
 
@@ -196,6 +309,7 @@ func TestSendDownstreamPendingSuccess(t *testing.T) {
 		Status:     "201 Created",
 		StatusCode: 201,
 		Header:     http.Header{"Content-Type": {"text/plain"}},
+		Trailer:    http.Header{"X-Checksum": {"complete"}},
 		Body:       io.NopCloser(strings.NewReader("hello")),
 	}
 	pr.Complete(resp, nil)
@@ -214,6 +328,9 @@ func TestSendDownstreamPendingSuccess(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if string(body) != "hello" {
 		t.Errorf("body = %q, want hello", string(body))
+	}
+	if got := res.Trailer.Get("X-Checksum"); got != "complete" {
+		t.Errorf("X-Checksum trailer = %q, want complete", got)
 	}
 }
 
