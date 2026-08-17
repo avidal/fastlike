@@ -7,6 +7,7 @@
 // The public API is intentionally minimal to prevent misuse. The main entry points are:
 //   - New(): Creates a Fastlike instance from a wasm file
 //   - Fastlike.ServeHTTP(): Handles HTTP requests using the wasm program
+//   - CaptureOriginalHeaders(): Lets guests read downstream header names as the client sent them
 //
 // Instances are pooled and reused to amortize compilation costs, but each instance
 // handles only one request at a time.

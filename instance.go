@@ -71,6 +71,9 @@ type Instance struct {
 	ds_response http.ResponseWriter // Where we write the final HTTP response
 	ds_context  context.Context     // Request context, used for cancellation and timeouts
 
+	// ds_originalHeaders holds the header names the client sent, casing and order included.
+	ds_originalHeaders []string
+
 	// downstreamRequestHandle is the handle ID for the downstream request
 	// Created by body_downstream_get, used by functions like original_header_names_get
 	downstreamRequestHandle int32
@@ -328,6 +331,7 @@ func (i *Instance) reset() {
 	i.ds_response = nil
 	i.ds_request = nil
 	i.ds_context = nil
+	i.ds_originalHeaders = nil
 	i.downstreamRequestHandle = 0
 	i.cachedBotInfo = nil
 	i.cachedVpnProxy = nil
@@ -417,6 +421,9 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ds_request/ds_response/ds_context are still populated.
 	defer i.reset()
 	defer i.finalizeTrace()
+
+	// Claim the captured header names before any path can return early.
+	i.ds_originalHeaders = claimOriginalHeaderNames(r)
 
 	// Check for request loops using the cdn-loop header
 	// We add "fastlike" to this header on each subrequest
