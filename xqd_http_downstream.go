@@ -121,14 +121,13 @@ func (i *Instance) xqd_http_downstream_next_request_abandon(promise_handle int32
 	return XqdStatusOK
 }
 
-// xqd_http_downstream_original_header_names retrieves the original header names from the downstream request.
-// This preserves the original casing and order of headers as received.
+// xqd_http_downstream_original_header_names lists the header names of the downstream request as the client sent them: original casing, original order, one entry per repeat.
 //
-// Signature: (handle: RequestHandle, buf: *mut u8, buf_len: u32, cursor: u32, ending_cursor_out: *mut u32, nwritten_out: *mut u32) -> FastlyStatus
+// Signature: (handle: RequestHandle, buf: *mut u8, buf_len: u32, cursor: u32, ending_cursor_out: *mut i64, nwritten_out: *mut u32) -> FastlyStatus
 func (i *Instance) xqd_http_downstream_original_header_names(
 	req_handle int32,
-	buf_ptr int32,
-	buf_len int32,
+	addr int32,
+	maxlen int32,
 	cursor int32,
 	ending_cursor_out int32,
 	nwritten_out int32,
@@ -141,62 +140,10 @@ func (i *Instance) xqd_http_downstream_original_header_names(
 		return XqdErrInvalidHandle
 	}
 
-	// Use the captured original headers
-	headers := req.originalHeaders
-	if len(headers) == 0 {
-		// No original headers captured (this shouldn't happen for downstream requests)
-		i.memory.PutUint32(0xFFFFFFFF, int64(ending_cursor_out)) // -1 indicates end
-		i.memory.PutUint32(0, int64(nwritten_out))
-		return XqdStatusOK
-	}
-
-	// Check if cursor is -1 (0xFFFFFFFF) or out of bounds, indicating no more data
-	if cursor < 0 || int(cursor) >= len(headers) {
-		i.memory.PutUint32(0xFFFFFFFF, int64(ending_cursor_out)) // -1 indicates end
-		i.memory.PutUint32(0, int64(nwritten_out))
-		return XqdStatusOK
-	}
-
-	// Write header names to buffer, separated by null bytes, starting from cursor position
-	written := 0
-	currentCursor := int(cursor)
-
-	for currentCursor < len(headers) && written < int(buf_len) {
-		headerName := headers[currentCursor]
-		nullTerminated := headerName + "\x00"
-
-		// Check if we have space for this header
-		if written+len(nullTerminated) > int(buf_len) {
-			break
-		}
-
-		// Write the header name with null terminator
-		n, err := i.memory.WriteAt([]byte(nullTerminated), int64(buf_ptr)+int64(written))
-		if err != nil {
-			i.abilog.Printf("http_downstream_original_header_names: write error: %v", err)
-			return XqdError
-		}
-
-		written += n
-		currentCursor++
-	}
-
-	// Set ending cursor (next index to read, or -1 if done)
-	var endingCursor uint32
-	if currentCursor >= len(headers) {
-		endingCursor = 0xFFFFFFFF // -1 as u32, indicates no more data
-	} else {
-		endingCursor = uint32(currentCursor)
-	}
-
-	i.memory.PutUint32(endingCursor, int64(ending_cursor_out))
-	i.memory.PutUint32(uint32(written), int64(nwritten_out))
-
-	i.abilog.Printf("http_downstream_original_header_names: wrote %d bytes, next cursor=%d", written, endingCursor)
-	return XqdStatusOK
+	return xqd_multivalue(i.memory, req.originalHeaders, addr, maxlen, cursor, ending_cursor_out, nwritten_out)
 }
 
-// xqd_http_downstream_original_header_count returns the number of headers in the original downstream request.
+// xqd_http_downstream_original_header_count returns how many headers the client sent, counting a repeated name once per occurrence.
 //
 // Signature: (handle: RequestHandle, count_out: *mut u32) -> FastlyStatus
 func (i *Instance) xqd_http_downstream_original_header_count(req_handle int32, count_out int32) int32 {

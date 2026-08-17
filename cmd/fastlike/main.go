@@ -232,8 +232,18 @@ func main() {
 		startProfileUI(fl, *profileUI, *profileAuth, *profileInsecure)
 	}
 
+	listener, err := net.Listen("tcp", *bind)
+	if err != nil {
+		fmt.Printf("Error starting server, got %s\n", err.Error())
+		os.Exit(1)
+	}
+
+	// Guests read the client's own header names, which means capturing the request head before Go's parser normalizes it.
+	srv := &http.Server{Handler: fl}
+	listener = fastlike.CaptureOriginalHeaders(srv, listener)
+
 	fmt.Printf("Listening on %s\n", *bind)
-	if err := http.ListenAndServe(*bind, fl); err != nil {
+	if err := srv.Serve(listener); err != nil {
 		fmt.Printf("Error starting server, got %s\n", err.Error())
 	}
 }

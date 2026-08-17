@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -56,15 +55,11 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 		rh.URL.Scheme = "http"
 	}
 
-	// Capture original header names in their original order for downstream_original_header_names
-	// Convert to lowercase to match HTTP/2 convention (headers are case-insensitive)
-	// Sort alphabetically since Go map iteration order is non-deterministic
-	rh.originalHeaders = make([]string, 0, len(i.ds_request.Header))
-	for name := range i.ds_request.Header {
-		rh.originalHeaders = append(rh.originalHeaders, strings.ToLower(name))
+	// Header names as the client sent them, for downstream_original_header_names.
+	rh.originalHeaders = i.ds_originalHeaders
+	if rh.originalHeaders == nil {
+		rh.originalHeaders = originalHeaderNamesFromRequest(i.ds_request)
 	}
-	// Sort to ensure consistent ordering
-	sort.Strings(rh.originalHeaders)
 
 	// Capture TLS connection state if the request was over TLS
 	if i.ds_request.TLS != nil {
