@@ -231,6 +231,9 @@ func (i *Instance) xqd_resp_header_insert(handle int32, name_addr int32, name_si
 
 	i.abilog.Printf("resp_header_insert: handle=%d header=%q value=%q", handle, header, string(value))
 
+	if httpHeaderNameCountAtLimit(len(w.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if w.Header == nil {
 		w.Header = http.Header{}
 	}
@@ -275,6 +278,9 @@ func (i *Instance) xqd_resp_header_append(handle int32, name_addr int32, name_si
 
 	i.abilog.Printf("resp_header_append: handle=%d header=%q value=%q", handle, header, string(value))
 
+	if httpHeaderNameCountAtLimit(len(w.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if w.Header == nil {
 		w.Header = http.Header{}
 	}
@@ -365,6 +371,9 @@ func (i *Instance) xqd_resp_header_values_set(handle int32, name_addr int32, nam
 
 	i.abilog.Printf("resp_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
 
+	if httpHeaderNameCountAtLimit(len(w.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if w.Header == nil {
 		w.Header = http.Header{}
 	}

@@ -2,10 +2,12 @@ package fastlike
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -240,6 +242,88 @@ func TestHeaderOperationsRejectInvalidSyntaxWithoutMutation(t *testing.T) {
 	}
 	if got := req.Header.Values("X-Good"); !slices.Equal(got, []string{"old"}) {
 		t.Fatalf("invalid header_values_set changed values to %q, want [old]", got)
+	}
+}
+
+func headerMapAtNameLimit() http.Header {
+	headers := http.Header{"X-Existing": {"old"}}
+	for n := 1; n < maxHTTPHeaderNameCount; n++ {
+		headers[fmt.Sprintf("X-Test-%d", n)] = []string{"value"}
+	}
+	return headers
+}
+
+func TestHeaderMutationsRejectNameCountLimit(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*Instance, int32, int32, int32, int32, int32) int32
+	}{
+		{
+			name: "request insert",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_req_header_insert(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+		{
+			name: "request append",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_req_header_append(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+		{
+			name: "request values set",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_req_header_values_set(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+		{
+			name: "response insert",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_resp_header_insert(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+		{
+			name: "response append",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_resp_header_append(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+		{
+			name: "response values set",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize int32) int32 {
+				return i.xqd_resp_header_values_set(handle, nameAddr, nameSize, valueAddr, valueSize)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newHeaderValuesTestInstance()
+			nameAddr, nameSize := writeStr(t, i, 100, "X-Existing")
+			valueAddr, valueSize := writeStr(t, i, 200, "new")
+
+			var headers http.Header
+			var handle int
+			if strings.HasPrefix(tc.name, "request") {
+				handle, _ = i.requests.New()
+				headers = headerMapAtNameLimit()
+				i.requests.Get(handle).Header = headers
+			} else {
+				handle, _ = i.responses.New()
+				headers = headerMapAtNameLimit()
+				i.responses.Get(handle).Header = headers
+			}
+
+			if status := tc.call(i, int32(handle), nameAddr, nameSize, valueAddr, valueSize); status != XqdErrInvalidArgument {
+				t.Fatalf("status = %d, want %d", status, XqdErrInvalidArgument)
+			}
+			if len(headers) != maxHTTPHeaderNameCount {
+				t.Fatalf("header count = %d, want %d", len(headers), maxHTTPHeaderNameCount)
+			}
+			if got := headers.Values("X-Existing"); !slices.Equal(got, []string{"old"}) {
+				t.Fatalf("X-Existing = %q, want [old]", got)
+			}
+		})
 	}
 }
 

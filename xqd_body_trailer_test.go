@@ -144,6 +144,31 @@ func TestBodyTrailerReadsRejectStreamingHandle(t *testing.T) {
 	}
 }
 
+func TestBodyTrailerAppendRejectsHeaderNameLimits(t *testing.T) {
+	i := newBodyLengthTestInstance()
+	handle, body := i.bodies.NewBuffer()
+	nameAddr, nameSize := writeStr(t, i, 100, "X-Existing")
+	valueAddr, valueSize := writeStr(t, i, 200, "value")
+
+	if status := i.xqd_body_trailer_append(int32(handle), 1024, maxHTTPHeaderNameLen+1, valueAddr, valueSize); status != XqdErrInvalidArgument {
+		t.Fatalf("oversized name status = %d, want %d", status, XqdErrInvalidArgument)
+	}
+	if body.trailers != nil {
+		t.Fatalf("oversized trailer name initialized trailers: %v", body.trailers)
+	}
+
+	body.trailers = headerMapAtNameLimit()
+	if status := i.xqd_body_trailer_append(int32(handle), nameAddr, nameSize, valueAddr, valueSize); status != XqdErrInvalidArgument {
+		t.Fatalf("name count limit status = %d, want %d", status, XqdErrInvalidArgument)
+	}
+	if len(body.trailers) != maxHTTPHeaderNameCount {
+		t.Fatalf("trailer count = %d, want %d", len(body.trailers), maxHTTPHeaderNameCount)
+	}
+	if got := body.trailers.Values("X-Existing"); len(got) != 1 || got[0] != "old" {
+		t.Fatalf("X-Existing = %q, want [old]", got)
+	}
+}
+
 func TestBodyTrailerAppendRejectsInvalidHeaderValue(t *testing.T) {
 	i := newBodyLengthTestInstance()
 	handle, body := i.bodies.NewBuffer()
