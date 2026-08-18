@@ -250,6 +250,13 @@ func (i *Instance) xqd_body_trailer_append(handle int32, name_addr int32, name_s
 		return XqdErrInvalidHandle
 	}
 
+	if !validHTTPHeaderNameSize(name_size) {
+		return XqdErrInvalidArgument
+	}
+	if httpHeaderNameCountAtLimit(len(body.trailers)) {
+		return XqdErrInvalidArgument
+	}
+
 	// Read the trailer name from guest memory
 	name := make([]byte, name_size)
 	_, err := i.memory.ReadAt(name, int64(name_addr))

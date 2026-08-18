@@ -66,6 +66,44 @@ func TestPendingReqHeaderInsertTargetRouting(t *testing.T) {
 	}
 }
 
+func TestPendingReqHeaderMutationsRejectNameCountLimitAtomically(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*Instance, int32, int32, int32, int32, int32, int32) int32
+	}{
+		{
+			name: "insert",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize, target int32) int32 {
+				return i.xqd_pending_req_header_insert(handle, nameAddr, nameSize, valueAddr, valueSize, target)
+			},
+		},
+		{
+			name: "append",
+			call: func(i *Instance, handle, nameAddr, nameSize, valueAddr, valueSize, target int32) int32 {
+				return i.xqd_pending_req_header_append(handle, nameAddr, nameSize, valueAddr, valueSize, target)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newPendingTestInstance()
+			phid, pr := i.pendingRequests.New()
+			pr.headersResp.insert = headerMapAtNameLimit()
+			nameAddr, nameSize := writeStr(t, i, 100, "X-Added")
+			valueAddr, valueSize := writeStr(t, i, 200, "value")
+
+			if status := tc.call(i, int32(phid), nameAddr, nameSize, valueAddr, valueSize, PendingResponseKindAny); status != XqdErrInvalidArgument {
+				t.Fatalf("status = %d, want %d", status, XqdErrInvalidArgument)
+			}
+			if len(pr.headersResp.insert) != maxHTTPHeaderNameCount {
+				t.Fatalf("response queue count = %d, want %d", len(pr.headersResp.insert), maxHTTPHeaderNameCount)
+			}
+			if !pr.headersErr.empty() {
+				t.Fatalf("error queue changed after rejected mutation: %+v", pr.headersErr)
+			}
+		})
+	}
+}
+
 func TestPendingReqHeaderInvalidTarget(t *testing.T) {
 	i := newPendingTestInstance()
 	phid, _ := i.pendingRequests.New()

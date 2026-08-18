@@ -579,6 +579,10 @@ func (p *PendingHeaders) empty() bool {
 	return len(p.insert) == 0 && len(p.append) == 0 && len(p.remove) == 0
 }
 
+func (p *PendingHeaders) nameCountAtLimit() bool {
+	return httpHeaderNameCountAtLimit(len(p.insert) + len(p.append))
+}
+
 // Apply mutates h with the queued changes: removals first, then inserts
 // (replacing existing values), then appends.
 func (p *PendingHeaders) Apply(h http.Header) {

@@ -508,6 +508,9 @@ func (i *Instance) xqd_req_header_insert(handle int32, name_addr int32, name_siz
 
 	i.abilog.Printf("req_header_insert: handle=%d header=%q value=%q", handle, header, string(value))
 
+	if httpHeaderNameCountAtLimit(len(r.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if r.Header == nil {
 		r.Header = http.Header{}
 	}
@@ -553,6 +556,9 @@ func (i *Instance) xqd_req_header_append(handle int32, name_addr int32, name_siz
 
 	i.abilog.Printf("req_header_append: handle=%d header=%q value=%q", handle, header, string(value))
 
+	if httpHeaderNameCountAtLimit(len(r.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if r.Header == nil {
 		r.Header = http.Header{}
 	}
@@ -697,6 +703,9 @@ func (i *Instance) xqd_req_header_values_set(handle int32, name_addr int32, name
 
 	i.abilog.Printf("req_header_values_set: handle=%d header=%q values=%q\n", handle, header, values)
 
+	if httpHeaderNameCountAtLimit(len(r.Header)) {
+		return XqdErrInvalidArgument
+	}
 	if r.Header == nil {
 		r.Header = http.Header{}
 	}
@@ -1616,6 +1625,11 @@ func (i *Instance) xqd_pending_req_header_insert(phandle int32, name_addr int32,
 		return XqdErrInvalidArgument
 	}
 	for _, h := range targets {
+		if h.nameCountAtLimit() {
+			return XqdErrInvalidArgument
+		}
+	}
+	for _, h := range targets {
 		h.Insert(name, string(value))
 	}
 	return XqdStatusOK
@@ -1634,6 +1648,11 @@ func (i *Instance) xqd_pending_req_header_append(phandle int32, name_addr int32,
 	}
 	if !validHTTPHeaderValue(value) {
 		return XqdErrInvalidArgument
+	}
+	for _, h := range targets {
+		if h.nameCountAtLimit() {
+			return XqdErrInvalidArgument
+		}
 	}
 	for _, h := range targets {
 		h.Append(name, string(value))

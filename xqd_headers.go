@@ -1,9 +1,16 @@
 package fastlike
 
-const maxHTTPHeaderNameLen int32 = 1 << 15
+const (
+	maxHTTPHeaderNameLen   int32 = 1 << 15
+	maxHTTPHeaderNameCount       = (1 << 14) - 1000
+)
 
 func validHTTPHeaderNameSize(size int32) bool {
 	return size >= 0 && size <= maxHTTPHeaderNameLen
+}
+
+func httpHeaderNameCountAtLimit(count int) bool {
+	return count >= maxHTTPHeaderNameCount
 }
 
 // validHTTPHeaderName matches the token grammar accepted by
