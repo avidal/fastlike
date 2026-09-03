@@ -107,6 +107,15 @@ const (
 	CacheLookupOptionsMaskAlwaysUseRequestedRange uint32 = 1 << 3
 )
 
+// Sizes of the option records the guest hands to the cache hostcalls.
+// The write options follow the C layout, so the 64-bit fields after the vary
+// rule are 8-byte aligned.
+const (
+	cacheWriteOptionsSize   = 80
+	cacheReplaceOptionsSize = 16
+	cacheGetBodyOptionsSize = 16
+)
+
 // Cache write options mask
 const (
 	CacheWriteOptionsMaskReserved               uint32 = 1 << 0
