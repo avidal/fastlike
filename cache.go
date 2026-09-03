@@ -2,14 +2,16 @@ package fastlike
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 // CachedObject represents a cached entry with metadata and body
@@ -26,8 +28,9 @@ type CachedObject struct {
 	Length                 *uint64 // nil if unknown
 	RequestHeaders         []byte  // serialized headers used for vary
 	InsertTime             time.Time
-	HitCount               uint64
+	HitCount               atomic.Uint64
 	WriteComplete          bool
+	WriteFailed            bool       // the writer gave up before finishing
 	WriteCond              *sync.Cond // for streaming concurrent reads
 	SensitiveData          bool       // whether data is sensitive (PCI, etc)
 }
@@ -56,6 +59,9 @@ type CacheTransaction struct {
 	RequestURL     string        // The original request URL for suggested backend requests
 	RequestMethod  string        // The original request method for suggested backend requests
 	ready          chan struct{} // closed when lookup completes
+	owner          any
+	done           chan struct{} // closed once the transaction is completed or cancelled
+	finished       bool
 }
 
 // CacheLookupOptions holds options for cache lookup
@@ -95,11 +101,38 @@ type CacheReplaceOptions struct {
 	AlwaysUseRequestedRange bool
 }
 
+// CacheReplace is a replace operation in progress.
+// It exposes the object found under the key until the replacement is provided
+// or the operation is abandoned.
+type CacheReplace struct {
+	Key      []byte
+	Existing *CachedObject
+	Options  *CacheReplaceOptions
+	owner    any
+	done     chan struct{}
+	finished bool
+}
+
+// State reports the existing object as the replace accessors expose it.
+// Found and usable always go together here because early SDKs inferred
+// usability from the found bit alone.
+func (r *CacheReplace) State() CacheState {
+	if r.Existing == nil {
+		return CacheState{}
+	}
+	return CacheState{
+		Found:  true,
+		Usable: true,
+		Stale:  r.Existing.GetAge() > r.Existing.MaxAgeNs,
+	}
+}
+
 // Cache is an in-memory cache with request collapsing support
 type Cache struct {
 	mu             sync.RWMutex
 	objects        map[string][]*CachedObject   // key -> variants (for vary support)
 	transactions   map[string]*CacheTransaction // key -> pending transaction
+	replaces       map[string][]*CacheReplace   // key -> pending replaces
 	surrogateIndex map[string][]string          // surrogate_key -> cache_keys
 }
 
@@ -108,6 +141,7 @@ func NewCache() *Cache {
 	return &Cache{
 		objects:        make(map[string][]*CachedObject),
 		transactions:   make(map[string]*CacheTransaction),
+		replaces:       make(map[string][]*CacheReplace),
 		surrogateIndex: make(map[string][]string),
 	}
 }
@@ -118,7 +152,7 @@ func cacheKey(key []byte) string {
 }
 
 // extractVaryHeaders extracts only the headers named in the vary rule from serialized request headers.
-// The vary rule is a comma-separated list of header names (e.g., "Accept-Encoding, Accept-Language").
+// The ABI separates the header names with spaces; commas are accepted as well.
 // The request headers are in HTTP wire format as produced by http.Header.Write().
 // Returns a normalized representation suitable for comparison.
 func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
@@ -127,11 +161,8 @@ func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
 	}
 
 	varyHeaders := make(map[string]bool)
-	for _, name := range strings.Split(varyRule, ",") {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			varyHeaders[strings.ToLower(name)] = true
-		}
+	for _, name := range strings.FieldsFunc(varyRule, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		varyHeaders[strings.ToLower(name)] = true
 	}
 
 	if len(varyHeaders) == 0 {
@@ -176,56 +207,21 @@ func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
 	return result.Bytes()
 }
 
-// varyKey creates a variant-specific cache key that incorporates the vary rule and request headers.
-// If no vary rule is specified, returns the base cache key unchanged.
-func (c *Cache) varyKey(baseKey []byte, varyRule string, requestHeaders []byte) string {
-	if varyRule == "" {
-		return cacheKey(baseKey)
-	}
-
-	varyHeaderValues := extractVaryHeaders(varyRule, requestHeaders)
-
-	h := sha256.New()
-	h.Write(baseKey)
-	h.Write([]byte(varyRule))
-	h.Write(varyHeaderValues)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// findMatchingVariant finds a cached object that matches the vary rule and request headers.
-//
-// Behavior:
-//   - If no vary rule is provided: returns the most recently inserted variant
-//   - If vary rule is provided: returns the variant whose vary key matches the request
-//   - Returns nil if no matching variant is found
-func (c *Cache) findMatchingVariant(key []byte, varyRule string, requestHeaders []byte) *CachedObject {
-	keyStr := cacheKey(key)
-	variants, ok := c.objects[keyStr]
-	if !ok {
-		return nil
-	}
-
-	// If no vary rule in lookup, use most recent entry
-	if varyRule == "" && requestHeaders == nil {
-		// Find most recent variant
-		var newest *CachedObject
-		for _, v := range variants {
-			if newest == nil || v.InsertTime.After(newest.InsertTime) {
-				newest = v
-			}
+// findMatchingVariant returns the most recently inserted variant of key whose
+// vary rule is satisfied by requestHeaders.
+// Each stored variant decides for itself which request headers have to match,
+// so a variant without a vary rule matches any request.
+func (c *Cache) findMatchingVariant(key []byte, requestHeaders []byte) *CachedObject {
+	var newest *CachedObject
+	for _, v := range c.objects[cacheKey(key)] {
+		if v.VaryRule != "" && !bytes.Equal(extractVaryHeaders(v.VaryRule, requestHeaders), extractVaryHeaders(v.VaryRule, v.RequestHeaders)) {
+			continue
 		}
-		return newest
-	}
-
-	// Match based on vary rule and headers
-	vKey := c.varyKey(key, varyRule, requestHeaders)
-	for _, v := range variants {
-		if c.varyKey(key, v.VaryRule, v.RequestHeaders) == vKey {
-			return v
+		if newest == nil || v.InsertTime.After(newest.InsertTime) {
+			newest = v
 		}
 	}
-
-	return nil
+	return newest
 }
 
 // Lookup performs a non-transactional cache lookup
@@ -238,7 +234,7 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 		requestHeaders = options.RequestHeaders
 	}
 
-	obj := c.findMatchingVariant(key, "", requestHeaders)
+	obj := c.findMatchingVariant(key, requestHeaders)
 	if obj == nil {
 		return &CacheEntry{
 			State: CacheState{
@@ -257,6 +253,7 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 
 	isStale := uint64(age) > obj.MaxAgeNs
 	isUsable := !isStale || (obj.StaleWhileRevalidateNs > 0 && uint64(age) <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
+	obj.HitCount.Add(1)
 
 	return &CacheEntry{
 		Object: obj,
@@ -270,35 +267,51 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 }
 
 // TransactionLookup performs a transactional cache lookup with request collapsing support.
-// If another transaction is already in progress for the same key, this call blocks until
-// that transaction completes, preventing thundering herd on cache misses.
-func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *CacheTransaction {
+// A lookup that finds nothing usable while another owner has a replace or a
+// transaction pending waits for that work to finish and then looks again,
+// instead of fetching on its own.
+// The caller's own pending transaction is joined rather than waited for.
+func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner any) *CacheTransaction {
 	keyStr := cacheKey(key)
-
-	c.mu.Lock()
-
-	// Check if there's already a pending transaction for this key
-	if tx, exists := c.transactions[keyStr]; exists {
-		c.mu.Unlock()
-		// Wait for the existing transaction
-		<-tx.ready
-		return tx
-	}
-
-	// Create new transaction
-	tx := &CacheTransaction{
-		Key:     key,
-		Options: options,
-		ready:   make(chan struct{}),
-	}
 
 	var requestHeaders []byte
 	if options != nil {
 		requestHeaders = options.RequestHeaders
 	}
 
-	// Perform lookup
-	obj := c.findMatchingVariant(key, "", requestHeaders)
+	c.mu.Lock()
+
+	var obj *CachedObject
+	for {
+		obj = c.findMatchingVariant(key, requestHeaders)
+		usable := obj != nil && obj.usable()
+
+		var wait chan struct{}
+		if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil && !usable {
+			wait = pending.done
+		} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil && !usable {
+			wait = pending.done
+		} else if own := c.transactions[keyStr]; own != nil && own.owner == owner {
+			c.mu.Unlock()
+			<-own.ready
+			return own
+		}
+		if wait == nil {
+			break
+		}
+		c.mu.Unlock()
+		<-wait
+		c.mu.Lock()
+	}
+
+	// Create new transaction
+	tx := &CacheTransaction{
+		Key:     key,
+		Options: options,
+		owner:   owner,
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
+	}
 
 	if obj == nil {
 		tx.Entry = &CacheEntry{
@@ -318,6 +331,7 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *Cach
 		isStale := uint64(age) > obj.MaxAgeNs
 		isUsable := !isStale || (obj.StaleWhileRevalidateNs > 0 && uint64(age) <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
 		mustUpdate := isStale && !isUsable
+		obj.HitCount.Add(1)
 
 		tx.Entry = &CacheEntry{
 			Object: obj,
@@ -330,8 +344,11 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions) *Cach
 		}
 	}
 
-	// Register transaction (for request collapsing)
-	c.transactions[keyStr] = tx
+	// Register transaction (for request collapsing) unless another owner
+	// is already fetching and we were served a usable object meanwhile.
+	if c.transactions[keyStr] == nil {
+		c.transactions[keyStr] = tx
+	}
 	c.mu.Unlock()
 
 	// Mark as ready immediately (for now, could be async later)
@@ -345,6 +362,12 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.store(cacheKey(key), options)
+}
+
+// store files a new object under keyStr.
+// The caller holds the lock.
+func (c *Cache) store(keyStr string, options *CacheWriteOptions) *CachedObject {
 	obj := &CachedObject{
 		Body:           &bytes.Buffer{},
 		MaxAgeNs:       options.MaxAgeNs,
@@ -354,7 +377,6 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 		Length:         options.Length,
 		RequestHeaders: options.RequestHeaders,
 		InsertTime:     time.Now(),
-		HitCount:       0,
 		WriteComplete:  false,
 		WriteCond:      sync.NewCond(&sync.Mutex{}),
 		SensitiveData:  options.SensitiveData,
@@ -373,7 +395,6 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 		obj.StaleIfErrorNs = *options.StaleIfErrorNs
 	}
 
-	keyStr := cacheKey(key)
 	c.objects[keyStr] = append(c.objects[keyStr], obj)
 
 	// Index by surrogate keys
@@ -425,8 +446,7 @@ func (c *Cache) TransactionCancel(tx *CacheTransaction) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	keyStr := cacheKey(tx.Key)
-	delete(c.transactions, keyStr)
+	c.finishTransaction(tx)
 
 	return nil
 }
@@ -437,8 +457,46 @@ func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.finishTransaction(tx)
+}
+
+// AbandonTransactions completes every pending transaction started by owner.
+// Transactions whose handles were closed without an insert or a cancel would
+// otherwise keep their key pending forever.
+func (c *Cache) AbandonTransactions(owner any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, tx := range c.transactions {
+		if tx.owner == owner {
+			c.finishTransaction(tx)
+		}
+	}
+}
+
+// finishTransaction wakes anyone waiting on tx and unregisters it.
+// The caller holds the lock.
+func (c *Cache) finishTransaction(tx *CacheTransaction) {
 	keyStr := cacheKey(tx.Key)
-	delete(c.transactions, keyStr)
+	if c.transactions[keyStr] == tx {
+		delete(c.transactions, keyStr)
+	}
+	if tx.finished || tx.done == nil {
+		return
+	}
+	tx.finished = true
+	close(tx.done)
+}
+
+// pendingTransactionFrom returns a pending transaction on keyStr started by
+// another owner, or nil.
+// The caller holds the lock.
+func (c *Cache) pendingTransactionFrom(keyStr string, owner any) *CacheTransaction {
+	tx := c.transactions[keyStr]
+	if tx == nil || tx.owner == owner || tx.done == nil {
+		return nil
+	}
+	return tx
 }
 
 // TransactionChooseStale resolves a cache transaction with a stale object if one is available
@@ -463,6 +521,142 @@ func (c *Cache) TransactionChooseStale(tx *CacheTransaction) bool {
 	}
 
 	return false
+}
+
+// Replace starts a replace operation for key on behalf of owner.
+// The existing object is exposed whatever its age; the force miss strategy also
+// drops it from the cache right away.
+// The wait strategy queues behind pending replaces and transactional inserts,
+// but only those of other owners, since a guest runs one hostcall at a time
+// and could never resolve its own.
+func (c *Cache) Replace(key []byte, options *CacheReplaceOptions, owner any) *CacheReplace {
+	keyStr := cacheKey(key)
+
+	c.mu.Lock()
+	if options.ReplaceStrategy == CacheReplaceWait {
+		for {
+			var wait chan struct{}
+			if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil {
+				wait = pending.done
+			} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil {
+				wait = pending.done
+			} else {
+				break
+			}
+			c.mu.Unlock()
+			<-wait
+			c.mu.Lock()
+		}
+	}
+
+	existing := c.findMatchingVariant(key, options.RequestHeaders)
+	if existing != nil && options.ReplaceStrategy == CacheReplaceImmediateForceMiss {
+		c.removeObject(keyStr, existing)
+	}
+
+	r := &CacheReplace{
+		Key:      key,
+		Existing: existing,
+		Options:  options,
+		owner:    owner,
+		done:     make(chan struct{}),
+	}
+	c.replaces[keyStr] = append(c.replaces[keyStr], r)
+	c.mu.Unlock()
+
+	return r
+}
+
+// pendingReplaceFrom returns a pending replace on keyStr started by another
+// owner, or nil.
+// The caller holds the lock.
+func (c *Cache) pendingReplaceFrom(keyStr string, owner any) *CacheReplace {
+	for _, pending := range c.replaces[keyStr] {
+		if pending.owner != owner {
+			return pending
+		}
+	}
+	return nil
+}
+
+// ReplaceInsert stores the replacement for r and drops the object it replaces.
+func (c *Cache) ReplaceInsert(r *CacheReplace, options *CacheWriteOptions) *CachedObject {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	keyStr := cacheKey(r.Key)
+	if r.Existing != nil {
+		c.removeObject(keyStr, r.Existing)
+	}
+	obj := c.store(keyStr, options)
+	c.finishReplace(keyStr, r)
+
+	return obj
+}
+
+// Discard drops an object whose write was abandoned and fails its readers.
+func (c *Cache) Discard(key []byte, obj *CachedObject) {
+	c.mu.Lock()
+	c.removeObject(cacheKey(key), obj)
+	c.mu.Unlock()
+
+	obj.AbortWrite()
+}
+
+// ReplaceAbandon ends r without providing a replacement.
+// An object dropped by the ImmediateForceMiss strategy stays gone.
+func (c *Cache) ReplaceAbandon(r *CacheReplace) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.finishReplace(cacheKey(r.Key), r)
+}
+
+// finishReplace wakes anyone waiting on r and unregisters it.
+// The caller holds the lock.
+func (c *Cache) finishReplace(keyStr string, r *CacheReplace) {
+	if r.finished {
+		return
+	}
+	r.finished = true
+	close(r.done)
+	pending := c.replaces[keyStr]
+	if idx := slices.Index(pending, r); idx >= 0 {
+		pending = slices.Delete(pending, idx, idx+1)
+	}
+	if len(pending) == 0 {
+		delete(c.replaces, keyStr)
+		return
+	}
+	c.replaces[keyStr] = pending
+}
+
+// removeObject drops one variant of keyStr and its surrogate index entries.
+// The caller holds the lock.
+func (c *Cache) removeObject(keyStr string, obj *CachedObject) {
+	variants := c.objects[keyStr]
+	idx := slices.Index(variants, obj)
+	if idx < 0 {
+		return
+	}
+	variants = slices.Delete(variants, idx, idx+1)
+	if len(variants) == 0 {
+		delete(c.objects, keyStr)
+	} else {
+		c.objects[keyStr] = variants
+	}
+
+	for _, skey := range obj.SurrogateKeys {
+		keys := c.surrogateIndex[skey]
+		if at := slices.Index(keys, keyStr); at >= 0 {
+			keys = slices.Delete(keys, at, at+1)
+		}
+		if len(keys) == 0 {
+			delete(c.surrogateIndex, skey)
+		} else {
+			c.surrogateIndex[skey] = keys
+		}
+	}
 }
 
 // PurgeSurrogateKey performs a hard purge of all cache entries tagged with the surrogate key.
@@ -515,10 +709,36 @@ func (obj *CachedObject) GetAge() uint64 {
 	return age
 }
 
+// usable reports whether the object is fresh or within its stale-while-revalidate window.
+func (obj *CachedObject) usable() bool {
+	age := obj.GetAge()
+	return age <= obj.MaxAgeNs || (obj.StaleWhileRevalidateNs > 0 && age <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
+}
+
+// KnownLength reports the object size once the writer announced it or finished
+// streaming.
+func (obj *CachedObject) KnownLength() (int64, bool) {
+	if obj.Length != nil && *obj.Length <= math.MaxInt64 {
+		return int64(*obj.Length), true
+	}
+
+	obj.WriteCond.L.Lock()
+	defer obj.WriteCond.L.Unlock()
+
+	if obj.WriteComplete {
+		return int64(obj.Body.Len()), true
+	}
+	return 0, false
+}
+
 // ReadBody reads from the cached body at the specified offset.
 // For streaming cache writes, this will block until data becomes available at the requested offset.
 // This enables concurrent readers during cache insertion.
 func (obj *CachedObject) ReadBody(p []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, io.ErrUnexpectedEOF
+	}
+
 	obj.WriteCond.L.Lock()
 	defer obj.WriteCond.L.Unlock()
 
@@ -533,6 +753,9 @@ func (obj *CachedObject) ReadBody(p []byte, offset int64) (int, error) {
 
 		// If write is complete and no more data, return EOF
 		if obj.WriteComplete {
+			if obj.WriteFailed {
+				return 0, io.ErrUnexpectedEOF
+			}
 			return 0, io.EOF
 		}
 
@@ -557,4 +780,33 @@ func (obj *CachedObject) FinishWrite() {
 	obj.WriteComplete = true
 	obj.WriteCond.L.Unlock()
 	obj.WriteCond.Broadcast()
+}
+
+// AbortWrite ends an abandoned write so that waiting readers fail instead of
+// treating the bytes written so far as the whole object.
+func (obj *CachedObject) AbortWrite() {
+	obj.WriteCond.L.Lock()
+	obj.WriteComplete = true
+	obj.WriteFailed = true
+	obj.WriteCond.L.Unlock()
+	obj.WriteCond.Broadcast()
+}
+
+// waitForWriteComplete blocks until the writer is done and returns the final
+// size along with whether the writer gave up.
+func (obj *CachedObject) waitForWriteComplete() (int64, bool) {
+	obj.WriteCond.L.Lock()
+	defer obj.WriteCond.L.Unlock()
+
+	for !obj.WriteComplete {
+		obj.WriteCond.Wait()
+	}
+	return int64(obj.Body.Len()), obj.WriteFailed
+}
+
+func (obj *CachedObject) writeFailed() bool {
+	obj.WriteCond.L.Lock()
+	defer obj.WriteCond.L.Unlock()
+
+	return obj.WriteFailed
 }

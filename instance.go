@@ -268,7 +268,9 @@ func (i *Instance) reset() {
 		if b == nil {
 			continue
 		}
-		if b.IsStreaming() {
+		if _, unfinished := b.closer.(bodyAbandoner); b.IsStreaming() || unfinished {
+			// A writer that never finished must not have its partial body
+			// published by teardown.
 			_ = b.Abandon()
 		} else if b.closer != nil {
 			_ = b.closer.Close()
@@ -302,6 +304,15 @@ func (i *Instance) reset() {
 	*i.secretHandles = SecretHandles{}
 	*i.cacheHandles = CacheHandles{}
 	*i.cacheBusyHandles = CacheBusyHandles{}
+	// Pending replaces and transactions must not outlive the request that started them.
+	if i.cache != nil {
+		i.cache.AbandonTransactions(i)
+	}
+	for _, replace := range i.cacheReplaceHandles.handles {
+		if replace != nil {
+			i.cache.ReplaceAbandon(replace.Replace)
+		}
+	}
 	*i.cacheReplaceHandles = CacheReplaceHandles{}
 	*i.aclHandles = AclHandles{}
 	*i.asyncItems = AsyncItemHandles{}

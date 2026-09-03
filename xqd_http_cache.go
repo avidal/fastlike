@@ -149,7 +149,7 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 	key := hash[:]
 
 	lookupOpts := &CacheLookupOptions{}
-	tx := i.cache.TransactionLookup(key, lookupOpts)
+	tx := i.cache.TransactionLookup(key, lookupOpts, i)
 
 	// Store the original request URL and method in the transaction
 	// so that get_suggested_backend_request can create a proper request
@@ -237,7 +237,7 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	}
 
 	// Create a MultiWriter that writes to both the pipe and the cache
-	multiWriter := io.MultiWriter(pipeWriter, cacheWriter)
+	multiWriter := &cacheTeeWriter{io.MultiWriter(pipeWriter, cacheWriter)}
 
 	// Create a write body handle that writes to both the pipe and cache
 	writeBodyID, writeBody := i.bodies.NewBuffer()
@@ -245,6 +245,8 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	writeBody.closer = &pipeAndCacheCloser{
 		pipeWriter: pipeWriter,
 		cache:      obj,
+		store:      i.cache,
+		key:        handle.Transaction.Key,
 	}
 
 	// Create a new transaction/handle for reading back from the pipe
@@ -787,7 +789,7 @@ func (i *Instance) xqd_http_cache_get_hits(
 	}
 
 	obj := handle.Transaction.Entry.Object
-	i.memory.WriteUint64(hits_out, obj.HitCount)
+	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
 
 	return XqdStatusOK
 }

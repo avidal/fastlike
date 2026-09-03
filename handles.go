@@ -19,6 +19,7 @@ const (
 	kvDeleteHandleBase       = 0x40000000
 	kvListHandleBase         = 0x50000000
 	cacheBusyHandleBase      = 0x60000000
+	cacheReplaceHandleBase   = 0x64000000
 	requestPromiseHandleBase = 0x68000000
 	asyncItemHandleBase      = 0x70000000
 )
@@ -199,6 +200,23 @@ func (c joinedBodyCloser) Close() error {
 		return firstErr
 	}
 	return secondErr
+}
+
+// Abandon gives each side the chance to discard rather than finish.
+func (c joinedBodyCloser) Abandon() error {
+	firstErr := abandonCloser(c.first)
+	secondErr := abandonCloser(c.second)
+	if firstErr != nil {
+		return firstErr
+	}
+	return secondErr
+}
+
+func abandonCloser(closer io.Closer) error {
+	if abandoner, ok := closer.(bodyAbandoner); ok {
+		return abandoner.Abandon()
+	}
+	return closer.Close()
 }
 
 func joinBodyClosers(first, second io.Closer) io.Closer {
@@ -407,7 +425,7 @@ func (b *BodyHandle) Abandon() error {
 		b.streamingStopOnce.Do(func() { close(b.streamingAbandon) })
 		b.signalStreamingSpace()
 		if b.closer != nil {
-			return b.closer.Close()
+			return abandonCloser(b.closer)
 		}
 		return nil
 	}
@@ -415,19 +433,42 @@ func (b *BodyHandle) Abandon() error {
 		// Abandoning a downstream stream must not run the normal finish path,
 		// which would publish its trailers as if the body completed.
 		if b.closer != nil {
-			return b.closer.Close()
+			return abandonCloser(b.closer)
 		}
 		return nil
 	}
+	if b.closer != nil {
+		if abandoner, ok := b.closer.(bodyAbandoner); ok {
+			return abandoner.Abandon()
+		}
+	}
 	return b.Close()
+}
+
+// bodyAbandoner is implemented by closers whose finish path would publish an
+// incomplete body as done, such as cache writers.
+type bodyAbandoner interface {
+	Abandon() error
 }
 
 // RedirectWriter changes the body handle's writer to w. Future Write calls
 // (from body_write in the guest) go directly to w instead of the internal buffer.
 func (b *BodyHandle) RedirectWriter(w io.Writer) {
-	b.writer = w
+	if _, cacheBacked := b.writer.(cacheBackedWriter); cacheBacked {
+		// A body being written into the cache keeps feeding it while the
+		// bytes also go to the new destination.
+		b.writer = io.MultiWriter(b.writer, w)
+	} else {
+		b.writer = w
+	}
 	b.lengthKnown = false
 	b.isDownstreamStream = true
+}
+
+// cacheBackedWriter marks writers that store the body in the cache and must
+// survive a redirect.
+type cacheBackedWriter interface {
+	cacheBacked()
 }
 
 // CloseStreaming closes the streaming body by sending a nil sentinel.
@@ -831,32 +872,50 @@ func (cbhs *CacheBusyHandles) New(tx *CacheTransaction) int {
 	return cacheBusyHandleBase + len(cbhs.handles)
 }
 
-// CacheReplaceHandle represents a cache replace operation
+// CacheReplaceHandle represents a cache replace operation.
+// Ids get their own namespace because the SDK releases unused replace handles
+// through the generic cache close.
 type CacheReplaceHandle struct {
-	Entry   *CacheEntry
-	Options *CacheReplaceOptions
+	Replace *CacheReplace
+	// readerBody is the body handle last handed out for the existing object.
+	// The ABI allows only one such reader at a time.
+	readerBody int
 }
 
-// CacheReplaceHandles is a slice of CacheReplaceHandle with methods to get and create
+// CacheReplaceHandles tracks replace handles.
+// A nil receiver is tolerated because every cache close probes this namespace.
 type CacheReplaceHandles struct {
 	handles []*CacheReplaceHandle
 }
 
-// Get returns the CacheReplaceHandle identified by id or nil if one does not exist
-// Note: IDs are 1-based (0 is reserved as invalid handle)
 func (crhs *CacheReplaceHandles) Get(id int) *CacheReplaceHandle {
-	if id <= 0 || id > len(crhs.handles) {
+	if crhs == nil {
 		return nil
 	}
-	return crhs.handles[id-1]
+	idx, ok := namespacedHandleIndex(id, cacheReplaceHandleBase, len(crhs.handles))
+	if !ok {
+		return nil
+	}
+	return crhs.handles[idx]
 }
 
-// New creates a new CacheReplaceHandle and returns its handle id
-// Note: Returns 1-based IDs (0 is reserved as invalid handle)
-func (crhs *CacheReplaceHandles) New(entry *CacheEntry, options *CacheReplaceOptions) int {
-	crh := &CacheReplaceHandle{Entry: entry, Options: options}
+func (crhs *CacheReplaceHandles) Take(id int) *CacheReplaceHandle {
+	if crhs == nil {
+		return nil
+	}
+	idx, ok := namespacedHandleIndex(id, cacheReplaceHandleBase, len(crhs.handles))
+	if !ok || crhs.handles[idx] == nil {
+		return nil
+	}
+	handle := crhs.handles[idx]
+	crhs.handles[idx] = nil
+	return handle
+}
+
+func (crhs *CacheReplaceHandles) New(r *CacheReplace) int {
+	crh := &CacheReplaceHandle{Replace: r}
 	crhs.handles = append(crhs.handles, crh)
-	return len(crhs.handles)
+	return cacheReplaceHandleBase + len(crhs.handles)
 }
 
 // AclHandle represents a reference to an ACL (Access Control List)

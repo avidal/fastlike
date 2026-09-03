@@ -1012,7 +1012,7 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_cache", "get_hits", safeWrap2("get_hits", func(i *Instance, cache_handle int32, hits_out int32) int32 {
 		return i.xqd_cache_get_hits(cache_handle, hits_out)
 	}))
-	// Cache replace API (stubs - not implemented, returns XqdErrUnsupported like Viceroy)
+	// Cache replace API
 	_ = linker.FuncWrap("fastly_cache", "replace", safeWrap5("replace", func(i *Instance, cache_key int32, cache_key_len int32, options_mask int32, options int32, replace_handle_out int32) int32 {
 		return i.xqd_cache_replace(cache_key, cache_key_len, uint32(options_mask), options, replace_handle_out)
 	}))
