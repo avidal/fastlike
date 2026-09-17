@@ -3,7 +3,7 @@ package profile
 import (
 	"runtime"
 
-	"github.com/bytecodealliance/wasmtime-go/v45"
+	"github.com/bytecodealliance/wasmtime-go/v46"
 )
 
 // NativeProfilerStrategy maps a ProfileMode to the wasmtime profiling
