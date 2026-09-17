@@ -5,7 +5,7 @@ import (
 
 	"fastlike.dev/profile"
 
-	"github.com/bytecodealliance/wasmtime-go/v45"
+	"github.com/bytecodealliance/wasmtime-go/v46"
 )
 
 // wasmContext holds the compiled wasm module, engine, and shared linker that are reused across all requests.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bytecodealliance/wasmtime-go/v45"
+	"github.com/bytecodealliance/wasmtime-go/v46"
 )
 
 func TestNativeProfilerStrategyMapping(t *testing.T) {
