@@ -116,6 +116,25 @@ const (
 	CacheLookupStateMustInsertOrUpdate uint32 = 1 << 3
 )
 
+// HTTP cache write options mask
+const (
+	HttpCacheWriteOptionsMaskVaryRule               uint32 = 1 << 1
+	HttpCacheWriteOptionsMaskInitialAgeNs           uint32 = 1 << 2
+	HttpCacheWriteOptionsMaskStaleWhileRevalidateNs uint32 = 1 << 3
+	HttpCacheWriteOptionsMaskSurrogateKeys          uint32 = 1 << 4
+	HttpCacheWriteOptionsMaskLength                 uint32 = 1 << 5
+	HttpCacheWriteOptionsMaskSensitiveData          uint32 = 1 << 6
+	HttpCacheWriteOptionsMaskStaleIfErrorNs         uint32 = 1 << 7
+)
+
+// HTTP cache storage actions
+const (
+	HttpStorageActionInsert            uint32 = 0
+	HttpStorageActionUpdate            uint32 = 1
+	HttpStorageActionDoNotStore        uint32 = 2
+	HttpStorageActionRecordUncacheable uint32 = 3
+)
+
 // Cache lookup options mask
 const (
 	CacheLookupOptionsMaskReserved                uint32 = 1 << 0

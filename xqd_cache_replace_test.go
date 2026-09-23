@@ -1,7 +1,6 @@
 package fastlike
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log"
@@ -1300,68 +1299,58 @@ func TestCacheReplaceUserMetadataProbeWithEmptyBuffer(t *testing.T) {
 	}
 }
 
-func TestCacheReplaceAbandonedAppendedBodyIsDiscarded(t *testing.T) {
+func TestCacheReplaceInsertBodyCannotBeAppended(t *testing.T) {
 	i := newCacheReplaceTestInstance()
 	insertTestObject(t, i, "key", replaceTestObject{content: "old", maxAge: time.Minute, finish: true})
 	handle := beginReplace(t, i, "key", CacheReplaceImmediate)
 	executeReplace(t, i, handle, replaceTestObject{content: "partial", maxAge: time.Minute, finish: false})
 	replacement := int32(i.memory.Uint32(replaceTestHandleOut))
 
+	// Insert bodies are streaming, so they cannot be an append source.
 	dstID, _ := i.bodies.NewBuffer()
-	if status := i.xqd_body_append(int32(dstID), replacement); status != XqdStatusOK {
-		t.Fatalf("body_append status = %d", status)
+	if status := i.xqd_body_append(int32(dstID), replacement); status != XqdErrInvalidHandle {
+		t.Fatalf("body_append status = %d, want %d", status, XqdErrInvalidHandle)
 	}
-	if status := i.xqd_body_abandon(int32(dstID)); status != XqdStatusOK {
+	if status := i.xqd_body_abandon(replacement); status != XqdStatusOK {
 		t.Fatalf("body_abandon status = %d", status)
 	}
 	if flags := lookupState(t, i, "key"); flags != 0 {
-		t.Fatalf("lookup after abandoning the joined body = %#x, want a miss", flags)
+		t.Fatalf("lookup after abandoning the replacement = %#x, want a miss", flags)
 	}
 }
 
-func TestCacheReplaceAbandonedDownstreamBodyIsDiscarded(t *testing.T) {
+func TestCacheReplaceInsertBodyIsStreaming(t *testing.T) {
 	i := newCacheReplaceTestInstance()
-	insertTestObject(t, i, "key", replaceTestObject{content: "old", maxAge: time.Minute, finish: true})
-	handle := beginReplace(t, i, "key", CacheReplaceImmediate)
-	executeReplace(t, i, handle, replaceTestObject{content: "partial", maxAge: time.Minute, finish: false})
-	bodyID := int32(i.memory.Uint32(replaceTestHandleOut))
-
-	// Sending the body downstream with streaming enabled flips it into the
-	// downstream stream mode that body abandon treats specially.
-	i.bodies.Get(int(bodyID)).isDownstreamStream = true
-
-	if status := i.xqd_body_abandon(bodyID); status != XqdStatusOK {
-		t.Fatalf("body_abandon status = %d", status)
-	}
-	if flags := lookupState(t, i, "key"); flags != 0 {
-		t.Fatalf("lookup after abandoning a downstream replacement = %#x, want a miss", flags)
-	}
-}
-
-func TestCacheReplaceRedirectedBodyStillFeedsTheCache(t *testing.T) {
-	i := newCacheReplaceTestInstance()
+	i.responses = &ResponseHandles{}
 	insertTestObject(t, i, "key", replaceTestObject{content: "old", maxAge: time.Minute, finish: true})
 	handle := beginReplace(t, i, "key", CacheReplaceImmediate)
 	if status := i.xqd_cache_replace_insert(handle, 0, replaceTestWriteOptsPtr, replaceTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("replace_insert status = %d", status)
 	}
 	bodyID := int32(i.memory.Uint32(replaceTestHandleOut))
-	body := i.bodies.Get(int(bodyID))
 
-	// Streaming the body downstream redirects its writer to the client.
-	var client bytes.Buffer
-	body.RedirectWriter(&client)
-	if _, err := body.Write([]byte("new")); err != nil {
-		t.Fatalf("write: %v", err)
+	_, _ = i.memory.WriteAt([]byte("new"), replaceTestMetadataPtr)
+	if status := i.xqd_body_write(bodyID, replaceTestMetadataPtr, 3, BodyWriteEndFront, replaceTestNwrittenOut); status != XqdErrUnsupported {
+		t.Errorf("front write status = %d, want %d", status, XqdErrUnsupported)
 	}
+	if status := i.xqd_body_read(bodyID, replaceTestMetadataOut, 16, replaceTestNwrittenOut); status != XqdErrInvalidHandle {
+		t.Errorf("body_read status = %d, want %d", status, XqdErrInvalidHandle)
+	}
+	if status := i.xqd_body_write(bodyID, replaceTestMetadataPtr, 3, BodyWriteEndBack, replaceTestNwrittenOut); status != XqdStatusOK {
+		t.Fatalf("body_write status = %d", status)
+	}
+	if status := i.xqd_body_known_length(bodyID, replaceTestValueOut); status != XqdErrNone {
+		t.Errorf("body_known_length status = %d, want %d", status, XqdErrNone)
+	}
+	respID, _ := i.responses.New()
+	if status := i.xqd_resp_send_downstream(int32(respID), bodyID, 1); status != XqdErrInvalidHandle {
+		t.Errorf("send_downstream status = %d, want %d", status, XqdErrInvalidHandle)
+	}
+
 	if status := i.xqd_body_close(bodyID); status != XqdStatusOK {
 		t.Fatalf("body_close status = %d", status)
 	}
-
-	if client.String() != "new" {
-		t.Fatalf("client received %q, want %q", client.String(), "new")
-	}
 	if content := lookupContent(t, i, "key"); content != "new" {
-		t.Fatalf("cache holds %q after a redirected replacement, want %q", content, "new")
+		t.Fatalf("cache holds %q, want %q", content, "new")
 	}
 }

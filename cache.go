@@ -26,13 +26,17 @@ type CachedObject struct {
 	SurrogateKeys          []string
 	UserMetadata           []byte
 	Length                 *uint64 // nil if unknown
-	RequestHeaders         []byte  // serialized headers used for vary
+	VaryHeaders            []byte  // the inserting request's values for VaryRule
 	InsertTime             time.Time
 	HitCount               atomic.Uint64
 	WriteComplete          bool
 	WriteFailed            bool       // the writer gave up before finishing
 	WriteCond              *sync.Cond // for streaming concurrent reads
 	SensitiveData          bool       // whether data is sensitive (PCI, etc)
+
+	// Response is the head of HTTP cache objects.
+	// Updates replace it, so handles keep the head they found.
+	Response *storedResponse
 }
 
 // CacheState represents the state flags for a cache lookup
@@ -81,6 +85,7 @@ type CacheWriteOptions struct {
 	EdgeMaxAgeNs           *uint64
 	SensitiveData          bool
 	StaleIfErrorNs         *uint64
+	Response               *storedResponse
 }
 
 // CacheReplaceStrategy defines how to handle cache replacement
@@ -191,11 +196,10 @@ func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
 	}
 	sort.Strings(sortedNames)
 
+	// Repeated values keep their order, as in production.
 	var result bytes.Buffer
 	for _, name := range sortedNames {
-		values := extracted[name]
-		sort.Strings(values)
-		for _, v := range values {
+		for _, v := range extracted[name] {
 			result.WriteString(name)
 			result.WriteByte(':')
 			result.WriteString(v)
@@ -212,7 +216,7 @@ func extractVaryHeaders(varyRule string, requestHeaders []byte) []byte {
 func (c *Cache) findMatchingVariant(key []byte, requestHeaders []byte) *CachedObject {
 	var newest *CachedObject
 	for _, v := range c.objects[cacheKey(key)] {
-		if v.VaryRule != "" && !bytes.Equal(extractVaryHeaders(v.VaryRule, requestHeaders), extractVaryHeaders(v.VaryRule, v.RequestHeaders)) {
+		if v.VaryRule != "" && !bytes.Equal(extractVaryHeaders(v.VaryRule, requestHeaders), v.VaryHeaders) {
 			continue
 		}
 		if newest == nil || v.InsertTime.After(newest.InsertTime) {
@@ -220,6 +224,20 @@ func (c *Cache) findMatchingVariant(key []byte, requestHeaders []byte) *CachedOb
 		}
 	}
 	return newest
+}
+
+// settledTransaction wraps an entry for a handle that is not part of a
+// pending transaction.
+func settledTransaction(key []byte, entry *CacheEntry, options *CacheLookupOptions) *CacheTransaction {
+	tx := &CacheTransaction{Key: key, Entry: entry, Options: options, ready: make(chan struct{})}
+	close(tx.ready)
+	return tx
+}
+
+// usableTransaction serves obj whatever its age, as production does for the
+// handles returned by stream-back inserts and fresh updates.
+func usableTransaction(key []byte, obj *CachedObject) *CacheTransaction {
+	return settledTransaction(key, &CacheEntry{Object: obj, State: CacheState{Found: true, Usable: true}}, nil)
 }
 
 // Lookup performs a non-transactional cache lookup
@@ -367,17 +385,18 @@ func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 // The caller holds the lock.
 func (c *Cache) store(keyStr string, options *CacheWriteOptions) *CachedObject {
 	obj := &CachedObject{
-		Body:           &bytes.Buffer{},
-		MaxAgeNs:       options.MaxAgeNs,
-		VaryRule:       options.VaryRule,
-		SurrogateKeys:  options.SurrogateKeys,
-		UserMetadata:   options.UserMetadata,
-		Length:         options.Length,
-		RequestHeaders: options.RequestHeaders,
-		InsertTime:     time.Now(),
-		WriteComplete:  false,
-		WriteCond:      sync.NewCond(&sync.Mutex{}),
-		SensitiveData:  options.SensitiveData,
+		Body:          &bytes.Buffer{},
+		MaxAgeNs:      options.MaxAgeNs,
+		VaryRule:      options.VaryRule,
+		SurrogateKeys: options.SurrogateKeys,
+		UserMetadata:  options.UserMetadata,
+		Length:        options.Length,
+		VaryHeaders:   extractVaryHeaders(options.VaryRule, options.RequestHeaders),
+		InsertTime:    time.Now(),
+		WriteComplete: false,
+		WriteCond:     sync.NewCond(&sync.Mutex{}),
+		SensitiveData: options.SensitiveData,
+		Response:      options.Response,
 	}
 
 	if options.InitialAgeNs != nil {
@@ -430,6 +449,9 @@ func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptio
 	}
 	if options.UserMetadata != nil {
 		obj.UserMetadata = options.UserMetadata
+	}
+	if options.Response != nil {
+		obj.Response = options.Response
 	}
 
 	// Reset age

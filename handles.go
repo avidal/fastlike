@@ -186,6 +186,16 @@ type BodyHandle struct {
 	streamingReadyMu   sync.Mutex
 	streamingSpace     chan struct{} // closed when a full channel next becomes writable or stops
 	streamingWritten   int64         // total bytes written to streaming body so far
+
+	// sink is set on streaming bodies that queue what is appended to them.
+	sink bodySink
+}
+
+// bodySink is the write end of a streaming body that queues appended bodies
+// instead of copying them right away.
+type bodySink interface {
+	io.WriteCloser
+	Append(src io.Reader)
 }
 
 type joinedBodyCloser struct {
@@ -288,7 +298,7 @@ func closedStreamingReadyChannel() <-chan struct{} {
 // A fresh channel is created for each full-buffer epoch, preventing a readiness
 // notification from an earlier drain from being reused after the buffer refills.
 func (b *BodyHandle) streamingReadyChannel() <-chan struct{} {
-	if b.isDownstreamStream {
+	if b.isDownstreamStream || b.sink != nil {
 		return closedStreamingReadyChannel()
 	}
 	if !b.isStreaming || b.streamingChan == nil {
@@ -366,7 +376,7 @@ func (b *BodyHandle) growKnownLength(n int64) {
 
 // IsStreaming returns true if this body handle is a streaming body
 func (b *BodyHandle) IsStreaming() bool {
-	return b.isStreaming || b.isDownstreamStream
+	return b.isStreaming || b.isDownstreamStream || b.sink != nil
 }
 
 // IsStreamingReady checks if the streaming body has capacity for writes (non-blocking).
@@ -454,21 +464,9 @@ type bodyAbandoner interface {
 // RedirectWriter changes the body handle's writer to w. Future Write calls
 // (from body_write in the guest) go directly to w instead of the internal buffer.
 func (b *BodyHandle) RedirectWriter(w io.Writer) {
-	if _, cacheBacked := b.writer.(cacheBackedWriter); cacheBacked {
-		// A body being written into the cache keeps feeding it while the
-		// bytes also go to the new destination.
-		b.writer = io.MultiWriter(b.writer, w)
-	} else {
-		b.writer = w
-	}
+	b.writer = w
 	b.lengthKnown = false
 	b.isDownstreamStream = true
-}
-
-// cacheBackedWriter marks writers that store the body in the cache and must
-// survive a redirect.
-type cacheBackedWriter interface {
-	cacheBacked()
 }
 
 // CloseStreaming closes the streaming body by sending a nil sentinel.
@@ -539,6 +537,14 @@ func (bhs *BodyHandles) NewResponseReader(resp *http.Response) (int, *BodyHandle
 func (bhs *BodyHandles) NewWriter(w io.Writer) (int, *BodyHandle) {
 	bh := &BodyHandle{}
 	bh.writer = w
+	bhs.handles = append(bhs.handles, bh)
+	return len(bhs.handles), bh
+}
+
+// NewSink creates a streaming body written through sink, such as the body of a
+// cache insert.
+func (bhs *BodyHandles) NewSink(sink bodySink) (int, *BodyHandle) {
+	bh := &BodyHandle{reader: http.NoBody, writer: sink, closer: sink, sink: sink}
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles), bh
 }
@@ -796,14 +802,14 @@ func (sshs *SecretStoreHandles) New(name string) int {
 
 // CacheHandle represents a cache lookup result (could be found, not found, or must-insert)
 type CacheHandle struct {
-	Transaction         *CacheTransaction // reference to the transaction
-	ReadOffset          int64             // current read offset for streaming
-	StreamingPipeReader io.Reader         // for insert_and_stream_back to avoid deadlock
+	Transaction *CacheTransaction // reference to the transaction
 
-	// The head of the request an HTTP cache lookup was made with, which
-	// get_suggested_backend_request starts from.
-	lookupRequest        *http.Request
-	lookupRequestVersion int32
+	// The HTTP cache lookup that created the handle, shared with the handles
+	// derived from it.
+	lookup *httpCacheLookup
+
+	// The head of the object the lookup found, as it was then.
+	storedResponse *storedResponse
 }
 
 // CacheHandles is a slice of CacheHandle with methods to get and create

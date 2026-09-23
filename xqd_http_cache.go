@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // xqd_http_cache_is_request_cacheable checks if a request is cacheable per RFC 9111
@@ -106,23 +106,9 @@ func (i *Instance) xqd_http_cache_lookup(
 	hash := sha256.Sum256([]byte(url))
 	key := hash[:]
 
-	// Build lookup options
-	lookupOpts := &CacheLookupOptions{}
-
-	// Note: HTTP cache lookup options are different from raw cache lookup options
-	// For now, we'll use basic lookup without special options
-
-	entry := i.cache.Lookup(key, lookupOpts)
-
-	// Create a transaction to wrap the entry
-	tx := &CacheTransaction{
-		Key:   key,
-		Entry: entry,
-		ready: make(chan struct{}),
-	}
-	close(tx.ready) // Already complete
-
-	handleID := i.newHTTPCacheHandle(tx, cloneRequestHead(req.Request), req.version)
+	lookup := newHTTPCacheLookup(req)
+	entry := i.cache.Lookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders})
+	handleID := i.newHTTPCacheHandle(settledTransaction(key, entry, nil), lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -147,16 +133,16 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 	hash := sha256.Sum256([]byte(url))
 	key := hash[:]
 
-	lookupOpts := &CacheLookupOptions{}
-	tx := i.cache.TransactionLookup(key, lookupOpts, i)
-
-	handleID := i.newHTTPCacheHandle(tx, cloneRequestHead(req.Request), req.version)
+	lookup := newHTTPCacheLookup(req)
+	tx := i.cache.TransactionLookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders}, i)
+	handleID := i.newHTTPCacheHandle(tx, lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_transaction_insert inserts a response into cache
+// xqd_http_cache_transaction_insert stores a response and returns the body to
+// write it with.
 func (i *Instance) xqd_http_cache_transaction_insert(
 	cache_handle int32,
 	resp_handle int32,
@@ -166,36 +152,20 @@ func (i *Instance) xqd_http_cache_transaction_insert(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_insert")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
-		return XqdErrInvalidHandle
+	handle, writeOpts, status := i.httpCacheWrite(cache_handle, resp_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	resp := i.responses.Get(int(resp_handle))
-	if resp == nil {
-		return XqdErrInvalidHandle
-	}
-
-	writeOpts := i.readHttpCacheWriteOptions(options_mask, options)
-
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
-
-	// Create a body handle that writes to the cache object
-	bodyID, body := i.bodies.NewBuffer()
-	body.writer = &cacheBodyWriter{
-		cache:        obj,
-		originalBody: body.buf,
-	}
-
+	bodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
-
-	// Complete the transaction
 	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_transaction_insert_and_stream_back inserts and streams back
+// xqd_http_cache_transaction_insert_and_stream_back stores a response and also
+// returns a cache handle that reads it back as it is written.
 func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	cache_handle int32,
 	resp_handle int32,
@@ -206,72 +176,54 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_insert_and_stream_back")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
-		return XqdErrInvalidHandle
+	handle, writeOpts, status := i.httpCacheWrite(cache_handle, resp_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	resp := i.responses.Get(int(resp_handle))
-	if resp == nil {
-		return XqdErrInvalidHandle
-	}
-
-	writeOpts := i.readHttpCacheWriteOptions(options_mask, options)
-
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
-
-	// Create a pipe to connect write and read handles
-	// This allows the guest to write and read simultaneously without deadlock
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Create a cache body writer that writes to the cache object
-	cacheWriter := &cacheBodyWriter{
-		cache:        obj,
-		originalBody: nil,
-	}
-
-	// Create a MultiWriter that writes to both the pipe and the cache
-	multiWriter := &cacheTeeWriter{io.MultiWriter(pipeWriter, cacheWriter)}
-
-	// Create a write body handle that writes to both the pipe and cache
-	writeBodyID, writeBody := i.bodies.NewBuffer()
-	writeBody.writer = multiWriter
-	writeBody.closer = &pipeAndCacheCloser{
-		pipeWriter: pipeWriter,
-		cache:      obj,
-		store:      i.cache,
-		key:        handle.Transaction.Key,
-	}
-
-	// Create a new transaction/handle for reading back from the pipe
-	readTx := &CacheTransaction{
-		Key: handle.Transaction.Key,
-		Entry: &CacheEntry{
-			Object: obj,
-			State: CacheState{
-				Found:  true,
-				Usable: true,
-			},
-		},
-		ready: make(chan struct{}),
-	}
-	close(readTx.ready)
-
-	readHandleID := i.newHTTPCacheHandle(readTx, handle.lookupRequest, handle.lookupRequestVersion)
-	// Store the pipe reader in the cache handle so get_body can use it
-	readCacheHandle := i.cacheHandles.Get(readHandleID)
-	readCacheHandle.StreamingPipeReader = pipeReader
+	writeBodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
+	readHandleID := i.newHTTPCacheHandle(usableTransaction(handle.Transaction.Key, obj), handle.lookup)
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
-
-	// Complete the original transaction
 	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_transaction_update updates cache metadata
+// httpCacheWrite takes the response of an insert or update and returns the
+// write options that store it.
+// As in production, the response is consumed even if the cache handle is
+// invalid.
+func (i *Instance) httpCacheWrite(cache_handle, resp_handle int32, options_mask uint32, options int32) (*CacheHandle, *CacheWriteOptions, int32) {
+	writeOpts := i.readHttpCacheWriteOptions(options_mask, options)
+	resp := i.responses.Take(int(resp_handle))
+	if resp == nil {
+		return nil, nil, XqdErrInvalidHandle
+	}
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
+		return nil, nil, XqdErrInvalidHandle
+	}
+
+	writeOpts.Response = newStoredResponse(resp.Response, handle.lookup.time)
+	writeOpts.RequestHeaders = handle.lookup.requestHeaders
+	return handle, writeOpts, XqdStatusOK
+}
+
+// serializeRequestHeader formats the headers cache variants are matched
+// against, including the Host that Go keeps apart.
+func serializeRequestHeader(r *http.Request) []byte {
+	var buf bytes.Buffer
+	_ = r.Header.Write(&buf)
+	if _, ok := r.Header["Host"]; !ok && r.Host != "" {
+		buf.WriteString("Host: " + r.Host + "\r\n")
+	}
+	return buf.Bytes()
+}
+
+// xqd_http_cache_transaction_update freshens the found object with a new
+// response head.
 func (i *Instance) xqd_http_cache_transaction_update(
 	cache_handle int32,
 	resp_handle int32,
@@ -280,30 +232,20 @@ func (i *Instance) xqd_http_cache_transaction_update(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_update")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
-		return XqdErrInvalidHandle
+	handle, writeOpts, status := i.httpCacheWrite(cache_handle, resp_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	resp := i.responses.Get(int(resp_handle))
-	if resp == nil {
-		return XqdErrInvalidHandle
-	}
-
-	writeOpts := i.readHttpCacheWriteOptions(options_mask, options)
-
-	err := i.cache.TransactionUpdate(handle.Transaction, writeOpts)
-	if err != nil {
+	if err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
 		return XqdError
 	}
-
-	// Complete the transaction
 	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_transaction_update_and_return_fresh updates and returns fresh entry
+// xqd_http_cache_transaction_update_and_return_fresh freshens the found object
+// and returns a cache handle that serves it.
 func (i *Instance) xqd_http_cache_transaction_update_and_return_fresh(
 	cache_handle int32,
 	resp_handle int32,
@@ -313,35 +255,16 @@ func (i *Instance) xqd_http_cache_transaction_update_and_return_fresh(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_update_and_return_fresh")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
-		return XqdErrInvalidHandle
+	handle, writeOpts, status := i.httpCacheWrite(cache_handle, resp_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	resp := i.responses.Get(int(resp_handle))
-	if resp == nil {
-		return XqdErrInvalidHandle
-	}
-
-	writeOpts := i.readHttpCacheWriteOptions(options_mask, options)
-
-	err := i.cache.TransactionUpdate(handle.Transaction, writeOpts)
-	if err != nil {
+	if err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
 		return XqdError
 	}
-
-	// Create a new handle for the fresh entry
-	freshTx := &CacheTransaction{
-		Key:   handle.Transaction.Key,
-		Entry: handle.Transaction.Entry,
-		ready: make(chan struct{}),
-	}
-	close(freshTx.ready)
-
-	freshHandleID := i.newHTTPCacheHandle(freshTx, handle.lookupRequest, handle.lookupRequestVersion)
+	fresh := usableTransaction(handle.Transaction.Key, handle.Transaction.Entry.Object)
+	freshHandleID := i.newHTTPCacheHandle(fresh, handle.lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(freshHandleID))
-
-	// Complete the original transaction
 	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
@@ -355,8 +278,8 @@ func (i *Instance) xqd_http_cache_transaction_record_not_cacheable(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_record_not_cacheable")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -374,8 +297,8 @@ func (i *Instance) xqd_http_cache_transaction_record_not_cacheable(
 func (i *Instance) xqd_http_cache_transaction_abandon(cache_handle int32) int32 {
 	i.abilog.Println("http_cache_transaction_abandon")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -387,18 +310,15 @@ func (i *Instance) xqd_http_cache_transaction_abandon(cache_handle int32) int32 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_close closes a cache handle
+// xqd_http_cache_close closes a cache handle and abandons its transaction.
 func (i *Instance) xqd_http_cache_close(cache_handle int32) int32 {
 	i.abilog.Println("http_cache_close")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil {
+	if i.httpCacheHandle(cache_handle) == nil {
 		return XqdErrInvalidHandle
 	}
-
-	// Handles live until the downstream request ends, so let go of the
-	// lookup request now.
-	handle.lookupRequest = nil
+	handle := i.cacheHandles.Take(int(cache_handle))
+	_ = i.cache.TransactionCancel(handle.Transaction)
 	return XqdStatusOK
 }
 
@@ -409,19 +329,21 @@ func (i *Instance) xqd_http_cache_get_suggested_backend_request(
 ) int32 {
 	i.abilog.Println("http_cache_get_suggested_backend_request")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.lookupRequest == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Revalidation requests are not built, since stored responses do not
-	// keep the ETag and Last-Modified headers they would need.
-	backendReq := cloneRequestHead(handle.lookupRequest)
-	prepareFullBackendRequest(backendReq)
+	backendReq := cloneRequestHead(handle.lookup.request)
+	if handle.storedResponse != nil {
+		prepareRevalidationRequest(backendReq, handle.storedResponse.header)
+	} else {
+		prepareFullBackendRequest(backendReq)
+	}
 
 	reqID, reqHandle := i.requests.New()
 	reqHandle.Request = backendReq
-	reqHandle.version = handle.lookupRequestVersion
+	reqHandle.version = handle.lookup.version
 
 	i.abilog.Printf("http_cache_get_suggested_backend_request: created request url=%s method=%s", backendReq.URL, backendReq.Method)
 	i.memory.WriteUint32(req_handle_out, uint32(reqID))
@@ -429,16 +351,53 @@ func (i *Instance) xqd_http_cache_get_suggested_backend_request(
 	return XqdStatusOK
 }
 
-// newHTTPCacheHandle registers a cache handle along with the head of its lookup
-// request.
-// Production keeps that request per handle, so neither a later lookup of the
-// same key nor changes to the guest's request handle affect it.
-func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, lookupRequest *http.Request, version int32) int {
+// httpCacheLookup is what HTTP cache handles keep of the lookup that created
+// them, a snapshot unaffected by later changes to the guest's request.
+type httpCacheLookup struct {
+	request        *http.Request
+	version        int32
+	time           time.Time
+	requestHeaders []byte
+}
+
+func newHTTPCacheLookup(req *RequestHandle) *httpCacheLookup {
+	return &httpCacheLookup{
+		request:        cloneRequestHead(req.Request),
+		version:        req.version,
+		time:           time.Now(),
+		requestHeaders: serializeRequestHeader(req.Request),
+	}
+}
+
+// newHTTPCacheHandle registers a cache handle along with the response head it
+// found at that point, as production keeps per handle.
+func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, lookup *httpCacheLookup) int {
 	id := i.cacheHandles.New(tx)
 	handle := i.cacheHandles.Get(id)
-	handle.lookupRequest = lookupRequest
-	handle.lookupRequestVersion = version
+	handle.lookup = lookup
+	if tx.Entry != nil && tx.Entry.Object != nil {
+		handle.storedResponse = tx.Entry.Object.Response
+	}
 	return id
+}
+
+// httpCacheHandle returns an HTTP cache handle, rejecting core cache ones like
+// production does.
+func (i *Instance) httpCacheHandle(cache_handle int32) *CacheHandle {
+	handle := i.cacheHandles.Get(int(cache_handle))
+	if handle == nil || handle.Transaction == nil || handle.lookup == nil {
+		return nil
+	}
+	return handle
+}
+
+// httpCacheObject returns the object an HTTP cache handle found.
+func (i *Instance) httpCacheObject(cache_handle int32) *CachedObject {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil || handle.Transaction.Entry == nil {
+		return nil
+	}
+	return handle.Transaction.Entry.Object
 }
 
 // cloneRequestHead copies the method, URL, headers and host of a request.
@@ -485,7 +444,7 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 ) int32 {
 	i.abilog.Println("http_cache_get_suggested_cache_options")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
+	handle := i.httpCacheHandle(cache_handle)
 	if handle == nil {
 		return XqdErrInvalidHandle
 	}
@@ -507,14 +466,7 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 	//     36 | surrogate_keys_len           | 4 bytes (usize)
 	//     40 | length                       | 8 bytes (u64)
 
-	const (
-		HttpCacheWriteOptionsMaskMaxAgeNs               = 1 << 0
-		HttpCacheWriteOptionsMaskVaryRule               = 1 << 1
-		HttpCacheWriteOptionsMaskInitialAgeNs           = 1 << 2
-		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs = 1 << 3
-		HttpCacheWriteOptionsMaskSurrogateKeys          = 1 << 4
-		HttpCacheWriteOptionsMaskLength                 = 1 << 5
-	)
+	const HttpCacheWriteOptionsMaskMaxAgeNs = 1 << 0
 
 	// Parse Cache-Control header to determine max-age and other directives
 	// Default to 1 hour (3600 seconds) if not specified
@@ -586,7 +538,8 @@ func parseInt(s string) (int64, error) {
 	return result, nil
 }
 
-// xqd_http_cache_prepare_response_for_storage prepares response for caching
+// xqd_http_cache_prepare_response_for_storage suggests a storage action for a
+// backend response and returns the response to store.
 func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 	cache_handle int32,
 	resp_handle int32,
@@ -595,7 +548,7 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 ) int32 {
 	i.abilog.Println("http_cache_prepare_response_for_storage")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
+	handle := i.httpCacheHandle(cache_handle)
 	if handle == nil {
 		return XqdErrInvalidHandle
 	}
@@ -605,32 +558,38 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 		return XqdErrInvalidHandle
 	}
 
-	// Determine storage action based on response status code
-	// Actions: 0=Insert, 1=Update, 2=DoNotStore, 3=RecordUncacheable
-	storageAction := uint32(0) // Default: Insert
-
-	// Only cache successful responses (2xx and 3xx status codes)
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		storageAction = 2 // DoNotStore
-	}
-
-	i.memory.WriteUint32(storage_action_out, storageAction)
-
 	// Production hands back a new handle and leaves the original one open.
 	// The Rust SDK closes the original as soon as it gets the new one, so
 	// returning the same handle would close the response it keeps using.
 	response := *resp.Response
-	response.Header = resp.Header.Clone()
 	response.Trailer = resp.Trailer.Clone()
+
+	var storageAction uint32
+	if stored := handle.storedResponse; stored != nil && resp.StatusCode == http.StatusNotModified {
+		storageAction = HttpStorageActionUpdate
+		response.StatusCode = stored.status
+		response.Status = http.StatusText(stored.status)
+		response.Header = freshenStoredHeader(stored.header, resp.Header)
+	} else {
+		storageAction = storageActionFor(handle.lookup.request.Method, resp.Response)
+		response.Header = resp.Header.Clone()
+		if storageAction == HttpStorageActionInsert {
+			stripHeadersForStorage(response.Header, response.Header)
+		}
+	}
+
 	preparedID, prepared := i.responses.New()
 	*prepared = *resp
 	prepared.Response = &response
+	i.memory.WriteUint32(storage_action_out, storageAction)
 	i.memory.WriteUint32(resp_handle_out, uint32(preparedID))
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_get_found_response gets cached response
+// xqd_http_cache_get_found_response returns the stored response and its body.
+// With transform_for_client, it is adapted to the lookup request as production
+// does, except that ranges are not answered with a 206 yet.
 func (i *Instance) xqd_http_cache_get_found_response(
 	cache_handle int32,
 	transform_for_client uint32,
@@ -639,33 +598,46 @@ func (i *Instance) xqd_http_cache_get_found_response(
 ) int32 {
 	i.abilog.Println("http_cache_get_found_response")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil || handle.Transaction.Entry == nil {
 		return XqdErrInvalidHandle
 	}
 
 	entry := handle.Transaction.Entry
-	if !entry.State.Found || !entry.State.Usable || entry.Object == nil {
+	stored := handle.storedResponse
+	if !entry.State.Found || !entry.State.Usable || entry.Object == nil || stored == nil {
 		return XqdErrNone
 	}
 
-	// Create a response from cached object
+	status, withBody := stored.status, true
+	var header http.Header
+	switch {
+	case transform_for_client != 1:
+		header = stored.header.Clone()
+	case stored.validatorsMatch(handle.lookup.request):
+		status, withBody = http.StatusNotModified, false
+		header = notModifiedHeader(stored.header)
+		header.Set("Accept-Ranges", "bytes")
+	default:
+		header = stored.header.Clone()
+		header.Set("Age", ageHeaderValue(stored.currentAge(time.Now())))
+		header.Set("Accept-Ranges", "bytes")
+		withBody = handle.lookup.request.Method != http.MethodHead
+	}
+
 	respID, respHandle := i.responses.New()
-	respHandle.Response = &http.Response{
-		StatusCode: 200,
-		Header:     http.Header{},
-		Body:       io.NopCloser(bytes.NewReader([]byte{})),
+	respHandle.StatusCode = status
+	respHandle.Status = http.StatusText(status)
+	respHandle.Header = header
+
+	var bodyID int
+	if withBody {
+		bodyID, _ = i.newCacheObjectBody(entry.Object, 0, 0, false)
+	} else {
+		bodyID, _ = i.bodies.NewBuffer()
 	}
 
 	i.memory.WriteUint32(resp_handle_out, uint32(respID))
-
-	// Create a body handle for reading from cache
-	bodyID, body := i.bodies.NewBuffer()
-	body.reader = &cacheBodyReader{
-		cache:  entry.Object,
-		offset: 0,
-	}
-
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
 	return XqdStatusOK
@@ -678,8 +650,8 @@ func (i *Instance) xqd_http_cache_get_state(
 ) int32 {
 	i.abilog.Println("http_cache_get_state")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil || handle.Transaction.Entry == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -710,12 +682,11 @@ func (i *Instance) xqd_http_cache_get_length(
 ) int32 {
 	i.abilog.Println("http_cache_get_length")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	if obj.Length != nil {
 		i.memory.WriteUint64(length_out, *obj.Length)
 		return XqdStatusOK
@@ -731,12 +702,11 @@ func (i *Instance) xqd_http_cache_get_max_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_max_age_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
 
 	return XqdStatusOK
@@ -749,12 +719,11 @@ func (i *Instance) xqd_http_cache_get_stale_while_revalidate_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_while_revalidate_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	// Always return the value (even if 0) - the Rust library expects it to be present
 	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
 
@@ -768,12 +737,11 @@ func (i *Instance) xqd_http_cache_get_stale_if_error_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_if_error_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	i.memory.WriteUint64(duration_out, obj.StaleIfErrorNs)
 
 	return XqdStatusOK
@@ -784,8 +752,8 @@ func (i *Instance) xqd_http_cache_get_stale_if_error_ns(
 func (i *Instance) xqd_http_cache_transaction_choose_stale(cache_handle int32) int32 {
 	i.abilog.Println("http_cache_transaction_choose_stale")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -805,12 +773,11 @@ func (i *Instance) xqd_http_cache_get_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_age_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	age := obj.GetAge()
 	i.memory.WriteUint64(duration_out, age)
 
@@ -824,12 +791,11 @@ func (i *Instance) xqd_http_cache_get_hits(
 ) int32 {
 	i.abilog.Println("http_cache_get_hits")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
 
 	return XqdStatusOK
@@ -842,12 +808,11 @@ func (i *Instance) xqd_http_cache_get_sensitive_data(
 ) int32 {
 	i.abilog.Println("http_cache_get_sensitive_data")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	sensitive := uint32(0)
 	if obj.SensitiveData {
 		sensitive = 1
@@ -867,12 +832,10 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 ) int32 {
 	i.abilog.Println("http_cache_get_surrogate_keys")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
-
-	obj := handle.Transaction.Entry.Object
 
 	// Join surrogate keys with spaces (empty list is OK - write 0 bytes)
 	keysStr := ""
@@ -909,12 +872,11 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 ) int32 {
 	i.abilog.Println("http_cache_get_vary_rule")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	obj := i.httpCacheObject(cache_handle)
+	if obj == nil {
 		return XqdErrInvalidHandle
 	}
 
-	obj := handle.Transaction.Entry.Object
 	ruleBytes := []byte(obj.VaryRule) // Empty string is OK - write 0 bytes
 
 	if len(ruleBytes) > int(rule_out_len) {
@@ -949,17 +911,6 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 
 	// Read max_age_ns (always present at offset 0)
 	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr)
-
-	// Mask bits for HTTP cache write options
-	const (
-		HttpCacheWriteOptionsMaskVaryRule               = 1 << 1
-		HttpCacheWriteOptionsMaskInitialAgeNs           = 1 << 2
-		HttpCacheWriteOptionsMaskStaleWhileRevalidateNs = 1 << 3
-		HttpCacheWriteOptionsMaskSurrogateKeys          = 1 << 4
-		HttpCacheWriteOptionsMaskLength                 = 1 << 5
-		HttpCacheWriteOptionsMaskSensitiveData          = 1 << 6
-		HttpCacheWriteOptionsMaskStaleIfErrorNs         = 1 << 7
-	)
 
 	// Read vary_rule
 	if mask&HttpCacheWriteOptionsMaskVaryRule != 0 {
