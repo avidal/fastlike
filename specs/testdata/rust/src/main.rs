@@ -1,3 +1,7 @@
+// The spec guest keeps using deprecated SDK APIs on purpose, since the
+// hostcalls behind them still need coverage.
+#![allow(deprecated)]
+
 use fastly::{Request, Response, Body, Error};
 use fastly::http::{Method, StatusCode};
 use fastly::experimental::uap_parse;

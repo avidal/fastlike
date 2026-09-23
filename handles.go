@@ -799,6 +799,11 @@ type CacheHandle struct {
 	Transaction         *CacheTransaction // reference to the transaction
 	ReadOffset          int64             // current read offset for streaming
 	StreamingPipeReader io.Reader         // for insert_and_stream_back to avoid deadlock
+
+	// The head of the request an HTTP cache lookup was made with, which
+	// get_suggested_backend_request starts from.
+	lookupRequest        *http.Request
+	lookupRequestVersion int32
 }
 
 // CacheHandles is a slice of CacheHandle with methods to get and create

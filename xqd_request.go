@@ -304,28 +304,60 @@ func (i *Instance) xqd_req_version_set(handle int32, version int32) int32 {
 	return XqdStatusOK
 }
 
-// xqd_req_cache_override_set sets cache override parameters for the request.
-// This is a no-op for local testing since we don't implement caching.
-// Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK otherwise.
+// The cache override hostcalls validate their arguments like production does,
+// and then drop the override.
+// Newer SDKs apply ttl, stale-while-revalidate and surrogate keys themselves
+// through the HTTP cache hostcalls, and only leave pass to the host, which the
+// send path already honors since it never caches.
+
 func (i *Instance) xqd_req_cache_override_set(handle int32, tag int32, ttl int32, swr int32) int32 {
-	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
-
-	if i.requests.Get(int(handle)) == nil {
-		i.abilog.Printf("req_cache_override_set: invalid handle %d", handle)
-		return XqdErrInvalidHandle
-	}
-
-	return XqdStatusOK
+	requireFlags("req_cache_override_set", "cache_override_tag", tag, cacheOverrideTagKnown)
+	return i.cacheOverrideSet("req_cache_override_set", handle, 0, 0)
 }
 
-// xqd_req_cache_override_v2_set sets cache override parameters including surrogate keys.
-// This is a no-op for local testing since we don't implement caching.
-// Returns XqdErrInvalidHandle if the handle is invalid, XqdStatusOK otherwise.
 func (i *Instance) xqd_req_cache_override_v2_set(handle int32, tag int32, ttl int32, swr int32, sk int32, sk_len int32) int32 {
-	// We don't actually *do* anything with cache overrides, since we don't have or need a cache.
+	requireFlags("req_cache_override_v2_set", "cache_override_tag", tag, cacheOverrideTagKnown)
+	return i.cacheOverrideSet("req_cache_override_v2_set", handle, uint32(sk), uint32(sk_len))
+}
+
+func (i *Instance) xqd_req_cache_override_v3_set(handle int32, tag int32, override_addr int32) int32 {
+	requireFlags("req_cache_override_v3_set", "cache_override_tag", tag, cacheOverrideTagKnown)
+	// Like wiggle, check the first field's bounds before the alignment, and
+	// the rest of the record afterwards.
+	addr := int64(uint32(override_addr))
+	if !i.memory.validRange(addr, 4) {
+		i.abilog.Printf("req_cache_override_v3_set: record at %#x out of bounds", uint32(override_addr))
+		return XqdErrInvalidArgument
+	}
+	if addr%4 != 0 {
+		i.abilog.Printf("req_cache_override_v3_set: record at %#x not aligned", uint32(override_addr))
+		return XqdErrBadAlignment
+	}
+	if !i.memory.validRange(addr, cacheOverrideSize) {
+		i.abilog.Printf("req_cache_override_v3_set: record at %#x out of bounds", uint32(override_addr))
+		return XqdErrInvalidArgument
+	}
+	sk := i.memory.Uint32(addr + 8)
+	skLen := i.memory.Uint32(addr + 12)
+	return i.cacheOverrideSet("req_cache_override_v3_set", handle, sk, skLen)
+}
+
+// cacheOverrideSet checks the surrogate keys, when there are any, and then the
+// request handle.
+func (i *Instance) cacheOverrideSet(name string, handle int32, sk uint32, skLen uint32) int32 {
+	if skLen > 0 {
+		if !i.memory.validRange(int64(sk), uint64(skLen)) {
+			i.abilog.Printf("%s: surrogate keys out of bounds", name)
+			return XqdErrInvalidArgument
+		}
+		if !validHeaderValue(string(i.memory.Data()[sk : uint64(sk)+uint64(skLen)])) {
+			i.abilog.Printf("%s: surrogate keys are not a valid header value", name)
+			return XqdErrInvalidArgument
+		}
+	}
 
 	if i.requests.Get(int(handle)) == nil {
-		i.abilog.Printf("req_cache_override_v2_set: invalid handle %d", handle)
+		i.abilog.Printf("%s: invalid handle %d", name, handle)
 		return XqdErrInvalidHandle
 	}
 

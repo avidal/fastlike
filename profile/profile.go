@@ -689,6 +689,7 @@ var hostcallNames = []string{
 	"xqd_http_downstream_bot_verified",
 	"xqd_shield_info",
 	"xqd_backend_for_shield",
+	"cache_override_v3_set",
 }
 
 var hostcallNameLookup = func() map[string]uint16 {

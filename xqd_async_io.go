@@ -20,18 +20,6 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 		return XqdErrInvalidArgument
 	}
 
-	// Special case: empty list with non-zero timeout - just wait for timeout
-	if handles_len == 0 {
-		i.abilog.Printf("async_io_select: empty list, waiting for timeout")
-		// Pause CPU time tracking while waiting
-		i.pauseExecution()
-		time.Sleep(time.Duration(uint32(timeout_ms)) * time.Millisecond)
-		i.resumeExecution()
-		// Return u32::MAX to indicate timeout
-		i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
-		return XqdStatusOK
-	}
-
 	// Read the list of async item handles from guest memory
 	handles := make([]uint32, handles_len)
 	for idx := int32(0); idx < handles_len; idx++ {
@@ -58,13 +46,24 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 		handleIndexes = append(handleIndexes, idx)
 	}
 
-	// Add timeout case if timeout is specified
+	// The timeout is a u32, and only 0 means waiting without one.
 	var timeoutCh <-chan time.Time
-	if timeout_ms > 0 {
+	if timeout_ms != 0 {
 		timeoutCh = time.After(time.Duration(uint32(timeout_ms)) * time.Millisecond)
 		selectCases = append(selectCases, reflect.SelectCase{
 			Dir:  reflect.SelectRecv,
 			Chan: reflect.ValueOf(timeoutCh),
+		})
+	}
+
+	// Stop waiting once the downstream request is cancelled, like the blocking
+	// send does, so that ServeHTTP can report the interrupt.
+	cancelCase := -1
+	if i.ds_context != nil {
+		cancelCase = len(selectCases)
+		selectCases = append(selectCases, reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(i.ds_context.Done()),
 		})
 	}
 
@@ -75,8 +74,13 @@ func (i *Instance) xqd_async_io_select(handles_addr int32, handles_len int32, ti
 	// Use reflect.Select to wait on all channels without goroutine leaks
 	chosen, _, _ := reflect.Select(selectCases)
 
+	if chosen == cancelCase {
+		i.abilog.Printf("async_io_select: context cancelled")
+		return XqdError
+	}
+
 	// Check if it was the timeout case
-	if timeout_ms > 0 && chosen == len(handleIndexes) {
+	if timeout_ms != 0 && chosen == len(handleIndexes) {
 		i.abilog.Printf("async_io_select: timeout expired")
 		i.memory.PutUint32(0xFFFFFFFF, int64(ready_idx_out))
 		return XqdStatusOK

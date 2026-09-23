@@ -24,231 +24,232 @@ type wasmContext struct {
 	linker *wasmtime.Linker // Shared linker with host functions (shared, read-only)
 }
 
+// guestTrap is what a hostcall panics with to trap the guest instead of
+// returning a status.
+type guestTrap string
+
+// requireFlags traps the guest when a witx flags argument has unknown bits.
+// Production's wiggle glue converts flags before the handler runs, and an
+// unknown bit traps there.
+func requireFlags(hostcall string, flagsType string, value int32, known uint32) {
+	if uint32(value)&^known != 0 {
+		panic(guestTrap(fmt.Sprintf("%s: invalid %s flags %#x", hostcall, flagsType, uint32(value))))
+	}
+}
+
+// recoverHostcall turns a panic in a hostcall into its result.
+// A guestTrap traps the guest, and anything else is a host bug that returns XqdError.
+func (i *Instance) recoverHostcall(name string, r any) (int32, *wasmtime.Trap) {
+	if msg, ok := r.(guestTrap); ok {
+		return XqdError, wasmtime.NewTrap(string(msg))
+	}
+	i.abilog.Printf("PANIC in %s: %v", name, r)
+	i.markHostcallPanic(name, r)
+	return XqdError, nil
+}
+
 // safeWrap1 wraps a 1-argument host function with panic recovery and hostcall span recording.
 // When host functions with *Caller panic, wasmtime-go v37 has a nil pointer dereference bug.
-// This wrapper catches panics and converts them to proper error returns.
+// This wrapper catches panics and converts them to proper error returns, or to a
+// trap for a guestTrap.
 // The Instance is retrieved from caller.Data(), enabling the use of a shared linker.
-func safeWrap1(name string, fn func(*Instance, int32) int32) func(*wasmtime.Caller, int32) int32 {
+func safeWrap1(name string, fn func(*Instance, int32) int32) func(*wasmtime.Caller, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), 0, 0, 0))
 		}()
 		ret = fn(i, a)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap2 wraps a 2-argument host function with panic recovery.
-func safeWrap2(name string, fn func(*Instance, int32, int32) int32) func(*wasmtime.Caller, int32, int32) int32 {
+func safeWrap2(name string, fn func(*Instance, int32, int32) int32) func(*wasmtime.Caller, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), 0, 0))
 		}()
 		ret = fn(i, a, b)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap3 wraps a 3-argument host function with panic recovery.
-func safeWrap3(name string, fn func(*Instance, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32) int32 {
+func safeWrap3(name string, fn func(*Instance, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), 0))
 		}()
 		ret = fn(i, a, b, c)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap4 wraps a 4-argument host function with panic recovery.
-func safeWrap4(name string, fn func(*Instance, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32) int32 {
+func safeWrap4(name string, fn func(*Instance, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap5 wraps a 5-argument host function with panic recovery.
-func safeWrap5(name string, fn func(*Instance, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32) int32 {
+func safeWrap5(name string, fn func(*Instance, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap6 wraps a 6-argument host function with panic recovery.
-func safeWrap6(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap6(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f)
-		return ret
+		return ret, nil
 	}
 }
 
 // safeWrap7 wraps a 7-argument host function with panic recovery.
-func safeWrap7(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap7(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f, g)
-		return ret
+		return ret, nil
 	}
 }
 
-func safeWrap8(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap8(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f, g, h)
-		return ret
+		return ret, nil
 	}
 }
 
 // Additional wrappers for uint32 parameters (for cache functions)
-func safeWrap9(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap9(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f, g, h, j)
-		return ret
+		return ret, nil
 	}
 }
 
-func safeWrap11(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap11(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f, g, h, j, k, l)
-		return ret
+		return ret, nil
 	}
 }
 
-func safeWrap14(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32 {
+func safeWrap14(name string, fn func(*Instance, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) int32) func(*wasmtime.Caller, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32, int32) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l, m, n, o int32) (ret int32) {
+	return func(caller *wasmtime.Caller, a, b, c, d, e, f, g, h, j, k, l, m, n, o int32) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(int64(a), int64(b), int64(c), int64(d)))
 		}()
 		ret = fn(i, a, b, c, d, e, f, g, h, j, k, l, m, n, o)
-		return ret
+		return ret, nil
 	}
 }
 
 // Additional wrappers for special parameter types
-func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.Caller, int64) int32 {
+func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.Caller, int64) (int32, *wasmtime.Trap) {
 	nameIdx := profile.HostcallNameIndex(name)
-	return func(caller *wasmtime.Caller, a int64) (ret int32) {
+	return func(caller *wasmtime.Caller, a int64) (ret int32, trap *wasmtime.Trap) {
 		i := caller.Data().(*Instance)
 		start := i.startHostcallSpan()
 		defer func() {
 			if r := recover(); r != nil {
-				i.abilog.Printf("PANIC in %s: %v", name, r)
-				i.markHostcallPanic(name, r)
-				ret = XqdError
+				ret, trap = i.recoverHostcall(name, r)
 			}
 			i.finishHostcallSpan(nameIdx, start, ret, hostcallTagSlots(a, 0, 0, 0))
 		}()
 		ret = fn(i, a)
-		return ret
+		return ret, nil
 	}
 }
 
@@ -562,6 +563,9 @@ func link(linker *wasmtime.Linker) {
 	}))
 	_ = linker.FuncWrap("fastly_http_req", "cache_override_v2_set", safeWrap6("cache_override_v2_set", func(i *Instance, req_handle int32, tag int32, ttl int32, stale_while_revalidate int32, sk_addr int32, sk_size int32) int32 {
 		return i.xqd_req_cache_override_v2_set(req_handle, tag, ttl, stale_while_revalidate, sk_addr, sk_size)
+	}))
+	_ = linker.FuncWrap("fastly_http_req", "cache_override_v3_set", safeWrap3("cache_override_v3_set", func(i *Instance, req_handle int32, tag int32, override_addr int32) int32 {
+		return i.xqd_req_cache_override_v3_set(req_handle, tag, override_addr)
 	}))
 	// The Go http implementation doesn't make it easy to get at the original headers in order, so
 	// we just use the same sorted order

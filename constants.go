@@ -91,6 +91,23 @@ const (
 	BackendHealthUnhealthy uint32 = 2
 )
 
+// Cache override tag flags
+const (
+	CacheOverrideTagPass                 uint32 = 1 << 0
+	CacheOverrideTagTTL                  uint32 = 1 << 1
+	CacheOverrideTagStaleWhileRevalidate uint32 = 1 << 2
+	CacheOverrideTagPCI                  uint32 = 1 << 3
+	CacheOverrideTagLookupTimeout        uint32 = 1 << 4
+
+	cacheOverrideTagKnown = CacheOverrideTagPass | CacheOverrideTagTTL | CacheOverrideTagStaleWhileRevalidate |
+		CacheOverrideTagPCI | CacheOverrideTagLookupTimeout
+)
+
+// cacheOverrideSize is the size of the record cache_override_v3_set reads:
+// ttl, stale_while_revalidate, the surrogate keys pointer and length, and
+// lookup_timeout_ms, all u32.
+const cacheOverrideSize = 20
+
 // Cache lookup state flags
 const (
 	CacheLookupStateFound              uint32 = 1 << 0

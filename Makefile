@@ -40,8 +40,8 @@ build-spec-runner:
 # Build the Rust test wasm programs
 build-test-wasm:
 	@echo "Building Rust test wasm..."
-	@cd specs/testdata/rust && cargo build --target wasm32-wasip1 --release
-	@echo "Test wasm built at specs/testdata/rust/target/wasm32-wasip1/release/example.wasm"
+	@cd specs/testdata/rust && cargo build --target wasm32-wasip1
+	@echo "Test wasm built at specs/testdata/rust/target/wasm32-wasip1/debug/example.wasm"
 
 # Format Go code
 fmt:
