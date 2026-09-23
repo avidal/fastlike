@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"io"
 	"math"
+	"sync"
+	"time"
 )
 
 // xqd_cache_lookup performs a non-transactional cache lookup
@@ -34,16 +36,7 @@ func (i *Instance) xqd_cache_lookup(
 		i.deepBumpCacheOutcome(CacheState{})
 	}
 
-	// Create a transaction to wrap the entry (for handle consistency)
-	tx := &CacheTransaction{
-		Key:     key,
-		Entry:   entry,
-		Options: lookupOpts,
-		ready:   make(chan struct{}),
-	}
-	close(tx.ready) // Already complete
-
-	handleID := i.cacheHandles.New(tx)
+	handleID := i.cacheHandles.New(settledTransaction(key, entry, lookupOpts))
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -68,20 +61,7 @@ func (i *Instance) xqd_cache_insert(
 	}
 
 	obj := i.cache.Insert(key, writeOpts)
-
-	// Create a body handle that writes to the cache object
-	bodyID, body := i.bodies.NewBuffer()
-
-	// Wrap to write to cache object
-	origWriter := body.writer
-	body.writer = &cacheBodyWriter{
-		cache:        obj,
-		originalBody: origWriter,
-	}
-
-	// Set a closer that marks the cache write as complete
-	body.closer = &cacheOnlyCloser{cache: obj, store: i.cache, key: key}
-
+	bodyID := i.newCacheInsertBody(obj, key)
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
 	return XqdStatusOK
@@ -189,17 +169,7 @@ func (i *Instance) xqd_cache_transaction_insert(
 	}
 
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
-
-	// Create a body handle that writes to the cache object
-	bodyID, body := i.bodies.NewBuffer()
-	body.writer = &cacheBodyWriter{
-		cache:        obj,
-		originalBody: body.buf,
-	}
-
-	// Set a closer that marks the cache write as complete
-	body.closer = &cacheOnlyCloser{cache: obj, store: i.cache, key: handle.Transaction.Key}
-
+	bodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
 	// Complete the transaction
@@ -232,47 +202,8 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 	}
 
 	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
-
-	// Create a pipe to enable simultaneous write and read without deadlock
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Create a cache body writer that writes to the cache object
-	cacheWriter := &cacheBodyWriter{
-		cache:        obj,
-		originalBody: nil,
-	}
-
-	// Use MultiWriter to tee data to both the pipe (for immediate reading) and the cache (for storage)
-	multiWriter := &cacheTeeWriter{io.MultiWriter(pipeWriter, cacheWriter)}
-
-	// Create a write body handle that writes to both the pipe and cache
-	writeBodyID, writeBody := i.bodies.NewBuffer()
-	writeBody.writer = multiWriter
-	writeBody.closer = &pipeAndCacheCloser{
-		pipeWriter: pipeWriter,
-		cache:      obj,
-		store:      i.cache,
-		key:        handle.Transaction.Key,
-	}
-
-	// Create a new transaction/handle for reading back from the pipe
-	readTx := &CacheTransaction{
-		Key: handle.Transaction.Key,
-		Entry: &CacheEntry{
-			Object: obj,
-			State: CacheState{
-				Found:  true,
-				Usable: true,
-			},
-		},
-		ready: make(chan struct{}),
-	}
-	close(readTx.ready)
-
-	readHandleID := i.cacheHandles.New(readTx)
-	// Store the pipe reader in the cache handle so get_body can use it
-	readCacheHandle := i.cacheHandles.Get(readHandleID)
-	readCacheHandle.StreamingPipeReader = pipeReader
+	writeBodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
+	readHandleID := i.cacheHandles.New(usableTransaction(handle.Transaction.Key, obj))
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
@@ -441,16 +372,6 @@ func (i *Instance) xqd_cache_get_body(
 
 	obj := handle.Transaction.Entry.Object
 
-	hasRange := options_mask&(CacheGetBodyOptionsMaskFrom|CacheGetBodyOptionsMaskTo) != 0
-	if !hasRange && handle.StreamingPipeReader != nil {
-		// insert_and_stream_back handles read through their pipe so the guest
-		// cannot deadlock against its own write.
-		bodyID, body := i.bodies.NewBuffer()
-		body.reader = handle.StreamingPipeReader
-		i.memory.WriteUint32(body_handle_out, uint32(bodyID))
-		return XqdStatusOK
-	}
-
 	alwaysUseRequestedRange := handle.Transaction.Options != nil && handle.Transaction.Options.AlwaysUseRequestedRange
 	bodyID, status := i.newCacheObjectBody(obj, options_mask, options, alwaysUseRequestedRange)
 	if status != XqdStatusOK {
@@ -482,11 +403,14 @@ func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, op
 		return 0, XqdErrInvalidArgument
 	}
 
-	bodyID, body := i.bodies.NewBuffer()
+	bodyID, _ := i.bodies.NewReader(io.NopCloser(cacheRangeReader(obj, hasFrom, hasTo, from, to, alwaysUseRequestedRange)))
+	return bodyID, XqdStatusOK
+}
+
+func cacheRangeReader(obj *CachedObject, hasFrom, hasTo bool, from, to uint64, alwaysUseRequestedRange bool) io.Reader {
 	reader := &cacheBodyReader{cache: obj}
-	body.reader = reader
 	if !hasFrom && !hasTo {
-		return bodyID, XqdStatusOK
+		return reader
 	}
 
 	size, sizeKnown := obj.KnownLength()
@@ -501,13 +425,13 @@ func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, op
 			to = uint64(size) - 1
 		}
 		if from >= uint64(size) || to >= uint64(size) {
-			return bodyID, XqdStatusOK
+			return reader
 		}
 		reader.offset = int64(from)
 		reader.end = int64(to) + 1
 		reader.bounded = true
 	case alwaysUseRequestedRange && hasTo && !hasFrom:
-		body.reader = &cacheSuffixReader{cache: obj, count: to}
+		return &cacheSuffixReader{cache: obj, count: to}
 	case alwaysUseRequestedRange:
 		// Offsets past what a body can hold simply never get satisfied.
 		reader.offset = int64(min(from, math.MaxInt64))
@@ -517,7 +441,7 @@ func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, op
 			reader.bounded = true
 		}
 	}
-	return bodyID, XqdStatusOK
+	return reader
 }
 
 // xqd_cache_get_length gets the length of a cached object
@@ -629,9 +553,7 @@ func (i *Instance) readCacheLookupOptions(mask uint32, optionsPtr int32) *CacheL
 		if reqHandle != uint32(HandleInvalid) {
 			req := i.requests.Get(int(reqHandle))
 			if req != nil {
-				buf := &bytes.Buffer{}
-				_ = req.Header.Write(buf)
-				opts.RequestHeaders = buf.Bytes()
+				opts.RequestHeaders = serializeRequestHeader(req.Request)
 			}
 		}
 	}
@@ -661,9 +583,7 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) (*CacheW
 		if reqHandle != uint32(HandleInvalid) {
 			req := i.requests.Get(int(reqHandle))
 			if req != nil {
-				buf := &bytes.Buffer{}
-				_ = req.Header.Write(buf)
-				opts.RequestHeaders = buf.Bytes()
+				opts.RequestHeaders = serializeRequestHeader(req.Request)
 			}
 		}
 	}
@@ -783,25 +703,195 @@ func splitSurrogateKeys(s string) []string {
 	return keys
 }
 
-// cacheBodyWriter implements io.Writer for writing body data to a cached object.
-// It writes to both the cache object and optionally to an original buffer for tracking.
-type cacheBodyWriter struct {
-	cache        *CachedObject
-	originalBody io.Writer
+// cacheBodySink is the write end of a cache insert body.
+// Appended bodies are copied into the object in the background, so the guest
+// never waits for them.
+// Unlike production, writes are never held back, so a stalled source cannot
+// hang the guest.
+type cacheBodySink struct {
+	obj   *CachedObject
+	store *Cache
+	key   []byte
+
+	mu       sync.Mutex
+	queue    []*sinkSource
+	current  *sinkSource
+	draining bool
+	finished bool
+	stopped  bool
+	expiry   *time.Timer
 }
 
-func (w *cacheBodyWriter) cacheBacked() {}
+// sinkSource is a queued body, or bytes written after one, and is closed at
+// most once.
+type sinkSource struct {
+	reader    io.Reader
+	data      []byte
+	closeOnce sync.Once
+}
 
-func (w *cacheBodyWriter) Write(p []byte) (int, error) {
-	n, err := w.cache.WriteBody(p)
-	if err != nil {
-		return n, err
+func (src *sinkSource) close() {
+	src.closeOnce.Do(func() {
+		if closer, ok := src.reader.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	})
+}
+
+// cacheFillWindow bounds how long a closed insert may keep copying, like
+// production's session I/O deadline.
+var cacheFillWindow = time.Hour
+
+func (s *cacheBodySink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.draining || s.stopped {
+		return s.writeLocked(p)
 	}
-	// Also write to original buffer for tracking
-	if w.originalBody != nil {
-		_, _ = w.originalBody.Write(p)
+	if last := len(s.queue) - 1; last >= 0 && s.queue[last].reader == nil {
+		s.queue[last].data = append(s.queue[last].data, p...)
+	} else {
+		s.queue = append(s.queue, &sinkSource{data: bytes.Clone(p)})
 	}
-	return n, nil
+	return len(p), nil
+}
+
+// writeLocked stores p unless the insert was abandoned.
+// The caller holds the lock.
+func (s *cacheBodySink) writeLocked(p []byte) (int, error) {
+	if s.stopped {
+		return 0, io.ErrClosedPipe
+	}
+	return s.obj.WriteBody(p)
+}
+
+// Append queues src and closes it once it was copied or dropped.
+func (s *cacheBodySink) Append(src io.Reader) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	queued := &sinkSource{reader: src}
+	if s.stopped {
+		queued.close()
+		return
+	}
+	s.queue = append(s.queue, queued)
+	if !s.draining {
+		s.draining = true
+		go s.drain()
+	}
+}
+
+func (s *cacheBodySink) drain() {
+	var buf []byte
+	for {
+		s.mu.Lock()
+		if s.stopped || len(s.queue) == 0 {
+			s.draining = false
+			s.current = nil
+			if s.finished && !s.stopped {
+				s.obj.FinishWrite()
+			}
+			if s.expiry != nil {
+				s.expiry.Stop()
+			}
+			s.mu.Unlock()
+			return
+		}
+		src := s.queue[0]
+		s.queue[0] = nil
+		s.queue = s.queue[1:]
+		s.current = src
+		s.mu.Unlock()
+
+		var err error
+		if src.reader == nil {
+			_, err = sinkObjectWriter{s}.Write(src.data)
+		} else {
+			if buf == nil {
+				buf = make([]byte, 32*1024)
+			}
+			_, err = io.CopyBuffer(sinkObjectWriter{s}, src.reader, buf)
+			src.close()
+		}
+		if err != nil {
+			// A truncated or failed source must not be stored as complete.
+			_ = s.Abandon()
+			return
+		}
+	}
+}
+
+// Close completes the object once the queue is drained, and gives up on it
+// if that takes longer than cacheFillWindow.
+func (s *cacheBodySink) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopped {
+		return nil
+	}
+	s.finished = true
+	if !s.draining {
+		s.obj.FinishWrite()
+		return nil
+	}
+	s.expiry = time.AfterFunc(cacheFillWindow, s.expire)
+	return nil
+}
+
+func (s *cacheBodySink) expire() {
+	s.mu.Lock()
+	stalled := s.draining && !s.stopped
+	s.mu.Unlock()
+	if stalled {
+		_ = s.Abandon()
+	}
+}
+
+// Abandon discards the object and fails its readers.
+func (s *cacheBodySink) Abandon() error {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil
+	}
+	s.stopped = true
+	if s.expiry != nil {
+		s.expiry.Stop()
+	}
+	dropped, current := s.queue, s.current
+	s.queue = nil
+	s.mu.Unlock()
+
+	for _, src := range dropped {
+		src.close()
+	}
+	if current != nil {
+		// Closing the source unblocks a copy waiting for more data.
+		current.close()
+	}
+	s.store.Discard(s.key, s.obj)
+	return nil
+}
+
+// sinkObjectWriter writes copied bytes to the object, unless the insert was
+// abandoned meanwhile.
+type sinkObjectWriter struct {
+	sink *cacheBodySink
+}
+
+func (w sinkObjectWriter) Write(p []byte) (int, error) {
+	w.sink.mu.Lock()
+	defer w.sink.mu.Unlock()
+
+	return w.sink.writeLocked(p)
+}
+
+func (i *Instance) newCacheInsertBody(obj *CachedObject, key []byte) int {
+	id, _ := i.bodies.NewSink(&cacheBodySink{obj: obj, store: i.cache, key: key})
+	return id
 }
 
 // cacheBodyReader implements io.Reader for reading body data from a cached object.
@@ -840,51 +930,6 @@ func (r *cacheBodyReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// pipeAndCacheCloser implements io.Closer for cache insert_and_stream_back operations.
-// It closes both the pipe writer (sending EOF to the reader) and marks the cache write as complete.
-// Abandoning the body instead fails the pipe and discards the incomplete object.
-type pipeAndCacheCloser struct {
-	pipeWriter *io.PipeWriter
-	cache      *CachedObject
-	store      *Cache
-	key        []byte
-}
-
-func (c *pipeAndCacheCloser) Close() error {
-	// Close the pipe writer first (this will EOF the pipe reader)
-	err := c.pipeWriter.Close()
-	// Mark the cache write as complete
-	c.cache.FinishWrite()
-	return err
-}
-
-func (c *pipeAndCacheCloser) Abandon() error {
-	err := c.pipeWriter.CloseWithError(io.ErrUnexpectedEOF)
-	c.store.Discard(c.key, c.cache)
-	return err
-}
-
-// cacheOnlyCloser implements io.Closer for cache insert operations.
-// It marks the cache write as complete when closed.
-// Abandoning the body instead discards the incomplete object, so a partial
-// write never gets served as a finished one.
-type cacheOnlyCloser struct {
-	cache *CachedObject
-	store *Cache
-	key   []byte
-}
-
-func (c *cacheOnlyCloser) Close() error {
-	// Mark the cache write as complete
-	c.cache.FinishWrite()
-	return nil
-}
-
-func (c *cacheOnlyCloser) Abandon() error {
-	c.store.Discard(c.key, c.cache)
-	return nil
-}
-
 // readCacheReplaceOptions reads cache replace options from guest memory.
 // The strategy defaults to immediate.
 func (i *Instance) readCacheReplaceOptions(mask uint32, optionsPtr int32) (*CacheReplaceOptions, int32) {
@@ -905,9 +950,7 @@ func (i *Instance) readCacheReplaceOptions(mask uint32, optionsPtr int32) (*Cach
 			if req == nil {
 				return nil, XqdErrInvalidHandle
 			}
-			buf := &bytes.Buffer{}
-			_ = req.Header.Write(buf)
-			opts.RequestHeaders = buf.Bytes()
+			opts.RequestHeaders = serializeRequestHeader(req.Request)
 		}
 	}
 
@@ -999,13 +1042,7 @@ func (i *Instance) xqd_cache_replace_insert(
 	i.deepBumpCacheInsert()
 	obj := i.cache.ReplaceInsert(handle.Replace, writeOpts)
 
-	bodyID, body := i.bodies.NewBuffer()
-	body.writer = &cacheBodyWriter{
-		cache:        obj,
-		originalBody: body.buf,
-	}
-	body.closer = &cacheOnlyCloser{cache: obj, store: i.cache, key: handle.Replace.Key}
-
+	bodyID := i.newCacheInsertBody(obj, handle.Replace.Key)
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
 
 	return XqdStatusOK
@@ -1247,11 +1284,3 @@ func (r *cacheSuffixReader) Read(p []byte) (int, error) {
 	}
 	return r.inner.Read(p)
 }
-
-// cacheTeeWriter wraps the pipe and cache writers of a stream back insert so
-// a redirect keeps both fed.
-type cacheTeeWriter struct {
-	io.Writer
-}
-
-func (w *cacheTeeWriter) cacheBacked() {}

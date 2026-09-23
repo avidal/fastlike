@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"flag"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -243,6 +245,89 @@ func TestFastlike(t *testing.T) {
 		actual := w.Body.String()
 		if actual != expected {
 			st.Errorf("Expected body %q, got %q", expected, actual)
+		}
+	})
+
+	t.Run("http-cache", func(st *testing.T) {
+		st.Parallel()
+		// Cacheable responses are served through the HTTP cache, on misses and
+		// hits alike.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			fetches.Add(1)
+			if r.Header.Get("If-None-Match") != "" {
+				st.Errorf("backend received the client's conditional header %q", r.Header.Get("If-None-Match"))
+			}
+			w.Header().Set("Cache-Control", "max-age=60")
+			w.Header().Set("ETag", `"v1"`)
+			w.Header().Set("X-Backend", "origin")
+			if r.URL.Path == "/proxy/moved" {
+				w.Header().Set("Location", "/elsewhere")
+				w.WriteHeader(http.StatusMovedPermanently)
+				return
+			}
+			_, _ = w.Write([]byte("cached body"))
+		})))
+		serve := func(path string, header http.Header) *httptest.ResponseRecorder {
+			w := httptest.NewRecorder()
+			r, _ := http.NewRequest("GET", "http://localhost:1337"+path, io.NopCloser(bytes.NewBuffer(nil)))
+			maps.Copy(r.Header, header)
+			inst.ServeHTTP(w, r)
+			return w
+		}
+
+		for n, label := range []string{"miss", "hit"} {
+			w := serve("/proxy/cached", nil)
+			if w.Code != http.StatusOK || w.Body.String() != "cached body" {
+				st.Errorf("%s: got %d %q, want 200 %q", label, w.Code, w.Body.String(), "cached body")
+			}
+			if got := w.Header().Get("X-Backend"); got != "origin" {
+				st.Errorf("%s: X-Backend = %q, want %q", label, got, "origin")
+			}
+			if got := w.Header().Get("Accept-Ranges"); got != "bytes" {
+				st.Errorf("%s: Accept-Ranges = %q, want %q", label, got, "bytes")
+			}
+			if w.Header().Get("Age") == "" {
+				st.Errorf("%s: no Age header", label)
+			}
+			if got := fetches.Load(); got != 1 {
+				st.Errorf("%s: backend fetched %d times after %d requests, want 1", label, got, n+1)
+			}
+		}
+
+		w := serve("/proxy/cached", http.Header{"If-None-Match": {`"v1"`}})
+		if w.Code != http.StatusNotModified || w.Body.Len() != 0 {
+			st.Errorf("conditional hit: got %d %q, want an empty 304", w.Code, w.Body.String())
+		}
+		if got := w.Header().Get("ETag"); got != `"v1"` {
+			st.Errorf("conditional hit: ETag = %q, want %q", got, `"v1"`)
+		}
+
+		w = serve("/proxy/moved", nil)
+		if w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != "/elsewhere" {
+			st.Errorf("redirect: got %d with Location %q", w.Code, w.Header().Get("Location"))
+		}
+	})
+
+	t.Run("http-cache-private", func(st *testing.T) {
+		st.Parallel()
+		// Private responses are never served from the cache.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			fetches.Add(1)
+			w.Header().Set("Cache-Control", "private, max-age=60")
+			_, _ = w.Write([]byte("personal"))
+		})))
+		for n := range 2 {
+			w := httptest.NewRecorder()
+			r, _ := http.NewRequest("GET", "http://localhost:1337/proxy/private", io.NopCloser(bytes.NewBuffer(nil)))
+			inst.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || w.Body.String() != "personal" {
+				st.Errorf("request %d: got %d %q", n, w.Code, w.Body.String())
+			}
+		}
+		if got := fetches.Load(); got != 2 {
+			st.Errorf("backend fetched %d times for two requests, want 2", got)
 		}
 	})
 

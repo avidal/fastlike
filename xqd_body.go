@@ -60,7 +60,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 		return XqdStatusOK
 	}
-	if body.isDownstreamStream && body_end == BodyWriteEndFront {
+	if body.IsStreaming() && body_end == BodyWriteEndFront {
 		i.abilog.Printf("body_write: front-write not supported on streaming bodies")
 		return XqdErrUnsupported
 	}
@@ -204,6 +204,10 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 		if _, err := io.Copy(dst, src); err != nil {
 			return XqdError
 		}
+		return XqdStatusOK
+	}
+	if dst.sink != nil {
+		dst.sink.Append(src)
 		return XqdStatusOK
 	}
 

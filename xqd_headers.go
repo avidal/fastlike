@@ -20,27 +20,35 @@ func validHTTPHeaderName(name []byte) bool {
 		return false
 	}
 	for _, b := range name {
-		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' {
-			continue
-		}
-		switch b {
-		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
-			continue
-		default:
+		if !isTokenChar(b) {
 			return false
 		}
 	}
 	return true
 }
 
+func isTokenChar(b byte) bool {
+	if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' {
+		return true
+	}
+	switch b {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	}
+	return false
+}
+
 // validHTTPHeaderValue matches http::HeaderValue::from_bytes: horizontal tab,
 // bytes from space upward, except DEL, are accepted.
 func validHTTPHeaderValue(value []byte) bool {
 	for _, b := range value {
-		if b == '\t' || b >= ' ' && b != 0x7f {
-			continue
+		if !isFieldValueChar(b) {
+			return false
 		}
-		return false
 	}
 	return true
+}
+
+func isFieldValueChar(b byte) bool {
+	return b == '\t' || b >= ' ' && b != 0x7f
 }
