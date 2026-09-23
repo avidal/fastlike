@@ -56,8 +56,6 @@ type CacheTransaction struct {
 	RequestHeaders []byte
 	VaryRule       string
 	Options        *CacheLookupOptions
-	RequestURL     string        // The original request URL for suggested backend requests
-	RequestMethod  string        // The original request method for suggested backend requests
 	ready          chan struct{} // closed when lookup completes
 	owner          any
 	done           chan struct{} // closed once the transaction is completed or cancelled

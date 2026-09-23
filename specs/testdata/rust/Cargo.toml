@@ -2,11 +2,11 @@
 name = "example"
 version = "0.1.0"
 authors = []
-edition = "2018"
+edition = "2021"
 
 [profile.release]
 debug = true
 
 [dependencies]
-fastly = "^0.7.0"
+fastly = "0.13.1"
 serde_json = "1.0"

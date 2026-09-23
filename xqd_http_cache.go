@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -123,7 +122,7 @@ func (i *Instance) xqd_http_cache_lookup(
 	}
 	close(tx.ready) // Already complete
 
-	handleID := i.cacheHandles.New(tx)
+	handleID := i.newHTTPCacheHandle(tx, cloneRequestHead(req.Request), req.version)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -151,12 +150,7 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 	lookupOpts := &CacheLookupOptions{}
 	tx := i.cache.TransactionLookup(key, lookupOpts, i)
 
-	// Store the original request URL and method in the transaction
-	// so that get_suggested_backend_request can create a proper request
-	tx.RequestURL = url
-	tx.RequestMethod = req.Method
-
-	handleID := i.cacheHandles.New(tx)
+	handleID := i.newHTTPCacheHandle(tx, cloneRequestHead(req.Request), req.version)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -263,7 +257,7 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	}
 	close(readTx.ready)
 
-	readHandleID := i.cacheHandles.New(readTx)
+	readHandleID := i.newHTTPCacheHandle(readTx, handle.lookupRequest, handle.lookupRequestVersion)
 	// Store the pipe reader in the cache handle so get_body can use it
 	readCacheHandle := i.cacheHandles.Get(readHandleID)
 	readCacheHandle.StreamingPipeReader = pipeReader
@@ -344,7 +338,7 @@ func (i *Instance) xqd_http_cache_transaction_update_and_return_fresh(
 	}
 	close(freshTx.ready)
 
-	freshHandleID := i.cacheHandles.New(freshTx)
+	freshHandleID := i.newHTTPCacheHandle(freshTx, handle.lookupRequest, handle.lookupRequestVersion)
 	i.memory.WriteUint32(cache_handle_out, uint32(freshHandleID))
 
 	// Complete the original transaction
@@ -402,7 +396,9 @@ func (i *Instance) xqd_http_cache_close(cache_handle int32) int32 {
 		return XqdErrInvalidHandle
 	}
 
-	// Nothing to do - just validates the handle exists
+	// Handles live until the downstream request ends, so let go of the
+	// lookup request now.
+	handle.lookupRequest = nil
 	return XqdStatusOK
 }
 
@@ -414,31 +410,68 @@ func (i *Instance) xqd_http_cache_get_suggested_backend_request(
 	i.abilog.Println("http_cache_get_suggested_backend_request")
 
 	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
+	if handle == nil || handle.lookupRequest == nil {
 		return XqdErrInvalidHandle
 	}
 
-	// Create a new request with the URL and method from the original request
-	// In a real implementation, this would be populated with cache validation headers
+	// Revalidation requests are not built, since stored responses do not
+	// keep the ETag and Last-Modified headers they would need.
+	backendReq := cloneRequestHead(handle.lookupRequest)
+	prepareFullBackendRequest(backendReq)
+
 	reqID, reqHandle := i.requests.New()
+	reqHandle.Request = backendReq
+	reqHandle.version = handle.lookupRequestVersion
 
-	// Parse the URL from the stored string
-	reqURL, err := url.Parse(handle.Transaction.RequestURL)
-	if err != nil {
-		i.abilog.Printf("http_cache_get_suggested_backend_request: failed to parse URL %q: %v", handle.Transaction.RequestURL, err)
-		return XqdError
-	}
-
-	reqHandle.Request = &http.Request{
-		Method: handle.Transaction.RequestMethod,
-		URL:    reqURL,
-		Header: http.Header{},
-	}
-
-	i.abilog.Printf("http_cache_get_suggested_backend_request: created request url=%s method=%s", reqURL, reqHandle.Method)
+	i.abilog.Printf("http_cache_get_suggested_backend_request: created request url=%s method=%s", backendReq.URL, backendReq.Method)
 	i.memory.WriteUint32(req_handle_out, uint32(reqID))
 
 	return XqdStatusOK
+}
+
+// newHTTPCacheHandle registers a cache handle along with the head of its lookup
+// request.
+// Production keeps that request per handle, so neither a later lookup of the
+// same key nor changes to the guest's request handle affect it.
+func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, lookupRequest *http.Request, version int32) int {
+	id := i.cacheHandles.New(tx)
+	handle := i.cacheHandles.Get(id)
+	handle.lookupRequest = lookupRequest
+	handle.lookupRequestVersion = version
+	return id
+}
+
+// cloneRequestHead copies the method, URL, headers and host of a request.
+// The protocol version lives on the request handle, and the body is separate.
+func cloneRequestHead(r *http.Request) *http.Request {
+	u := *r.URL
+	header := r.Header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
+	return &http.Request{
+		Method: r.Method,
+		URL:    &u,
+		Header: header,
+		Host:   r.Host,
+	}
+}
+
+// prepareFullBackendRequest mirrors what production's cache-semantics crate
+// does to get a complete response from the backend.
+// Conditional headers are removed from safe requests, range headers from all
+// of them, and HEAD becomes GET.
+func prepareFullBackendRequest(r *http.Request) {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		for _, name := range []string{"If-Modified-Since", "If-Unmodified-Since", "If-None-Match", "If-Match", "If-Range"} {
+			r.Header.Del(name)
+		}
+	}
+	if r.Method == http.MethodHead {
+		r.Method = http.MethodGet
+	}
+	r.Header.Del("Range")
 }
 
 // xqd_http_cache_get_suggested_cache_options gets suggested cache options from response
@@ -583,8 +616,16 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 
 	i.memory.WriteUint32(storage_action_out, storageAction)
 
-	// Return the same response handle (no modification needed)
-	i.memory.WriteUint32(resp_handle_out, uint32(resp_handle))
+	// Production hands back a new handle and leaves the original one open.
+	// The Rust SDK closes the original as soon as it gets the new one, so
+	// returning the same handle would close the response it keeps using.
+	response := *resp.Response
+	response.Header = resp.Header.Clone()
+	response.Trailer = resp.Trailer.Clone()
+	preparedID, prepared := i.responses.New()
+	*prepared = *resp
+	prepared.Response = &response
+	i.memory.WriteUint32(resp_handle_out, uint32(preparedID))
 
 	return XqdStatusOK
 }
