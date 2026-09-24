@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -11,32 +12,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"fastlike.dev/profile"
 
 	"fastlike.dev"
 )
-
-// cliTransport is the *http.Transport every CLI-registered named backend
-// shares. Sharing one transport across backends is intentional: connection
-// pooling is amortised, and the profile recorder installs its
-// httptrace.ClientTrace per request via context rather than per transport,
-// so the trace events stay correctly attributed.
-var cliTransport = &http.Transport{
-	Proxy: http.ProxyFromEnvironment,
-	DialContext: (&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext,
-	ForceAttemptHTTP2:     true,
-	MaxIdleConns:          100,
-	IdleConnTimeout:       90 * time.Second,
-	TLSHandshakeTimeout:   10 * time.Second,
-	ExpectContinueTimeout: 1 * time.Second,
-	// Production never asks for compression the guest did not ask for.
-	DisableCompression: true,
-}
 
 func main() {
 	bind := flag.String("bind", "localhost:8000", "address to bind to")
@@ -54,6 +34,8 @@ func main() {
 	flag.Var(&backends, "b", "alias for -backend")
 	overrideHosts := make(overrideHostFlags)
 	flag.Var(&overrideHosts, "override-host", "<name=host> replacing the Host header sent to a backend. Use an empty name to target the catch-all backend (ex: -override-host origin.example.com). The name must match a configured -backend.")
+	backendTimeouts := make(backendTimeoutFlags)
+	flag.Var(&backendTimeouts, "backend-timeouts", "<name=connect_ms,first_byte_ms,between_bytes_ms> setting a named backend's timeouts, like a service's backend configuration (ex: -backend-timeouts api=1000,15000,10000). A first-byte or between-bytes timeout of 0 disables it. Without this, a backend waits 1000 ms to connect and has no other timeout, like a production backend configured without timeouts.")
 
 	dictionaries := make(dictionaryFlags)
 	flag.Var(&dictionaries, "dictionary", "<name=file.json> specifying dictionaries. The JSON file supplied must only contain string values.")
@@ -135,7 +117,7 @@ func main() {
 	// No -backend is fine: guests can register their backends dynamically
 	// at request time, in which case unknown backend names still get the
 	// default 502 handler.
-	opts, err := buildBackendOptions(backends, overrideHosts)
+	opts, err := buildBackendOptions(backends, overrideHosts, backendTimeouts)
 	if err != nil {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "%s\n", err)
 		os.Exit(1)
@@ -267,8 +249,46 @@ func (f *stringListFlags) Set(v string) error {
 // backend represents a configured backend with its address and reverse proxy handler
 type backend struct {
 	address string
-	proxy   http.Handler
+	proxy   *httputil.ReverseProxy
 	uptime  *uint8
+}
+
+type backendTimeoutFlags map[string]backendTimeouts
+
+type backendTimeouts struct {
+	connectMs, firstByteMs, betweenBytesMs uint32
+}
+
+func (f *backendTimeoutFlags) String() string {
+	results := make([]string, 0, len(*f))
+	for name, t := range *f {
+		results = append(results, fmt.Sprintf("%s=%d,%d,%d", name, t.connectMs, t.firstByteMs, t.betweenBytesMs))
+	}
+	return strings.Join(results, ", ")
+}
+
+func (f *backendTimeoutFlags) Set(v string) error {
+	name, values, ok := strings.Cut(v, "=")
+	if !ok || name == "" {
+		return fmt.Errorf("backend timeouts %q do not name a backend; expected name=connect_ms,first_byte_ms,between_bytes_ms", v)
+	}
+	fields := strings.Split(values, ",")
+	if len(fields) != 3 {
+		return fmt.Errorf("backend timeouts %q need three values; expected name=connect_ms,first_byte_ms,between_bytes_ms", v)
+	}
+	var ms [3]uint32
+	for i, field := range fields {
+		n, err := strconv.ParseUint(strings.TrimSpace(field), 10, 32)
+		if err != nil {
+			return fmt.Errorf("backend timeout %q is not a number of milliseconds", field)
+		}
+		ms[i] = uint32(n)
+	}
+	if ms[0] == 0 {
+		return fmt.Errorf("backend %q has a connect timeout of 0, which would fail every new connection", name)
+	}
+	(*f)[name] = backendTimeouts{connectMs: ms[0], firstByteMs: ms[1], betweenBytesMs: ms[2]}
+	return nil
 }
 
 // overrideHostFlags maps backend names to their outbound Host header
@@ -314,12 +334,12 @@ func validateOverrideHost(host string) error {
 	return nil
 }
 
-// buildBackendOptions turns the parsed -backend and -override-host flags into
-// the options that register them.
+// buildBackendOptions turns the parsed -backend, -override-host and
+// -backend-timeouts flags into the options that register them.
 // An override naming an unconfigured backend fails here rather than doing
 // nothing, since the symptom of that typo is an upstream quietly seeing the
 // original Host.
-func buildBackendOptions(backends backendFlags, overrideHosts overrideHostFlags) ([]fastlike.Option, error) {
+func buildBackendOptions(backends backendFlags, overrideHosts overrideHostFlags, timeouts backendTimeoutFlags) ([]fastlike.Option, error) {
 	for name := range overrideHosts {
 		if _, ok := backends[name]; ok {
 			continue
@@ -329,18 +349,24 @@ func buildBackendOptions(backends backendFlags, overrideHosts overrideHostFlags)
 		}
 		return nil, fmt.Errorf("-override-host names backend %q, which no -backend configures", name)
 	}
+	for name := range timeouts {
+		if _, ok := backends[name]; !ok {
+			return nil, fmt.Errorf("-backend-timeouts names backend %q, which no -backend configures", name)
+		}
+	}
 
+	transport := newCLITransport(timeouts)
 	opts := make([]fastlike.Option, 0, len(backends))
 	for name, backend := range backends {
-		proxy := backend.proxy
-		overrideHost := overrideHosts[name]
+		b := backendConfig(name, backend, overrideHosts[name], timeouts[name], transport)
+		backend.proxy.Transport = b.TimeoutTransport(transport)
 
 		if name == "" {
 			// Catch-all backends remain plain (no traced transport); the
 			// default-backend factory pattern surfaces neither a transport
 			// fastlike can observe nor a named Backend to hang the override
 			// on, so the override is applied to the handler directly.
-			proxy = fastlike.OverrideHostHandler(proxy, overrideHost)
+			proxy := fastlike.OverrideHostHandler(backend.proxy, b.OverrideHost)
 			if backend.uptime != nil {
 				opts = append(opts, fastlike.WithUnreliableDefaultBackend(func(_ string) http.Handler {
 					return proxy
@@ -353,28 +379,35 @@ func buildBackendOptions(backends backendFlags, overrideHosts overrideHostFlags)
 			continue
 		}
 
-		// Named backends use WithBackendTraced unless extra configuration is
-		// required. Both paths keep cliTransport so the profile recorder gets
-		// DNS / connect / TLS / TTFB phase data from httptrace.ClientTrace.
-		if backend.uptime != nil || overrideHost != "" {
-			opts = append(opts, fastlike.WithBackendConfig(namedBackendConfig(name, proxy, backend.uptime, overrideHost)))
-		} else {
-			opts = append(opts, fastlike.WithBackendTraced(name, proxy, cliTransport))
-		}
+		opts = append(opts, fastlike.WithBackendConfig(b))
 	}
 
 	return opts, nil
 }
 
-// namedBackendConfig builds the Backend for a named CLI backend carrying more
-// configuration than WithBackendTraced can express.
-func namedBackendConfig(name string, proxy http.Handler, uptime *uint8, overrideHost string) *fastlike.Backend {
+// newCLITransport builds the transport every CLI backend shares.
+// The profiler traces requests through their context, so sharing it still
+// keeps each backend's phases apart.
+func newCLITransport(timeouts backendTimeoutFlags) *http.Transport {
+	var longest uint32
+	for _, t := range timeouts {
+		longest = max(longest, t.connectMs)
+	}
+	// Its dial limits must not cut a connect timeout short.
+	return (&fastlike.Backend{ConnectTimeoutMs: longest}).CreateTransport()
+}
+
+// The transport on the Backend gives the profiler its connection phases.
+func backendConfig(name string, backend backend, overrideHost string, timeouts backendTimeouts, transport *http.Transport) *fastlike.Backend {
 	return &fastlike.Backend{
-		Name:          name,
-		Handler:       proxy,
-		Transport:     cliTransport,
-		UptimePercent: uptime,
-		OverrideHost:  overrideHost,
+		Name:                  name,
+		Handler:               backend.proxy,
+		Transport:             transport,
+		UptimePercent:         backend.uptime,
+		OverrideHost:          overrideHost,
+		ConnectTimeoutMs:      timeouts.connectMs,
+		FirstByteTimeoutMs:    timeouts.firstByteMs,
+		BetweenBytesTimeoutMs: timeouts.betweenBytesMs,
 	}
 }
 
@@ -445,7 +478,10 @@ func (f *backendFlags) Set(v string) error {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(dest)
-	proxy.Transport = cliTransport
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("http: proxy error: %v", err)
+		fastlike.ProxyErrorHandler(w, r, err)
+	}
 
 	(*f)[name] = backend{address: addr, proxy: proxy, uptime: uptime}
 	return nil

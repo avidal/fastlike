@@ -472,6 +472,26 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("backend-timeouts", func(st *testing.T) {
+		st.Parallel()
+		// Unset dynamic timeouts get production's defaults, and shields are
+		// named after their timeouts but report the site's.
+		inst := f.Instantiate(
+			fastlike.WithDefaultBackend(failingBackendHandler(st)),
+			fastlike.WithShield("site", &fastlike.Shield{Encrypted: "https://shield.example.org", Unencrypted: "http://shield.example.org"}),
+		)
+		w := serveGet(inst, "/backend-timeouts", nil)
+		want := strings.Join([]string{
+			"unset: unset connect=1000 first_byte=15000 between_bytes=10000",
+			"explicit: explicit connect=2500 first_byte=0 between_bytes=5000",
+			"shield: **fastly-shield-https://shield.example.org-fbto15000-bbto60000** connect=2000 first_byte=15000 between_bytes=60000",
+			"shield with a first-byte timeout: **fastly-shield-https://shield.example.org-fbto5000-bbto60000** connect=2000 first_byte=15000 between_bytes=60000",
+		}, "\n")
+		if w.Code != http.StatusOK || w.Body.String() != want {
+			st.Errorf("got %d:\n%s\nwant 200:\n%s", w.Code, w.Body.String(), want)
+		}
+	})
+
 	t.Run("cache-fill-after-return", func(st *testing.T) {
 		st.Parallel()
 		// A backend body keeps filling the cache after the guest returned,

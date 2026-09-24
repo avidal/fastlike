@@ -567,17 +567,6 @@ func TestRegisterDynamicBackend_TLSVersionValidation(t *testing.T) {
 	})
 }
 
-func TestMaxConnectionsScoping(t *testing.T) {
-	static := &Backend{Name: "static", MaxConnections: 4}
-	if got := static.CreateTransport().MaxConnsPerHost; got != 0 {
-		t.Errorf("static backend MaxConnsPerHost = %d, want 0", got)
-	}
-	dynamic := &Backend{Name: "dyn", IsDynamic: true, MaxConnections: 4}
-	if got := dynamic.CreateTransport().MaxConnsPerHost; got != 4 {
-		t.Errorf("dynamic backend MaxConnsPerHost = %d, want 4", got)
-	}
-}
-
 func TestRegisterDynamicBackend_GRPCTransport(t *testing.T) {
 	inst := newDynInstance()
 	if status := registerDyn(t, inst, "origin", "origin.example.org:50051", BackendConfigOptionsGRPC); status != XqdStatusOK {

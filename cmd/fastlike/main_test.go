@@ -1,11 +1,13 @@
 package main
 
 import (
+	"flag"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"testing"
+	"time"
 
 	"fastlike.dev"
 )
@@ -105,52 +107,97 @@ func TestOverrideHostReachesTheUpstream(t *testing.T) {
 	}
 }
 
+func mustSet(t *testing.T, f flag.Value, v string) {
+	t.Helper()
+	if err := f.Set(v); err != nil {
+		t.Fatalf("Set(%q) error = %v", v, err)
+	}
+}
+
 func TestBuildBackendOptions(t *testing.T) {
 	backends := make(backendFlags)
-	if err := backends.Set("origin=localhost:9000"); err != nil {
-		t.Fatalf("backends.Set() error = %v", err)
-	}
-	if err := backends.Set("localhost:9001"); err != nil {
-		t.Fatalf("backends.Set() error = %v", err)
-	}
-
+	mustSet(t, &backends, "origin=localhost:9000")
+	mustSet(t, &backends, "localhost:9001")
 	overrides := make(overrideHostFlags)
-	if err := overrides.Set("origin=origin.example.com"); err != nil {
-		t.Fatalf("overrides.Set() error = %v", err)
-	}
+	mustSet(t, &overrides, "origin=origin.example.com")
+	timeouts := make(backendTimeoutFlags)
+	mustSet(t, &timeouts, "origin=1000,15000,10000")
 
-	opts, err := buildBackendOptions(backends, overrides)
+	opts, err := buildBackendOptions(backends, overrides, timeouts)
 	if err != nil {
 		t.Fatalf("buildBackendOptions() error = %v", err)
 	}
 	if len(opts) != len(backends) {
 		t.Errorf("options = %d, want %d", len(opts), len(backends))
 	}
+	for name, b := range backends {
+		if _, ok := b.proxy.Transport.(*http.Transport); ok || b.proxy.Transport == nil {
+			t.Errorf("backend %q does not get the connect timeout", name)
+		}
+		if b.proxy.ErrorHandler == nil {
+			t.Errorf("backend %q answers its errors with a 502", name)
+		}
+	}
+}
+
+func TestCLITransportFitsTheLongestConnectTimeout(t *testing.T) {
+	timeouts := make(backendTimeoutFlags)
+	mustSet(t, &timeouts, "origin=45000,0,0")
+	if got := newCLITransport(timeouts).TLSHandshakeTimeout; got < 45*time.Second {
+		t.Errorf("handshake limit = %v, want at least 45s", got)
+	}
 }
 
 // An override for a backend nobody configured is the shape a typo takes.
 func TestBuildBackendOptionsRejectsUnknownBackend(t *testing.T) {
 	backends := make(backendFlags)
-	if err := backends.Set("origin=localhost:9000"); err != nil {
-		t.Fatalf("backends.Set() error = %v", err)
-	}
+	mustSet(t, &backends, "origin=localhost:9000")
 
 	for _, override := range []string{"orgin=origin.example.com", "origin.example.com"} {
 		overrides := make(overrideHostFlags)
-		if err := overrides.Set(override); err != nil {
-			t.Fatalf("overrides.Set(%q) error = %v", override, err)
-		}
-
-		if _, err := buildBackendOptions(backends, overrides); err == nil {
+		mustSet(t, &overrides, override)
+		if _, err := buildBackendOptions(backends, overrides, nil); err == nil {
 			t.Errorf("buildBackendOptions() with override %q succeeded, want an error", override)
+		}
+	}
+
+	timeouts := make(backendTimeoutFlags)
+	mustSet(t, &timeouts, "orgin=1000,15000,10000")
+	if _, err := buildBackendOptions(backends, nil, timeouts); err == nil {
+		t.Error("buildBackendOptions() with timeouts for an unknown backend succeeded, want an error")
+	}
+}
+
+func TestBackendTimeoutFlags(t *testing.T) {
+	timeouts := make(backendTimeoutFlags)
+	mustSet(t, &timeouts, "api=2000, 0,60000")
+	want := backendTimeouts{connectMs: 2000, firstByteMs: 0, betweenBytesMs: 60000}
+	if got := timeouts["api"]; got != want {
+		t.Errorf("timeouts = %+v, want %+v", got, want)
+	}
+
+	for _, v := range []string{
+		"1000,15000,10000",
+		"=1000,15000,10000",
+		"api=1000,15000",
+		"api=1000,15000,10000,5",
+		"api=1s,15000,10000",
+		"api=-1,15000,10000",
+		"api=4294967296,15000,10000",
+		"api=0,15000,10000",
+	} {
+		if err := timeouts.Set(v); err == nil {
+			t.Errorf("Set(%q) succeeded, want an error", v)
 		}
 	}
 }
 
-func TestNamedBackendConfig(t *testing.T) {
-	proxy := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+func TestBackendConfig(t *testing.T) {
 	uptime := uint8(50)
-	config := namedBackendConfig("origin", proxy, &uptime, "origin.example.com")
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "localhost:9000"})
+	timeouts := backendTimeouts{connectMs: 2000, firstByteMs: 15000, betweenBytesMs: 10000}
+	transport := newCLITransport(nil)
+	config := backendConfig("origin", backend{proxy: proxy, uptime: &uptime}, "origin.example.com", timeouts, transport)
 
 	if config.OverrideHost != "origin.example.com" {
 		t.Errorf("OverrideHost = %q, want %q", config.OverrideHost, "origin.example.com")
@@ -159,7 +206,45 @@ func TestNamedBackendConfig(t *testing.T) {
 		t.Errorf("UptimePercent = %v, want 50", config.UptimePercent)
 	}
 	// Losing the transport here costs the profile recorder its phase data.
-	if config.Transport != cliTransport {
+	if config.Transport != transport {
 		t.Error("Transport does not match the shared CLI transport")
+	}
+	if config.ConnectTimeoutMs != 2000 || config.FirstByteTimeoutMs != 15000 || config.BetweenBytesTimeoutMs != 10000 {
+		t.Errorf("timeouts = %d, %d, %d, want 2000, 15000, 10000", config.ConnectTimeoutMs, config.FirstByteTimeoutMs, config.BetweenBytesTimeoutMs)
+	}
+}
+
+// The shared transport cannot enforce a first-byte timeout per backend, so
+// the proxy has to.
+func TestBackendFirstByteTimeout(t *testing.T) {
+	release := make(chan struct{})
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+	}))
+	defer origin.Close()
+	defer close(release)
+
+	backends := make(backendFlags)
+	mustSet(t, &backends, "origin="+origin.URL)
+	timeouts := make(backendTimeoutFlags)
+	mustSet(t, &timeouts, "origin=1000,50,0")
+	if _, err := buildBackendOptions(backends, nil, timeouts); err != nil {
+		t.Fatalf("buildBackendOptions() error = %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		backends["origin"].proxy.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://localhost/", nil))
+	}()
+	select {
+	case <-served:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the proxy is still waiting, want the 50 ms timeout")
+	}
+	// Outside a guest's send, the error handler falls back to a 502.
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadGateway)
 	}
 }

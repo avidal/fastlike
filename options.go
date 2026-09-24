@@ -33,10 +33,12 @@ func WithBackend(name string, h http.Handler) Option {
 	}
 }
 
-// WithBackendConfig registers a fully configured Backend
+// WithBackendConfig registers a copy of a fully configured Backend in each
+// instance.
 func WithBackendConfig(backend *Backend) Option {
 	return func(i *Instance) {
-		i.addBackend(backend.Name, backend)
+		b := *backend
+		i.addBackend(b.Name, &b)
 	}
 }
 

@@ -3,6 +3,7 @@ package fastlike
 import (
 	"fmt"
 	"net/url"
+	"unicode/utf8"
 )
 
 // Shield represents a shield POP configuration
@@ -14,15 +15,28 @@ type Shield struct {
 
 // Shield backend options mask bits (from shielding.witx)
 const (
-	ShieldBackendOptionsReserved         uint32 = 1 << 0
-	ShieldBackendOptionsUseCacheKey      uint32 = 1 << 1
-	ShieldBackendOptionsFirstByteTimeout uint32 = 1 << 2
+	ShieldBackendOptionsReserved            uint32 = 1 << 0
+	ShieldBackendOptionsUseCacheKey         uint32 = 1 << 1
+	ShieldBackendOptionsFirstByteTimeout    uint32 = 1 << 2
+	ShieldBackendOptionsBetweenBytesTimeout uint32 = 1 << 3
+
+	shieldBackendOptionsKnown = ShieldBackendOptionsReserved | ShieldBackendOptionsUseCacheKey |
+		ShieldBackendOptionsFirstByteTimeout | ShieldBackendOptionsBetweenBytesTimeout
 )
 
 // Shield backend config struct layout (wasm32):
-//   Offset 0: cache_key_ptr    (4 bytes, pointer)
-//   Offset 4: cache_key_len    (4 bytes, u32)
-//   Offset 8: first_byte_timeout_ms (4 bytes, u32)
+//   Offset 0:  cache_key_ptr            (4 bytes, pointer)
+//   Offset 4:  cache_key_len            (4 bytes, u32)
+//   Offset 8:  first_byte_timeout_ms    (4 bytes, u32)
+//   Offset 12: between_bytes_timeout_ms (4 bytes, u32)
+
+// Production's shield site timeouts, with a typical connect timeout since
+// Fastlike does not know the site's servers.
+const (
+	shieldConnectTimeoutMs      = 2000
+	shieldFirstByteTimeoutMs    = 15000
+	shieldBetweenBytesTimeoutMs = 60000
+)
 
 // xqd_shield_info returns information about a shield POP.
 // The binary response format is: [1-byte running_on flag][unencrypted_url]\0[encrypted_url]\0
@@ -77,7 +91,7 @@ func (i *Instance) xqd_shield_info(
 }
 
 // xqd_backend_for_shield creates or returns a backend for a shield POP.
-// Reads optional configuration (cache key, first byte timeout) from the config struct
+// Reads optional configuration (cache key, timeouts) from the config struct
 // and creates a transport-backed proxy handler for the shield URL.
 func (i *Instance) xqd_backend_for_shield(
 	name_addr int32,
@@ -90,34 +104,52 @@ func (i *Instance) xqd_backend_for_shield(
 ) int32 {
 	i.abilog.Printf("backend_for_shield: name_addr=%d name_size=%d config_mask=%d", name_addr, name_size, config_mask)
 
-	// Read shield name from guest memory
-	nameBuf := make([]byte, name_size)
-	_, err := i.memory.ReadAt(nameBuf, int64(name_addr))
-	if err != nil {
-		return XqdError
-	}
-	name := string(nameBuf)
-
-	// Reject reserved flag (matches Viceroy behavior)
-	if uint32(config_mask)&ShieldBackendOptionsReserved != 0 {
-		i.abilog.Printf("backend_for_shield: RESERVED flag set, rejecting")
+	// Like production, the reserved bit is accepted and unknown ones are not.
+	mask := uint32(config_mask)
+	if unknown := mask &^ shieldBackendOptionsKnown; unknown != 0 {
+		i.abilog.Printf("backend_for_shield: unknown mask bits %#x", unknown)
 		return XqdErrInvalidArgument
 	}
 
-	// Read cache_key if USE_CACHE_KEY is set
+	name, err := i.readBackendName(name_addr, name_size)
+	if err != nil {
+		return XqdError
+	}
+	if !utf8.ValidString(name) {
+		return XqdErrInvalidArgument
+	}
+
 	var cacheKey string
-	if uint32(config_mask)&ShieldBackendOptionsUseCacheKey != 0 {
-		cacheKeyPtr := int32(i.memory.Uint32(int64(config_ptr + 0)))
-		cacheKeyLen := i.memory.Uint32(int64(config_ptr + 4))
-		if cacheKeyLen > 0 {
-			keyBuf := make([]byte, cacheKeyLen)
-			_, err := i.memory.ReadAt(keyBuf, int64(cacheKeyPtr))
-			if err != nil {
-				return XqdErrInvalidArgument
-			}
-			cacheKey = string(keyBuf)
-			i.abilog.Printf("backend_for_shield: cache_key=%q", cacheKey)
+	if mask&ShieldBackendOptionsUseCacheKey != 0 {
+		key, ok := i.readGuestBytes(config_ptr)
+		if !ok || !utf8.Valid(key) {
+			return XqdErrInvalidArgument
 		}
+		cacheKey = string(key)
+		i.abilog.Printf("backend_for_shield: cache_key=%q", cacheKey)
+	}
+
+	var firstByteOverride, betweenBytesOverride *uint32
+	firstByteMs, betweenBytesMs := uint32(shieldFirstByteTimeoutMs), uint32(shieldBetweenBytesTimeoutMs)
+	if mask&ShieldBackendOptionsFirstByteTimeout != 0 {
+		firstByteMs = i.memory.Uint32(int64(config_ptr + 8))
+		firstByteOverride = &firstByteMs
+	}
+	if mask&ShieldBackendOptionsBetweenBytesTimeout != 0 {
+		betweenBytesMs = i.memory.Uint32(int64(config_ptr + 12))
+		betweenBytesOverride = &betweenBytesMs
+	}
+
+	// Different timeouts give different backends.
+	backendName := fmt.Sprintf("**fastly-shield-%s-fbto%d-bbto%d**", name, firstByteMs, betweenBytesMs)
+	nameBytes := []byte(backendName)
+	if int32(len(nameBytes)) > backend_name_max_len {
+		i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
+		return XqdErrBufferLength
+	}
+	_, err = i.memory.WriteAt(nameBytes, int64(backend_name_out))
+	if err != nil {
+		return XqdError
 	}
 
 	// Resolve the shield URI: first check configured shields, then try as raw URI
@@ -137,36 +169,18 @@ func (i *Instance) xqd_backend_for_shield(
 		return XqdErrInvalidArgument
 	}
 
-	// Generate backend name matching Viceroy's format: "******{uri}*****"
-	backendName := fmt.Sprintf("******%s*****", shieldURI)
-
-	// Build the backend with optional first byte timeout and cache key
 	backend := &Backend{
-		Name:      backendName,
-		URL:       u,
-		IsDynamic: true,
-		CacheKey:  cacheKey,
+		Name:                   backendName,
+		URL:                    u,
+		IsDynamic:              true,
+		CacheKey:               cacheKey,
+		ConnectTimeoutMs:       shieldConnectTimeoutMs,
+		FirstByteTimeoutMs:     shieldFirstByteTimeoutMs,
+		BetweenBytesTimeoutMs:  shieldBetweenBytesTimeoutMs,
+		firstByteOverrideMs:    firstByteOverride,
+		betweenBytesOverrideMs: betweenBytesOverride,
 	}
-
-	if uint32(config_mask)&ShieldBackendOptionsFirstByteTimeout != 0 {
-		backend.FirstByteTimeoutMs = i.memory.Uint32(int64(config_ptr + 8))
-		i.abilog.Printf("backend_for_shield: first_byte_timeout_ms=%d", backend.FirstByteTimeoutMs)
-	}
-
 	backend.Handler = backend.newTransportHandler()
-
-	// Write the backend name to the output buffer
-	nameBytes := []byte(backendName)
-	if int32(len(nameBytes)) > backend_name_max_len {
-		i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
-		return XqdErrBufferLength
-	}
-
-	_, err = i.memory.WriteAt(nameBytes, int64(backend_name_out))
-	if err != nil {
-		return XqdError
-	}
-
 	i.addBackend(backendName, backend)
 
 	i.memory.PutUint32(uint32(len(nameBytes)), int64(nwritten_out))
