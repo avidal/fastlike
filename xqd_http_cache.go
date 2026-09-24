@@ -3,10 +3,14 @@ package fastlike
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
+	"encoding/hex"
+	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // xqd_http_cache_is_request_cacheable checks if a request is cacheable per RFC 9111
@@ -43,9 +47,8 @@ func (i *Instance) xqd_http_cache_is_request_cacheable(
 	return XqdStatusOK
 }
 
-// xqd_http_cache_get_suggested_cache_key generates a suggested cache key for an HTTP request.
-// The cache key is a 32-byte SHA256 hash of the request URL.
-// Returns XqdErrBufferLength if the provided buffer is too small (writes required size to nwritten_out).
+// xqd_http_cache_get_suggested_cache_key writes the request's default cache
+// key, which production computes from the host and the path and query.
 func (i *Instance) xqd_http_cache_get_suggested_cache_key(
 	req_handle int32,
 	key_out_ptr int32,
@@ -59,32 +62,103 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_key(
 		return XqdErrInvalidHandle
 	}
 
-	// Generate cache key: SHA256 hash of the full URL (scheme, host, path, query)
-	url := req.URL.String()
-	hash := sha256.Sum256([]byte(url))
-	cacheKey := hash[:]
-
-	const cacheKeySize = 32 // SHA256 produces 32 bytes
-
-	// Check if buffer is large enough
-	if key_out_len < cacheKeySize {
-		// Write required size
-		i.memory.PutUint32(uint32(cacheKeySize), int64(nwritten_out))
-		i.abilog.Printf("http_cache_get_suggested_cache_key: buffer too small, need %d bytes", cacheKeySize)
+	key := logicalCacheKey(req.Request)
+	nwrittenAddr, status := i.memory.wiggleField(nwritten_out, 0, 4)
+	if status != XqdStatusOK {
+		return status
+	}
+	i.memory.PutUint32(uint32(len(key)), nwrittenAddr)
+	if uint32(key_out_len) < uint32(len(key)) {
 		return XqdErrBufferLength
 	}
+	if _, err := i.memory.WriteAt(key[:], int64(key_out_ptr)); err != nil {
+		return XqdErrInvalidArgument
+	}
+	return XqdStatusOK
+}
 
-	// Write cache key to guest memory
-	_, err := i.memory.WriteAt(cacheKey, int64(key_out_ptr))
-	if err != nil {
-		return XqdError
+// logicalCacheKeySalt starts every default HTTP cache key in production.
+const logicalCacheKeySalt = "CachedSession\x03\x02\x01"
+
+// logicalCacheKey is production's default HTTP cache key.
+// It hashes the Host header, or the URI host without its port when there is
+// none, lowercased, followed by the path and query.
+func logicalCacheKey(r *http.Request) [32]byte {
+	host, ok := hostHeader(r)
+	if !ok {
+		host = uriHost(r.URL)
 	}
 
-	// Write actual size written
-	i.memory.PutUint32(uint32(cacheKeySize), int64(nwritten_out))
-	i.abilog.Printf("http_cache_get_suggested_cache_key: wrote %d bytes for url=%s", cacheKeySize, url)
+	pathAndQuery := r.URL.EscapedPath()
+	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+		pathAndQuery += "?" + r.URL.RawQuery
+	}
+	if pathAndQuery == "" {
+		pathAndQuery = "/"
+	}
 
-	return XqdStatusOK
+	buf := append([]byte(logicalCacheKeySalt), 0)
+	buf = append(append(buf, strings.ToLower(host)...), 0)
+	buf = append(append(buf, pathAndQuery...), 0)
+	return sha256.Sum256(buf)
+}
+
+// hostHeader returns the request's first Host header.
+// Go moves it out of the header map of incoming requests, into Request.Host.
+func hostHeader(r *http.Request) (string, bool) {
+	if host, ok := firstHeaderValue(r.Header, "Host"); ok {
+		return host, true
+	}
+	return r.Host, r.Host != ""
+}
+
+// uriHost is the host of a URL as the http crate reports it: without the
+// port, but with the brackets of an IPv6 address.
+func uriHost(u *url.URL) string {
+	if strings.HasPrefix(u.Host, "[") {
+		if end := strings.IndexByte(u.Host, ']'); end >= 0 {
+			return u.Host[:end+1]
+		}
+		return u.Host
+	}
+	host, _, _ := strings.Cut(u.Host, ":")
+	return host
+}
+
+// prepareHTTPCacheLookup validates the lookup options the way production does,
+// before the request handle, and returns the lookup and the key it uses.
+// Fastlike sends requests for unknown backends to the default backend, so
+// unlike production it does not reject a backend name it does not know.
+func (i *Instance) prepareHTTPCacheLookup(name string, req_handle int32, options_mask uint32, options int32) (*httpCacheLookup, []byte, int32) {
+	requireFlags(name, "http_cache_lookup_options_mask", int32(options_mask), httpCacheLookupOptionsKnown)
+
+	addr, status := i.memory.wiggleRecord(options, 4, httpCacheLookupOptionsSize)
+	if status != XqdStatusOK {
+		return nil, nil, status
+	}
+	var key []byte
+	if options_mask&HttpCacheLookupOptionsMaskOverrideKey != 0 {
+		overrideKey, ok := i.readGuestBytes(int32(addr))
+		if !ok || len(overrideKey) != 32 {
+			return nil, nil, XqdErrInvalidArgument
+		}
+		key = overrideKey
+	}
+	if options_mask&HttpCacheLookupOptionsMaskBackendName != 0 {
+		if backend, ok := i.readGuestBytes(int32(addr + 8)); !ok || !utf8.Valid(backend) {
+			return nil, nil, XqdErrInvalidArgument
+		}
+	}
+
+	req := i.requests.Get(int(req_handle))
+	if req == nil {
+		return nil, nil, XqdErrInvalidHandle
+	}
+	if key == nil {
+		logical := logicalCacheKey(req.Request)
+		key = logical[:]
+	}
+	return newHTTPCacheLookup(req), key, XqdStatusOK
 }
 
 // xqd_http_cache_lookup performs a non-transactional cache lookup using a request
@@ -96,17 +170,11 @@ func (i *Instance) xqd_http_cache_lookup(
 ) int32 {
 	i.abilog.Println("http_cache_lookup")
 
-	req := i.requests.Get(int(req_handle))
-	if req == nil {
-		return XqdErrInvalidHandle
+	lookup, key, status := i.prepareHTTPCacheLookup("http_cache_lookup", req_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
 
-	// Generate cache key from request
-	url := req.URL.String()
-	hash := sha256.Sum256([]byte(url))
-	key := hash[:]
-
-	lookup := newHTTPCacheLookup(req)
 	entry := i.cache.Lookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders})
 	handleID := i.newHTTPCacheHandle(settledTransaction(key, entry, nil), lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
@@ -123,17 +191,11 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 ) int32 {
 	i.abilog.Println("http_cache_transaction_lookup")
 
-	req := i.requests.Get(int(req_handle))
-	if req == nil {
-		return XqdErrInvalidHandle
+	lookup, key, status := i.prepareHTTPCacheLookup("http_cache_transaction_lookup", req_handle, options_mask, options)
+	if status != XqdStatusOK {
+		return status
 	}
 
-	// Generate cache key from request
-	url := req.URL.String()
-	hash := sha256.Sum256([]byte(url))
-	key := hash[:]
-
-	lookup := newHTTPCacheLookup(req)
 	tx := i.cache.TransactionLookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders}, i)
 	handleID := i.newHTTPCacheHandle(tx, lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
@@ -208,7 +270,18 @@ func (i *Instance) httpCacheWrite(cache_handle, resp_handle int32, options_mask 
 
 	writeOpts.Response = newStoredResponse(resp.Response, handle.lookup.time)
 	writeOpts.RequestHeaders = handle.lookup.requestHeaders
+	// Production adds this key back when the guest replaced the suggested
+	// ones, so that purging a URL still works.
+	if keySK := keySurrogateKey(handle.Transaction.Key); !slices.Contains(writeOpts.SurrogateKeys, keySK) {
+		writeOpts.SurrogateKeys = append(writeOpts.SurrogateKeys, keySK)
+	}
 	return handle, writeOpts, XqdStatusOK
+}
+
+// keySurrogateKey is the surrogate key production derives from a cache key,
+// the uppercase hex form that URL purges use.
+func keySurrogateKey(key []byte) string {
+	return strings.ToUpper(hex.EncodeToString(key))
 }
 
 // serializeRequestHeader formats the headers cache variants are matched
@@ -369,14 +442,15 @@ func newHTTPCacheLookup(req *RequestHandle) *httpCacheLookup {
 	}
 }
 
-// newHTTPCacheHandle registers a cache handle along with the response head it
-// found at that point, as production keeps per handle.
+// newHTTPCacheHandle registers a cache handle along with the response head and
+// the length it found at that point, as production keeps per handle.
 func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, lookup *httpCacheLookup) int {
 	id := i.cacheHandles.New(tx)
 	handle := i.cacheHandles.Get(id)
 	handle.lookup = lookup
 	if tx.Entry != nil && tx.Entry.Object != nil {
 		handle.storedResponse = tx.Entry.Object.Response
+		handle.foundLength, handle.foundLengthKnown = tx.Entry.Object.KnownLength()
 	}
 	return id
 }
@@ -444,98 +518,120 @@ func (i *Instance) xqd_http_cache_get_suggested_cache_options(
 ) int32 {
 	i.abilog.Println("http_cache_get_suggested_cache_options")
 
-	handle := i.httpCacheHandle(cache_handle)
-	if handle == nil {
-		return XqdErrInvalidHandle
-	}
+	requireFlags("http_cache_get_suggested_cache_options", "http_cache_write_options_mask", int32(requested_mask), httpCacheWriteOptionsKnown)
 
 	resp := i.responses.Get(int(resp_handle))
 	if resp == nil {
 		return XqdErrInvalidHandle
 	}
-
-	// HTTP cache write options structure layout (from Viceroy ABI):
-	// Offset | Field                        | Size
-	// -------|------------------------------|------
-	//      0 | max_age_ns                   | 8 bytes (u64)
-	//      8 | vary_rule_ptr                | 4 bytes (*u8)
-	//     12 | vary_rule_len                | 4 bytes (usize)
-	//     16 | initial_age_ns               | 8 bytes (u64)
-	//     24 | stale_while_revalidate_ns    | 8 bytes (u64)
-	//     32 | surrogate_keys_ptr           | 4 bytes (*u8)
-	//     36 | surrogate_keys_len           | 4 bytes (usize)
-	//     40 | length                       | 8 bytes (u64)
-
-	const HttpCacheWriteOptionsMaskMaxAgeNs = 1 << 0
-
-	// Parse Cache-Control header to determine max-age and other directives
-	// Default to 1 hour (3600 seconds) if not specified
-	maxAgeNs := uint64(3600 * 1000000000) // 1 hour in nanoseconds
-	optionsMask := uint32(HttpCacheWriteOptionsMaskMaxAgeNs)
-
-	// Parse Cache-Control header if present
-	if cacheControl := resp.Header.Get("Cache-Control"); cacheControl != "" {
-		i.abilog.Printf("http_cache_get_suggested_cache_options: parsing Cache-Control: %s", cacheControl)
-		// Simple parsing for max-age directive
-		// In production, this should use a proper Cache-Control parser
-		// For now, we just extract max-age if present
-		// Example: "max-age=3600, public"
-		for _, directive := range splitCacheControl(cacheControl) {
-			if len(directive) > 8 && directive[:8] == "max-age=" {
-				if seconds, err := parseInt(directive[8:]); err == nil && seconds >= 0 {
-					maxAgeNs = uint64(seconds) * 1000000000
-					i.abilog.Printf("http_cache_get_suggested_cache_options: found max-age=%d seconds", seconds)
-				}
-			}
-		}
+	handle := i.httpCacheHandle(cache_handle)
+	if handle == nil {
+		return XqdErrInvalidHandle
 	}
 
-	// Write max_age_ns
-	i.memory.WriteUint64(options_out+0, maxAgeNs)
-
-	// Write options mask
-	i.memory.WriteUint32(options_mask_out, optionsMask)
-
-	i.abilog.Printf("http_cache_get_suggested_cache_options: returning mask=%d, max_age_ns=%d", optionsMask, maxAgeNs)
-
+	suggested := suggestCacheOptions(resp.Header, time.Now())
+	w := &optionsWriter{mem: i.memory, pointers: requested_options, out: options_out}
+	w.u64(httpCacheOptionsMaxAgeNs, suggested.maxAgeNs)
+	var maskOut uint32
+	if requested_mask&HttpCacheWriteOptionsMaskVaryRule != 0 {
+		maskOut |= HttpCacheWriteOptionsMaskVaryRule
+		w.bytes(httpCacheOptionsVaryRule, []byte(suggested.varyRule))
+	}
+	if requested_mask&HttpCacheWriteOptionsMaskInitialAgeNs != 0 {
+		maskOut |= HttpCacheWriteOptionsMaskInitialAgeNs
+		w.u64(httpCacheOptionsInitialAgeNs, suggested.initialAgeNs)
+	}
+	if requested_mask&HttpCacheWriteOptionsMaskStaleWhileRevalidateNs != 0 {
+		maskOut |= HttpCacheWriteOptionsMaskStaleWhileRevalidateNs
+		w.u64(httpCacheOptionsStaleWhileRevalidateNs, suggested.staleWhileRevalidateNs)
+	}
+	if requested_mask&HttpCacheWriteOptionsMaskStaleIfErrorNs != 0 {
+		maskOut |= HttpCacheWriteOptionsMaskStaleIfErrorNs
+		w.u64(httpCacheOptionsStaleIfErrorNs, suggested.staleIfErrorNs)
+	}
+	if requested_mask&HttpCacheWriteOptionsMaskSurrogateKeys != 0 {
+		maskOut |= HttpCacheWriteOptionsMaskSurrogateKeys
+		w.bytes(httpCacheOptionsSurrogateKeys, []byte(keySurrogateKey(handle.Transaction.Key)))
+	}
+	// Production never knows the length here and never suggests sensitive
+	// data, so those bits are never reported.
+	if maskAddr, ok := w.field(options_mask_out, 0, 4); ok {
+		i.memory.PutUint32(maskOut, maskAddr)
+	}
+	if w.status != XqdStatusOK {
+		return w.status
+	}
+	if w.tooSmall {
+		return XqdErrBufferLength
+	}
 	return XqdStatusOK
 }
 
-// splitCacheControl splits a Cache-Control header value into individual directives.
-// Directives are comma-separated and whitespace is trimmed from each directive.
-func splitCacheControl(s string) []string {
-	var directives []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == ',' {
-			directive := strings.TrimSpace(s[start:i])
-			if directive != "" {
-				directives = append(directives, directive)
-			}
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		directive := strings.TrimSpace(s[start:])
-		if directive != "" {
-			directives = append(directives, directive)
-		}
-	}
-	return directives
+// Offsets of the http_cache_write_options fields.
+const (
+	httpCacheOptionsMaxAgeNs               = 0
+	httpCacheOptionsVaryRule               = 8
+	httpCacheOptionsInitialAgeNs           = 16
+	httpCacheOptionsStaleWhileRevalidateNs = 24
+	httpCacheOptionsSurrogateKeys          = 32
+	httpCacheOptionsLength                 = 40
+	httpCacheOptionsStaleIfErrorNs         = 48
+)
+
+// optionsWriter writes suggested http_cache_write_options to out, checking
+// each field like wiggle, and does nothing more once a check fails.
+type optionsWriter struct {
+	mem           *Memory
+	pointers, out int32
+	status        int32
+	tooSmall      bool
 }
 
-// parseInt parses a non-negative integer from a string without using strconv.
-// Returns an error if the string contains non-digit characters.
-func parseInt(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	var result int64
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, fmt.Errorf("invalid integer")
-		}
-		result = result*10 + int64(s[i]-'0')
+func (w *optionsWriter) field(record int32, offset, size uint32) (int64, bool) {
+	if w.status != XqdStatusOK {
+		return 0, false
 	}
-	return result, nil
+	var addr int64
+	addr, w.status = w.mem.wiggleField(record, offset, size)
+	return addr, w.status == XqdStatusOK
+}
+
+func (w *optionsWriter) u64(offset uint32, v uint64) {
+	if addr, ok := w.field(w.out, offset, 8); ok {
+		w.mem.PutUint64(v, addr)
+	}
+}
+
+// bytes suggests a vary rule or surrogate keys in the buffer that pointers
+// names at the pointer and length fields found at offset.
+// Like production, it writes the needed length to out before checking the
+// buffer, and records a buffer that is too small instead of failing at once.
+func (w *optionsWriter) bytes(offset uint32, data []byte) {
+	lenAddr, ok := w.field(w.out, offset+4, 4)
+	if !ok {
+		return
+	}
+	w.mem.PutUint32(uint32(len(data)), lenAddr)
+
+	bufPtrAddr, _ := w.field(w.pointers, offset, 4)
+	bufLenAddr, ok := w.field(w.pointers, offset+4, 4)
+	if !ok {
+		return
+	}
+	bufPtr, bufLen := w.mem.Uint32(bufPtrAddr), w.mem.Uint32(bufLenAddr)
+	if bufLen < uint32(len(data)) {
+		w.tooSmall = true
+		return
+	}
+	if len(data) > 0 {
+		if _, err := w.mem.WriteAt(data, int64(bufPtr)); err != nil {
+			w.status = XqdErrInvalidArgument
+			return
+		}
+	}
+	if ptrAddr, ok := w.field(w.out, offset, 4); ok {
+		w.mem.PutUint32(bufPtr, ptrAddr)
+	}
 }
 
 // xqd_http_cache_prepare_response_for_storage suggests a storage action for a
@@ -589,7 +685,7 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 
 // xqd_http_cache_get_found_response returns the stored response and its body.
 // With transform_for_client, it is adapted to the lookup request as production
-// does, except that ranges are not answered with a 206 yet.
+// does.
 func (i *Instance) xqd_http_cache_get_found_response(
 	cache_handle int32,
 	transform_for_client uint32,
@@ -611,6 +707,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 
 	status, withBody := stored.status, true
 	var header http.Header
+	var bodyRange byteRange
 	switch {
 	case transform_for_client != 1:
 		header = stored.header.Clone()
@@ -621,6 +718,16 @@ func (i *Instance) xqd_http_cache_get_found_response(
 	default:
 		header = stored.header.Clone()
 		header.Set("Age", ageHeaderValue(stored.currentAge(time.Now())))
+		// The body follows CacheD's rules for the range, which fall back to
+		// the whole object when the range does not fit, while Content-Range
+		// always reflects the request, whatever the stored status.
+		if r, ok := requestedRange(handle.lookup.request); ok {
+			bodyRange = r
+			if contentRange, ok := r.contentRange(handle.foundLength, handle.foundLengthKnown); ok {
+				status = http.StatusPartialContent
+				header.Add("Content-Range", contentRange)
+			}
+		}
 		header.Set("Accept-Ranges", "bytes")
 		withBody = handle.lookup.request.Method != http.MethodHead
 	}
@@ -632,7 +739,8 @@ func (i *Instance) xqd_http_cache_get_found_response(
 
 	var bodyID int
 	if withBody {
-		bodyID, _ = i.newCacheObjectBody(entry.Object, 0, 0, false)
+		reader := cacheRangeReader(entry.Object, bodyRange, true)
+		bodyID, _ = i.bodies.NewReader(io.NopCloser(reader))
 	} else {
 		bodyID, _ = i.bodies.NewBuffer()
 	}
@@ -897,25 +1005,11 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *CacheWriteOptions {
 	opts := &CacheWriteOptions{}
 
-	// HTTP cache write options structure layout (from Viceroy ABI):
-	// Offset | Field                        | Size
-	// -------|------------------------------|------
-	//      0 | max_age_ns                   | 8 bytes (u64)
-	//      8 | vary_rule_ptr                | 4 bytes (*u8)
-	//     12 | vary_rule_len                | 4 bytes (usize)
-	//     16 | initial_age_ns               | 8 bytes (u64)
-	//     24 | stale_while_revalidate_ns    | 8 bytes (u64)
-	//     32 | surrogate_keys_ptr           | 4 bytes (*u8)
-	//     36 | surrogate_keys_len           | 4 bytes (usize)
-	//     40 | length                       | 8 bytes (u64)
+	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr + httpCacheOptionsMaxAgeNs)
 
-	// Read max_age_ns (always present at offset 0)
-	opts.MaxAgeNs = i.memory.ReadUint64(optionsPtr)
-
-	// Read vary_rule
 	if mask&HttpCacheWriteOptionsMaskVaryRule != 0 {
-		varyPtr := int32(i.memory.Uint32(int64(optionsPtr + 8)))
-		varyLen := int32(i.memory.Uint32(int64(optionsPtr + 12)))
+		varyPtr := int32(i.memory.Uint32(int64(optionsPtr + httpCacheOptionsVaryRule)))
+		varyLen := int32(i.memory.Uint32(int64(optionsPtr + httpCacheOptionsVaryRule + 4)))
 		if varyLen > 0 {
 			varyBuf := make([]byte, varyLen)
 			_, _ = i.memory.ReadAt(varyBuf, int64(varyPtr))
@@ -923,22 +1017,19 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 		}
 	}
 
-	// Read initial_age_ns
 	if mask&HttpCacheWriteOptionsMaskInitialAgeNs != 0 {
-		val := i.memory.ReadUint64(optionsPtr + 16)
+		val := i.memory.ReadUint64(optionsPtr + httpCacheOptionsInitialAgeNs)
 		opts.InitialAgeNs = &val
 	}
 
-	// Read stale_while_revalidate_ns
 	if mask&HttpCacheWriteOptionsMaskStaleWhileRevalidateNs != 0 {
-		val := i.memory.ReadUint64(optionsPtr + 24)
+		val := i.memory.ReadUint64(optionsPtr + httpCacheOptionsStaleWhileRevalidateNs)
 		opts.StaleWhileRevalidateNs = &val
 	}
 
-	// Read surrogate_keys
 	if mask&HttpCacheWriteOptionsMaskSurrogateKeys != 0 {
-		keysPtr := int32(i.memory.Uint32(int64(optionsPtr + 32)))
-		keysLen := int32(i.memory.Uint32(int64(optionsPtr + 36)))
+		keysPtr := int32(i.memory.Uint32(int64(optionsPtr + httpCacheOptionsSurrogateKeys)))
+		keysLen := int32(i.memory.Uint32(int64(optionsPtr + httpCacheOptionsSurrogateKeys + 4)))
 		if keysLen > 0 {
 			keysBuf := make([]byte, keysLen)
 			_, _ = i.memory.ReadAt(keysBuf, int64(keysPtr))
@@ -947,20 +1038,17 @@ func (i *Instance) readHttpCacheWriteOptions(mask uint32, optionsPtr int32) *Cac
 		}
 	}
 
-	// Read length
 	if mask&HttpCacheWriteOptionsMaskLength != 0 {
-		val := i.memory.ReadUint64(optionsPtr + 40)
+		val := i.memory.ReadUint64(optionsPtr + httpCacheOptionsLength)
 		opts.Length = &val
 	}
 
-	// Read sensitive_data flag
 	if mask&HttpCacheWriteOptionsMaskSensitiveData != 0 {
 		opts.SensitiveData = true
 	}
 
-	// Read stale_if_error_ns at offset 48 (after length at offset 40, which is 8 bytes)
 	if mask&HttpCacheWriteOptionsMaskStaleIfErrorNs != 0 {
-		val := i.memory.ReadUint64(optionsPtr + 48)
+		val := i.memory.ReadUint64(optionsPtr + httpCacheOptionsStaleIfErrorNs)
 		opts.StaleIfErrorNs = &val
 	}
 

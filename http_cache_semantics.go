@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"slices"
@@ -37,14 +38,7 @@ func newStoredResponse(resp *http.Response, requestTime time.Time) *storedRespon
 
 // currentAge follows RFC 9111 section 4.2.3.
 func (s *storedResponse) currentAge(now time.Time) time.Duration {
-	var ageValue time.Duration
-	if value, ok := firstHeaderValue(s.header, "Age"); ok {
-		first, _, _ := strings.Cut(value, ",")
-		if secs, ok := parseDeltaSeconds(first); ok {
-			ageValue = time.Duration(secs) * time.Second
-		}
-	}
-	correctedAgeValue := ageValue + s.responseTime.Sub(s.requestTime)
+	correctedAgeValue := ageValue(s.header) + s.responseTime.Sub(s.requestTime)
 
 	date := s.responseTime
 	if parsed, ok := s.headerTime("Date"); ok {
@@ -56,12 +50,265 @@ func (s *storedResponse) currentAge(now time.Time) time.Duration {
 }
 
 func (s *storedResponse) headerTime(name string) (time.Time, bool) {
-	value, ok := firstHeaderValue(s.header, name)
+	return headerDate(s.header, name, s.responseTime)
+}
+
+// ageValue reads the first member of the Age field, or 0 when it is invalid.
+func ageValue(h http.Header) time.Duration {
+	first, _, _ := strings.Cut(h.Get("Age"), ",")
+	secs, _ := parseDeltaSeconds(first)
+	return time.Duration(secs) * time.Second
+}
+
+// defaultHTTPCacheTTL is the freshness lifetime production suggests for
+// responses that do not state one.
+const defaultHTTPCacheTTL = time.Hour
+
+// suggestedCacheOptions are the write options production derives from a
+// backend response, with durations in nanoseconds.
+type suggestedCacheOptions struct {
+	maxAgeNs               uint64
+	initialAgeNs           uint64
+	staleWhileRevalidateNs uint64
+	staleIfErrorNs         uint64
+	varyRule               string
+}
+
+// suggestCacheOptions mirrors production's suggested_cache_options.
+// Production passes the same instant as the request and response times, so
+// the initial age is only the Age field, without any response delay.
+func suggestCacheOptions(h http.Header, now time.Time) suggestedCacheOptions {
+	cc, _ := parseResponseCacheControl(h)
+	return suggestedCacheOptions{
+		maxAgeNs:               freshnessLifetimeNs(h, cc, now),
+		initialAgeNs:           uint64(ageValue(h)),
+		staleWhileRevalidateNs: directiveNs(cc.staleWhileRevalidate),
+		staleIfErrorNs:         directiveNs(cc.staleIfError),
+		varyRule:               suggestedVaryRule(h),
+	}
+}
+
+// freshnessLifetimeNs follows RFC 9111 section 4.2.1 for a shared cache.
+// Like production, an unparsable Expires falls back to the default lifetime
+// rather than meaning already expired, and the result saturates at the
+// largest u64 instead of Go's 292-year limit on durations.
+func freshnessLifetimeNs(h http.Header, cc responseCacheControl, now time.Time) uint64 {
+	if cc.sMaxAge != nil {
+		return directiveNs(cc.sMaxAge)
+	}
+	if cc.maxAge != nil {
+		return directiveNs(cc.maxAge)
+	}
+	expires, ok := headerDate(h, "Expires", now)
+	if !ok {
+		return uint64(defaultHTTPCacheTTL)
+	}
+	date, ok := headerDate(h, "Date", now)
+	if !ok {
+		date = now
+	}
+	secs := expires.Unix() - date.Unix()
+	switch {
+	case secs <= 0:
+		return 0
+	case uint64(secs) > math.MaxUint64/uint64(time.Second):
+		return math.MaxUint64
+	}
+	// Parsed dates are whole seconds, so only now, standing in for a missing
+	// Date, can carry a fraction.
+	return uint64(secs)*uint64(time.Second) - uint64(date.Nanosecond())
+}
+
+func directiveNs(secs *uint32) uint64 {
+	if secs == nil {
+		return 0
+	}
+	return uint64(*secs) * uint64(time.Second)
+}
+
+// suggestedVaryRule lists the fields that Vary nominates, lowercased, in
+// order and with duplicates, skipping malformed Vary lines.
+// Production keeps `*` as an ordinary name, which no request carries, so a
+// `Vary: *` response ends up matching every request.
+func suggestedVaryRule(h http.Header) string {
+	var names []string
+	for _, value := range h.Values("Vary") {
+		if fields, ok := parseFieldNames(value); ok {
+			for _, field := range fields {
+				names = append(names, strings.ToLower(field))
+			}
+		}
+	}
+	return strings.Join(names, " ")
+}
+
+func headerDate(h http.Header, name string, now time.Time) (time.Time, bool) {
+	value, ok := firstHeaderValue(h, name)
 	if !ok {
 		return time.Time{}, false
 	}
-	parsed, err := http.ParseTime(value)
-	return parsed, err == nil
+	return parseHTTPDate(now, value)
+}
+
+var (
+	httpDateShortDays = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
+	httpDateLongDays  = []string{"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"}
+	httpDateMonths    = []string{"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
+)
+
+// parseHTTPDate ports production's HTTP-date parser, which is stricter than
+// http.ParseTime about weekdays and resolves two-digit years relative to now.
+// Names are matched without regard to case.
+func parseHTTPDate(now time.Time, s string) (time.Time, bool) {
+	if t, ok := parseIMFFixdate(&httpDateScanner{s: s}); ok {
+		return t, true
+	}
+	if t, ok := parseRFC850Date(&httpDateScanner{s: s}, now); ok {
+		return t, true
+	}
+	return parseAsctimeDate(&httpDateScanner{s: s})
+}
+
+// parseIMFFixdate reads "Sun, 06 Nov 1994 08:49:37 GMT".
+func parseIMFFixdate(sc *httpDateScanner) (time.Time, bool) {
+	wd := sc.name(httpDateShortDays)
+	sc.literal(", ")
+	day := sc.number(2)
+	sc.literal(" ")
+	month := sc.name(httpDateMonths)
+	sc.literal(" ")
+	year := sc.number(4)
+	sc.literal(" ")
+	clock := sc.clock()
+	sc.literal(" gmt")
+	return sc.date(wd, year, month, day, clock)
+}
+
+// parseRFC850Date reads "Sunday, 06-Nov-94 08:49:37 GMT".
+func parseRFC850Date(sc *httpDateScanner, now time.Time) (time.Time, bool) {
+	wd := sc.name(httpDateLongDays)
+	sc.literal(", ")
+	day := sc.number(2)
+	sc.literal("-")
+	month := sc.name(httpDateMonths)
+	sc.literal("-")
+	year := closestYear(now, sc.number(2))
+	sc.literal(" ")
+	clock := sc.clock()
+	sc.literal(" gmt")
+	return sc.date(wd, year, month, day, clock)
+}
+
+// parseAsctimeDate reads "Sun Nov  6 08:49:37 1994".
+func parseAsctimeDate(sc *httpDateScanner) (time.Time, bool) {
+	wd := sc.name(httpDateShortDays)
+	sc.literal(" ")
+	month := sc.name(httpDateMonths)
+	sc.literal(" ")
+	var day int
+	if sc.optional(" ") {
+		day = sc.number(1)
+	} else {
+		day = sc.number(2)
+	}
+	sc.literal(" ")
+	clock := sc.clock()
+	sc.literal(" ")
+	year := sc.number(4)
+	return sc.date(wd, year, month, day, clock)
+}
+
+// closestYear interprets a two-digit year as the closest year within 50
+// years of now, per RFC 9110 section 5.6.7, as production does.
+func closestYear(now time.Time, twoDigits int) int {
+	current := now.UTC().Year()
+	year := current/100*100 + twoDigits
+	switch {
+	case year-current > 50:
+		return year - 100
+	case year-current < -50:
+		return year + 100
+	}
+	return year
+}
+
+// httpDateScanner matches fixed-width fields.
+// Every field is followed by a separator or the end of the input, so this
+// accepts what production's lexer and grammar accept.
+// Once a match fails, every later one does too.
+type httpDateScanner struct {
+	s      string
+	pos    int
+	failed bool
+}
+
+func (sc *httpDateScanner) optional(lit string) bool {
+	if sc.failed || len(sc.s)-sc.pos < len(lit) || !strings.EqualFold(sc.s[sc.pos:sc.pos+len(lit)], lit) {
+		return false
+	}
+	sc.pos += len(lit)
+	return true
+}
+
+func (sc *httpDateScanner) literal(lit string) {
+	if !sc.optional(lit) {
+		sc.failed = true
+	}
+}
+
+func (sc *httpDateScanner) name(names []string) int {
+	for idx, name := range names {
+		if sc.optional(name) {
+			return idx
+		}
+	}
+	sc.failed = true
+	return 0
+}
+
+func (sc *httpDateScanner) number(digits int) int {
+	end := sc.pos + digits
+	if sc.failed || end > len(sc.s) {
+		sc.failed = true
+		return 0
+	}
+	n := 0
+	for _, c := range []byte(sc.s[sc.pos:end]) {
+		if !isASCIIDigit(c) {
+			sc.failed = true
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	sc.pos = end
+	return n
+}
+
+func (sc *httpDateScanner) clock() [3]int {
+	var clock [3]int
+	clock[0] = sc.number(2)
+	sc.literal(":")
+	clock[1] = sc.number(2)
+	sc.literal(":")
+	clock[2] = sc.number(2)
+	return clock
+}
+
+// date checks that the whole input matched, and validates the calendar date,
+// the time of day and the weekday.
+func (sc *httpDateScanner) date(wd, year, month, day int, clock [3]int) (time.Time, bool) {
+	if sc.failed || sc.pos != len(sc.s) || clock[0] > 23 || clock[1] > 59 || clock[2] > 59 {
+		return time.Time{}, false
+	}
+	t := time.Date(year, time.Month(month+1), day, clock[0], clock[1], clock[2], 0, time.UTC)
+	if t.Year() != year || t.Month() != time.Month(month+1) || t.Day() != day || int(t.Weekday()) != wd {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func isASCIIDigit(c byte) bool {
+	return c >= '0' && c <= '9'
 }
 
 // ageHeaderValue formats an age as RFC 9111 delta-seconds, rounded up.
@@ -102,12 +349,8 @@ func (s *storedResponse) validatorsMatch(req *http.Request) bool {
 		return false
 	}
 
-	since, ok := firstHeaderValue(req.Header, "If-Modified-Since")
+	sinceTime, ok := headerDate(req.Header, "If-Modified-Since", time.Now())
 	if !ok {
-		return false
-	}
-	sinceTime, err := http.ParseTime(since)
-	if err != nil {
 		return false
 	}
 	lastModified, ok := s.headerTime("Last-Modified")
@@ -117,6 +360,93 @@ func (s *storedResponse) validatorsMatch(req *http.Request) bool {
 		}
 	}
 	return lastModified.Unix() <= sinceTime.Unix()
+}
+
+// byteRange is an inclusive range of a cached body.
+// Either bound can be missing, and without both it stands for the whole body.
+type byteRange struct {
+	first, last       uint64
+	hasFirst, hasLast bool
+}
+
+// requestedRange mirrors production's handle_range_request.
+// It only considers GET requests without If-Range, and only the first range
+// of the first Range field: anything after it is ignored, and an overflowing
+// bound counts as missing.
+// A range whose last byte is not after its first one is not served, so a
+// single-byte range gets the whole response.
+func requestedRange(req *http.Request) (byteRange, bool) {
+	if req.Method != http.MethodGet || len(req.Header.Values("If-Range")) > 0 {
+		return byteRange{}, false
+	}
+	value, ok := firstHeaderValue(req.Header, "Range")
+	if !ok || !isVisibleASCII(value) {
+		return byteRange{}, false
+	}
+	spec, ok := strings.CutPrefix(value, "bytes=")
+	if !ok {
+		return byteRange{}, false
+	}
+	firstDigits := leadingDigits(spec)
+	rest, ok := strings.CutPrefix(spec[len(firstDigits):], "-")
+	if !ok {
+		return byteRange{}, false
+	}
+	var r byteRange
+	if first, err := strconv.ParseUint(firstDigits, 10, 64); err == nil {
+		r.first, r.hasFirst = first, true
+	}
+	if last, err := strconv.ParseUint(leadingDigits(rest), 10, 64); err == nil {
+		r.last, r.hasLast = last, true
+	}
+	switch {
+	case r.hasFirst && r.hasLast:
+		return r, r.first < r.last
+	case r.hasLast:
+		return r, r.last > 0
+	}
+	return r, r.hasFirst
+}
+
+// contentRange is what production puts in Content-Range: the requested
+// bounds, never clamped, against the length known when the lookup happened.
+// Prefix and suffix ranges of an object of unknown length get no 206.
+// The arithmetic wraps like production's release build does, for instance
+// with a suffix longer than the object.
+func (r byteRange) contentRange(total int64, totalKnown bool) (string, bool) {
+	if !totalKnown {
+		if r.hasFirst && r.hasLast {
+			return fmt.Sprintf("bytes %d-%d/*", r.first, r.last), true
+		}
+		return "", false
+	}
+	t := uint64(total)
+	first, last := r.first, r.last
+	switch {
+	case !r.hasLast:
+		last = t - 1
+	case !r.hasFirst:
+		first, last = t-r.last, t-1
+	}
+	return fmt.Sprintf("bytes %d-%d/%d", first, last, t), true
+}
+
+func leadingDigits(s string) string {
+	n := 0
+	for n < len(s) && isASCIIDigit(s[n]) {
+		n++
+	}
+	return s[:n]
+}
+
+// isVisibleASCII matches the http crate's HeaderValue::to_str.
+func isVisibleASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c != '\t' && (c < ' ' || c > '~') {
+			return false
+		}
+	}
+	return true
 }
 
 // notModifiedHeader keeps the fields a 304 needs, plus Last-Modified, which
@@ -220,6 +550,9 @@ type responseCacheControl struct {
 	public         bool
 	maxAge         *uint32
 	sMaxAge        *uint32
+
+	staleWhileRevalidate *uint32
+	staleIfError         *uint32
 }
 
 // parseResponseCacheControl reads Surrogate-Control, or Cache-Control when it
@@ -251,6 +584,10 @@ func parseResponseCacheControl(h http.Header) (responseCacheControl, bool) {
 				setDirectiveSeconds(&cc.maxAge, d)
 			case "s-maxage":
 				setDirectiveSeconds(&cc.sMaxAge, d)
+			case "stale-while-revalidate":
+				setDirectiveSeconds(&cc.staleWhileRevalidate, d)
+			case "stale-if-error":
+				setDirectiveSeconds(&cc.staleIfError, d)
 			}
 		}
 	}
@@ -355,7 +692,7 @@ func parseCacheDirectives(value string) ([]cacheDirective, bool) {
 // Like production, quoted strings lose every backslash.
 func scanDirectiveArg(s string) (string, int, bool) {
 	if token := scanToken(s); token != "" {
-		return token, len(token), true
+		return token, len(token), !isCacheControlKeyword(token)
 	}
 	if s == "" || s[0] != '"' {
 		return "", 0, false
@@ -382,8 +719,27 @@ func scanDirectiveArg(s string) (string, int, bool) {
 	return "", 0, false
 }
 
-// parseFieldNames parses the field name lists of Connection and of qualified
-// cache directives.
+// maxHeaderNameLen is the longest header name the http crate accepts.
+const maxHeaderNameLen = 1<<16 - 1
+
+// cacheControlKeywords are the directive names production's lexer gives
+// their own tokens.
+// Where its grammar expects a token, one of these names is a syntax error, so
+// it can be neither a field name nor an unquoted directive argument.
+var cacheControlKeywords = []string{
+	"max-age", "max-stale", "min-fresh", "no-cache", "no-store", "no-transform", "only-if-cached",
+	"must-revalidate", "must-understand", "private", "proxy-revalidate", "public", "s-maxage",
+	"stale-if-error", "stale-while-revalidate",
+}
+
+func isCacheControlKeyword(token string) bool {
+	return slices.ContainsFunc(cacheControlKeywords, func(keyword string) bool {
+		return strings.EqualFold(keyword, token)
+	})
+}
+
+// parseFieldNames parses the field name lists of Connection, Vary and
+// qualified cache directives.
 func parseFieldNames(value string) ([]string, bool) {
 	var names []string
 	pos := 0
@@ -393,7 +749,7 @@ func parseFieldNames(value string) ([]string, bool) {
 			break
 		}
 		name := scanToken(value[pos:])
-		if name == "" {
+		if name == "" || len(name) > maxHeaderNameLen || isCacheControlKeyword(name) {
 			return nil, false
 		}
 		names = append(names, name)

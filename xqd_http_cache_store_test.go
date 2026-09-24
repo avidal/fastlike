@@ -110,10 +110,10 @@ func storeThroughStreamBack(t *testing.T, inst *Instance, cacheHandle, respID in
 	return readback
 }
 
-func storeObject(t *testing.T, inst *Instance, header http.Header, body string) int32 {
+func storeObject(t *testing.T, inst *Instance, status int, header http.Header, body string) int32 {
 	t.Helper()
 	cacheHandle := httpCacheTransactionLookup(t, inst, httpCacheTestRequest(inst, http.MethodGet, nil))
-	return storeThroughStreamBack(t, inst, cacheHandle, httpCacheTestResponse(inst, http.StatusOK, header), body)
+	return storeThroughStreamBack(t, inst, cacheHandle, httpCacheTestResponse(inst, status, header), body)
 }
 
 func foundResponse(t *testing.T, inst *Instance, cacheHandle int32, transform uint32) (*ResponseHandle, string) {
@@ -333,7 +333,7 @@ func TestHttpCacheNotModifiedHeader(t *testing.T) {
 
 func TestHttpCacheRevalidation(t *testing.T) {
 	inst := newHTTPCacheStoreTestInstance()
-	storeObject(t, inst, http.Header{
+	storeObject(t, inst, http.StatusOK, http.Header{
 		"Etag":           {`"v1"`},
 		"Last-Modified":  {"Tue, 22 Sep 2026 10:00:00 GMT"},
 		"Content-Length": {"5"},

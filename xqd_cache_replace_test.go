@@ -334,8 +334,10 @@ func TestCacheReplaceBodyRange(t *testing.T) {
 	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 3); got != "789" {
 		t.Fatalf("range ..3 = %q, want the last three bytes", got)
 	}
-	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 0); got != "" {
-		t.Fatalf("range ..0 = %q, want an empty body", got)
+	// CacheD finds a zero-length suffix invalid and serves the whole object
+	// (libcached-protocol range.rs isvalidrange and deliverable_range).
+	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 0); got != "0123456789" {
+		t.Fatalf("range ..0 = %q, want the whole body", got)
 	}
 	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 50); got != "0123456789" {
 		t.Fatalf("range ..50 = %q, want the whole body", got)
@@ -1182,8 +1184,15 @@ func TestCacheReplaceBodyRangeAboveSignedLimit(t *testing.T) {
 	}
 }
 
-func TestCacheReplaceForcedStartPastTheEndFails(t *testing.T) {
-	forcedRead := func(t *testing.T, from uint64) (string, error) {
+// With a forced range on an object still streaming, CacheD commits to the
+// range once the object reaches its start, and a short object then fails the
+// read after the bytes it has.
+// An object that finishes before the start gets the whole object instead
+// (libcached-server body_handle.rs wait_until_range_is_provided), and the
+// client passes it on without checking it against the request (found.rs
+// recv_body).
+func TestCacheReplaceForcedRangeOfAStreamingObject(t *testing.T) {
+	forcedRead := func(t *testing.T, mask uint32, from, to uint64) (string, error) {
 		t.Helper()
 		i := newCacheReplaceTestInstance()
 		insertTestObject(t, i, "key", replaceTestObject{content: "01234", maxAge: time.Minute, finish: false})
@@ -1192,7 +1201,8 @@ func TestCacheReplaceForcedStartPastTheEndFails(t *testing.T) {
 		handle := beginReplace(t, i, "key", CacheReplaceImmediate)
 		i.cacheReplaceHandles.Get(int(handle)).Replace.Options.AlwaysUseRequestedRange = true
 		i.memory.WriteUint64(replaceTestBodyOptsPtr, from)
-		if status := i.xqd_cache_replace_get_body(handle, CacheGetBodyOptionsMaskFrom, replaceTestBodyOptsPtr, replaceTestHandleOut); status != XqdStatusOK {
+		i.memory.WriteUint64(replaceTestBodyOptsPtr+8, to)
+		if status := i.xqd_cache_replace_get_body(handle, mask, replaceTestBodyOptsPtr, replaceTestHandleOut); status != XqdStatusOK {
 			t.Fatalf("replace_get_body status = %d", status)
 		}
 		body := i.bodies.Get(int(i.memory.Uint32(replaceTestHandleOut)))
@@ -1218,11 +1228,24 @@ func TestCacheReplaceForcedStartPastTheEndFails(t *testing.T) {
 		}
 	}
 
-	if _, err := forcedRead(t, 10); err == nil {
-		t.Fatal("a forced start past the end of the finished body got a clean EOF")
-	}
-	if data, err := forcedRead(t, 3); err != nil || data != "34" {
-		t.Fatalf("forced start inside the body = %q, %v, want %q", data, err, "34")
+	const from, to = CacheGetBodyOptionsMaskFrom, CacheGetBodyOptionsMaskTo
+	for _, tt := range []struct {
+		name     string
+		mask     uint32
+		from, to uint64
+		want     string
+		wantErr  bool
+	}{
+		{"start past the end", from, 10, 0, "01234", false},
+		{"range past the end", from | to, 7, 9, "01234", false},
+		{"start inside the body", from, 3, 0, "34", false},
+		{"range ending past the end", from | to, 3, 8, "34", true},
+		{"suffix", to, 0, 2, "34", false},
+		{"empty suffix", to, 0, 0, "01234", false},
+	} {
+		if data, err := forcedRead(t, tt.mask, tt.from, tt.to); data != tt.want || (err != nil) != tt.wantErr {
+			t.Errorf("forced %s = %q, %v, want %q (error %v)", tt.name, data, err, tt.want, tt.wantErr)
+		}
 	}
 }
 

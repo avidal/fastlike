@@ -810,6 +810,10 @@ type CacheHandle struct {
 
 	// The head of the object the lookup found, as it was then.
 	storedResponse *storedResponse
+
+	// The object's length as known at lookup time, which Content-Range uses.
+	foundLength      int64
+	foundLengthKnown bool
 }
 
 // CacheHandles is a slice of CacheHandle with methods to get and create

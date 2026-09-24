@@ -388,56 +388,66 @@ func (i *Instance) xqd_cache_get_body(
 // With an unknown size the range is honored only when the guest insists, and
 // the read then fails if the object ends early.
 func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, options int32, alwaysUseRequestedRange bool) (int, int32) {
-	hasFrom := options_mask&CacheGetBodyOptionsMaskFrom != 0
-	hasTo := options_mask&CacheGetBodyOptionsMaskTo != 0
-
-	var from, to uint64
-	if hasFrom {
-		from = i.memory.ReadUint64(options)
+	r := byteRange{
+		hasFirst: options_mask&CacheGetBodyOptionsMaskFrom != 0,
+		hasLast:  options_mask&CacheGetBodyOptionsMaskTo != 0,
 	}
-	if hasTo {
-		to = i.memory.ReadUint64(options + 8)
+	if r.hasFirst {
+		r.first = i.memory.ReadUint64(options)
 	}
-	if hasFrom && hasTo && to < from {
+	if r.hasLast {
+		r.last = i.memory.ReadUint64(options + 8)
+	}
+	if r.hasFirst && r.hasLast && r.last < r.first {
 		// An end before the start can never be satisfied, whatever the size.
 		return 0, XqdErrInvalidArgument
 	}
 
-	bodyID, _ := i.bodies.NewReader(io.NopCloser(cacheRangeReader(obj, hasFrom, hasTo, from, to, alwaysUseRequestedRange)))
+	bodyID, _ := i.bodies.NewReader(io.NopCloser(cacheRangeReader(obj, r, alwaysUseRequestedRange)))
 	return bodyID, XqdStatusOK
 }
 
-func cacheRangeReader(obj *CachedObject, hasFrom, hasTo bool, from, to uint64, alwaysUseRequestedRange bool) io.Reader {
+// cacheRangeReader reads r of obj the way CacheD serves it.
+func cacheRangeReader(obj *CachedObject, r byteRange, alwaysUseRequestedRange bool) io.Reader {
 	reader := &cacheBodyReader{cache: obj}
-	if !hasFrom && !hasTo {
+	if !r.hasFirst && !r.hasLast {
 		return reader
 	}
 
 	size, sizeKnown := obj.KnownLength()
 	switch {
-	case sizeKnown && hasTo && !hasFrom:
-		// A lone end bound asks for the last `to` bytes.
-		reader.offset = size - int64(min(to, uint64(size)))
-		reader.end = size
-		reader.bounded = true
-	case sizeKnown:
-		if !hasTo {
-			to = uint64(size) - 1
+	case sizeKnown && !r.hasFirst:
+		// A lone end bound asks for the last bytes, and CacheD serves the
+		// whole object when that is none of them or more than it holds.
+		if r.last > 0 && r.last <= uint64(size) {
+			reader.offset = size - int64(r.last)
+			reader.end = size
+			reader.bounded = true
 		}
-		if from >= uint64(size) || to >= uint64(size) {
+	case sizeKnown:
+		last := r.last
+		if !r.hasLast {
+			last = uint64(size) - 1
+		}
+		if r.first >= uint64(size) || last >= uint64(size) {
 			return reader
 		}
-		reader.offset = int64(from)
-		reader.end = int64(to) + 1
+		reader.offset = int64(r.first)
+		reader.end = int64(last) + 1
 		reader.bounded = true
-	case alwaysUseRequestedRange && hasTo && !hasFrom:
-		return &cacheSuffixReader{cache: obj, count: to}
+	case alwaysUseRequestedRange && !r.hasFirst:
+		return &cacheSuffixReader{cache: obj, count: r.last}
 	case alwaysUseRequestedRange:
-		// Offsets past what a body can hold simply never get satisfied.
-		reader.offset = int64(min(from, math.MaxInt64))
-		reader.mustReach = reader.offset > 0
-		if hasTo {
-			reader.end = int64(min(to, math.MaxInt64-1)) + 1
+		// CacheD commits to the range once the object reaches its start, and
+		// serves the whole object if the object ends first, which is bound to
+		// happen for a start no body can reach.
+		if r.first >= math.MaxInt64 {
+			return reader
+		}
+		reader.offset = int64(r.first)
+		reader.wholeIfShort = true
+		if r.hasLast {
+			reader.end = int64(min(r.last, math.MaxInt64-1)) + 1
 			reader.bounded = true
 		}
 	}
@@ -668,9 +678,9 @@ func (i *Instance) readCacheWriteOptions(mask uint32, optionsPtr int32) (*CacheW
 // at fieldPtr, refusing lengths that do not fit in guest memory before any
 // allocation happens.
 func (i *Instance) readGuestBytes(fieldPtr int32) ([]byte, bool) {
-	ptr := int32(i.memory.Uint32(int64(fieldPtr)))
-	length := int32(i.memory.Uint32(int64(fieldPtr + 4)))
-	if length < 0 || !i.memory.validRange(int64(ptr), uint64(length)) {
+	ptr := i.memory.Uint32(int64(fieldPtr))
+	length := i.memory.Uint32(int64(fieldPtr + 4))
+	if !i.memory.validRange(int64(ptr), uint64(length)) {
 		return nil, false
 	}
 	if length == 0 {
@@ -897,13 +907,14 @@ func (i *Instance) newCacheInsertBody(obj *CachedObject, key []byte) int {
 // cacheBodyReader implements io.Reader for reading body data from a cached object.
 // It supports streaming reads with blocking behavior while the cache write is in progress.
 // A bounded reader stops at end and fails if the object is shorter than that.
-// A reader that must reach its start fails if the object ends before it.
+// A reader with wholeIfShort serves the whole object instead when the object
+// ends before the range starts.
 type cacheBodyReader struct {
-	cache     *CachedObject
-	offset    int64
-	end       int64
-	bounded   bool
-	mustReach bool
+	cache        *CachedObject
+	offset       int64
+	end          int64
+	bounded      bool
+	wholeIfShort bool
 }
 
 func (r *cacheBodyReader) Read(p []byte) (int, error) {
@@ -920,11 +931,15 @@ func (r *cacheBodyReader) Read(p []byte) (int, error) {
 		}
 	}
 	n, err := r.cache.ReadBody(p, r.offset)
+	if n == 0 && err == io.EOF && r.wholeIfShort {
+		*r = cacheBodyReader{cache: r.cache}
+		n, err = r.cache.ReadBody(p, 0)
+	}
 	if n > 0 {
-		r.mustReach = false
+		r.wholeIfShort = false
 	}
 	r.offset += int64(n)
-	if err == io.EOF && ((r.bounded && r.offset < r.end) || r.mustReach) {
+	if err == io.EOF && r.bounded && r.offset < r.end {
 		err = io.ErrUnexpectedEOF
 	}
 	return n, err
@@ -1266,21 +1281,15 @@ func (i *Instance) xqd_cache_replace_get_user_metadata(
 type cacheSuffixReader struct {
 	cache *CachedObject
 	count uint64
-	inner *cacheBodyReader
+	inner io.Reader
 }
 
 func (r *cacheSuffixReader) Read(p []byte) (int, error) {
 	if r.inner == nil {
-		size, failed := r.cache.waitForWriteComplete()
-		if failed {
+		if _, failed := r.cache.waitForWriteComplete(); failed {
 			return 0, io.ErrUnexpectedEOF
 		}
-		r.inner = &cacheBodyReader{
-			cache:   r.cache,
-			offset:  size - int64(min(r.count, uint64(size))),
-			end:     size,
-			bounded: true,
-		}
+		r.inner = cacheRangeReader(r.cache, byteRange{last: r.count, hasLast: true}, false)
 	}
 	return r.inner.Read(p)
 }
