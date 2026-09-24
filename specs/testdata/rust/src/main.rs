@@ -102,6 +102,25 @@ fn main(mut req: Request) -> Result<Response, Error> {
 
         (&Method::GET, "/core-cache") => Ok(Response::from_body(core_cache_states()?)),
 
+        // Fills the core cache with a backend body, and returns before the
+        // backend is done sending it.
+        (&Method::GET, "/cache-fill") => {
+            use fastly::cache::core::{insert, CacheKey};
+            let resp = Request::get("http://origin/fill").with_pass(true).send(BACKEND)?;
+            let mut body = insert(CacheKey::from_static(b"filled"), std::time::Duration::from_secs(60)).execute()?;
+            body.append(resp.into_body());
+            body.finish()?;
+            Ok(Response::from_status(StatusCode::NO_CONTENT))
+        },
+
+        (&Method::GET, "/cache-read") => {
+            use fastly::cache::core::{lookup, CacheKey};
+            match lookup(CacheKey::from_static(b"filled")).execute()? {
+                Some(found) => Ok(Response::from_body(found.to_stream()?)),
+                None => Ok(Response::from_status(StatusCode::NOT_FOUND)),
+            }
+        },
+
         _ => Ok(Response::new()
             .with_status(404)
             .with_body("The page you requested could not be found")

@@ -10,6 +10,8 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -467,6 +469,38 @@ func TestFastlike(t *testing.T) {
 		}, "\n")
 		if w.Code != http.StatusOK || w.Body.String() != want {
 			st.Errorf("got %d:\n%s\nwant 200:\n%s", w.Code, w.Body.String(), want)
+		}
+	})
+
+	t.Run("cache-fill-after-return", func(st *testing.T) {
+		st.Parallel()
+		// A backend body keeps filling the cache after the guest returned,
+		// even once the server cancels the finished request.
+		release := make(chan struct{})
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("first,"))
+			w.(http.Flusher).Flush()
+			<-release
+			_, _ = w.Write([]byte("second"))
+		}))
+		defer origin.Close()
+		target, _ := url.Parse(origin.URL)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		inst := f.Instantiate(fastlike.WithDefaultBackend(func(string) http.Handler { return proxy }))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		w := httptest.NewRecorder()
+		r, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:1337/cache-fill", nil)
+		inst.ServeHTTP(w, r)
+		cancel()
+		if w.Code != http.StatusNoContent {
+			st.Fatalf("cache-fill: got %d %q", w.Code, w.Body.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+		close(release)
+
+		if w := serveGet(inst, "/cache-read", nil); w.Code != http.StatusOK || w.Body.String() != "first,second" {
+			st.Errorf("cache-read: got %d %q, want 200 %q", w.Code, w.Body.String(), "first,second")
 		}
 	})
 

@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 )
 
@@ -28,27 +27,6 @@ type syntheticFailureCtxKey struct{}
 // state without allocating per request beyond the bool itself.
 func markSyntheticFailure(ctx context.Context, flag *bool) context.Context {
 	return context.WithValue(ctx, syntheticFailureCtxKey{}, flag)
-}
-
-// backendSendErrorCtxKey is the context key a fastlike-managed backend handler
-// uses to hand a transport failure back to the send hostcall, which surfaces it
-// to the guest as a send error rather than a synthetic 502. Unexported so
-// embedders cannot collide.
-type backendSendErrorCtxKey struct{}
-
-// markBackendSendError installs errp on ctx for a backend handler to record a
-// transport failure into, to be read back after the handler returns.
-func markBackendSendError(ctx context.Context, errp *error) context.Context {
-	return context.WithValue(ctx, backendSendErrorCtxKey{}, errp)
-}
-
-// captureBackendSendError records err on the pointer installed by
-// markBackendSendError. With no pointer installed (e.g. an embedder calling the
-// handler directly) it is a no-op and the handler's synthetic 502 stands.
-func captureBackendSendError(ctx context.Context, err error) {
-	if p, ok := ctx.Value(backendSendErrorCtxKey{}).(*error); ok && p != nil {
-		*p = err
-	}
 }
 
 // Backend represents a complete backend configuration with all introspectable properties
@@ -308,17 +286,17 @@ func (i *Instance) backendExists(name string) bool {
 }
 
 // resolveBackendHandler resolves a backend name to the handler a send
-// hostcall dispatches through, plus whether the backend exposes a transport
-// fastlike can trace.
-func (i *Instance) resolveBackendHandler(name string) (http.Handler, bool) {
+// hostcall dispatches through, whether the backend exposes a transport
+// fastlike can trace, and its between-bytes timeout.
+func (i *Instance) resolveBackendHandler(name string) (http.Handler, bool, time.Duration) {
 	if name == "geolocation" {
-		return geoHandler(i.geolookup), false
+		return geoHandler(i.geolookup), false, 0
 	}
 	b := i.getBackend(name)
 	if b == nil {
-		return i.defaultBackend(name), false
+		return i.defaultBackend(name), false, 0
 	}
-	return b.Handler, b.Transport != nil
+	return b.Handler, b.Transport != nil, time.Duration(b.BetweenBytesTimeoutMs) * time.Millisecond
 }
 
 // defaultBackend returns a handler that responds with 502 Bad Gateway for unknown backends.
@@ -344,60 +322,6 @@ func fastlyTLSVersionToGo(v uint32) uint16 {
 	default:
 		return 0
 	}
-}
-
-// betweenBytesBody enforces a maximum delay between successive reads of a
-// response body.
-// When the body stays idle past the timeout it is closed, which unblocks a
-// pending read with an error, matching the between_bytes_timeout behavior of
-// a real backend.
-// Expiry re-arms itself based on the last activity time instead of racing
-// each read against a timer reset, so a chunk that arrives just before the
-// deadline cannot be misclassified as a stall.
-type betweenBytesBody struct {
-	rc      io.ReadCloser
-	timeout time.Duration
-
-	mu     sync.Mutex
-	last   time.Time
-	closed bool
-	timer  *time.Timer
-}
-
-func newBetweenBytesBody(rc io.ReadCloser, timeout time.Duration) *betweenBytesBody {
-	b := &betweenBytesBody{rc: rc, timeout: timeout, last: time.Now()}
-	b.timer = time.AfterFunc(timeout, b.expire)
-	return b
-}
-
-func (b *betweenBytesBody) expire() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.closed {
-		return
-	}
-	if idle := time.Since(b.last); idle < b.timeout {
-		b.timer.Reset(b.timeout - idle)
-		return
-	}
-	b.closed = true
-	_ = b.rc.Close()
-}
-
-func (b *betweenBytesBody) Read(p []byte) (int, error) {
-	n, err := b.rc.Read(p)
-	b.mu.Lock()
-	b.last = time.Now()
-	b.mu.Unlock()
-	return n, err
-}
-
-func (b *betweenBytesBody) Close() error {
-	b.mu.Lock()
-	b.closed = true
-	b.timer.Stop()
-	b.mu.Unlock()
-	return b.rc.Close()
 }
 
 // sslMinConfigured reports whether a minimum TLS version was configured,
@@ -510,6 +434,8 @@ func (b *Backend) CreateTransport() *http.Transport {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		// Production never asks for compression the guest did not ask for.
+		DisableCompression: true,
 	}
 
 	if b.UseSSL || b.sslMinConfigured() || b.sslMaxConfigured() {
@@ -576,22 +502,25 @@ func (b *Backend) newTransportHandler() http.Handler {
 
 		resp, err := transport.RoundTrip(r)
 		if err != nil {
-			captureBackendSendError(r.Context(), err)
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
+			if !captureBackendError(r.Context(), err) {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
+			}
 			return
 		}
-		body := io.ReadCloser(resp.Body)
-		if b.BetweenBytesTimeoutMs > 0 {
-			body = newBetweenBytesBody(resp.Body, time.Duration(b.BetweenBytesTimeoutMs)*time.Millisecond)
-		}
-		defer func() { _ = body.Close() }()
+		defer func() { _ = resp.Body.Close() }()
 
 		for k, v := range resp.Header {
 			w.Header()[k] = v
 		}
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, body)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			captureBackendError(r.Context(), err)
+			return
+		}
+		for k, v := range resp.Trailer {
+			w.Header()[http.TrailerPrefix+k] = v
+		}
 	})
 }
 

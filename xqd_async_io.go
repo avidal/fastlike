@@ -241,14 +241,10 @@ func (i *Instance) getHandleChannel(handle int) <-chan struct{} {
 
 // getBodyChannel returns a completion channel for a body handle.
 // For streaming bodies, returns a channel that signals write capacity.
-// For non-streaming bodies, returns an already-closed channel (always ready).
+// For other bodies, it signals that a read would not block.
 func (i *Instance) getBodyChannel(body *BodyHandle) <-chan struct{} {
 	if body.IsStreaming() {
 		return body.streamingReadyChannel()
 	}
-
-	// Non-streaming bodies are always ready
-	ch := make(chan struct{})
-	close(ch)
-	return ch
+	return body.readyChannel()
 }

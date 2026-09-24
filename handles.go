@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"io"
 	"net/http"
@@ -175,6 +176,9 @@ type BodyHandle struct {
 	trailerSource func() http.Header
 	trailersReady bool
 
+	// readErr is a read failure that came with data, for the next body_read.
+	readErr error
+
 	// Streaming body support (for send_async_streaming XQD call)
 	isStreaming        bool
 	isDownstreamStream bool
@@ -346,6 +350,99 @@ func (b *BodyHandle) Read(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// readOnce performs a single read, retrying empty ones so that 0 bytes
+// means the end.
+func (b *BodyHandle) readOnce(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for range 100 {
+		if n, err := b.Read(p); n > 0 || err != nil {
+			return n, err
+		}
+	}
+	return 0, io.ErrNoProgress
+}
+
+// readyChannel is closed once a read would not block.
+func (b *BodyHandle) readyChannel() <-chan struct{} {
+	if reader, ok := b.reader.(readyBody); ok && b.readErr == nil {
+		return reader.readyChannel()
+	}
+	return closedStreamingReadyChannel()
+}
+
+func (b *BodyHandle) ended() bool {
+	return b.readErr == nil && readerEnded(b.reader)
+}
+
+// readerEnded reports whether r is known to have nothing left.
+func readerEnded(r io.Reader) bool {
+	switch r := r.(type) {
+	case readyBody:
+		return r.ended()
+	case interface{ Len() int }:
+		return r.Len() == 0
+	}
+	return false
+}
+
+// bodyChain reads its parts in order, like io.MultiReader, but can tell
+// whether the part a read would come from is ready.
+type bodyChain struct {
+	parts []io.Reader
+}
+
+func chainReaders(first, second io.Reader) *bodyChain {
+	c := &bodyChain{}
+	for _, r := range []io.Reader{first, second} {
+		if inner, ok := r.(*bodyChain); ok {
+			c.parts = append(c.parts, inner.parts...)
+		} else {
+			c.parts = append(c.parts, r)
+		}
+	}
+	return c
+}
+
+func (c *bodyChain) Read(p []byte) (int, error) {
+	for len(c.parts) > 0 {
+		n, err := c.parts[0].Read(p)
+		if err == io.EOF {
+			c.parts[0] = nil
+			c.parts = c.parts[1:]
+			if n == 0 {
+				continue
+			}
+			err = nil
+		}
+		return n, err
+	}
+	return 0, io.EOF
+}
+
+func (c *bodyChain) readyChannel() <-chan struct{} {
+	for _, part := range c.parts {
+		if readerEnded(part) {
+			continue
+		}
+		if r, ok := part.(readyBody); ok {
+			return r.readyChannel()
+		}
+		break
+	}
+	return closedStreamingReadyChannel()
+}
+
+func (c *bodyChain) ended() bool {
+	for _, part := range c.parts {
+		if !readerEnded(part) {
+			return false
+		}
+	}
+	return true
 }
 
 // Write implements io.Writer for a BodyHandle
@@ -524,12 +621,25 @@ func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
 	return len(bhs.handles), bh
 }
 
-// NewResponseReader creates a reader body whose trailers are read from resp at
-// access time. net/http can replace resp.Trailer at EOF for unannounced trailers.
+// NewResponseReader creates a reader body for resp.
+// Trailers are looked up when read, since they arrive with the end of the
+// body.
 func (bhs *BodyHandles) NewResponseReader(resp *http.Response) (int, *BodyHandle) {
 	id, bh := bhs.NewReader(resp.Body)
-	bh.trailerSource = func() http.Header { return resp.Trailer }
+	bh.trailerSource = responseTrailers(resp)
+	if resp.ContentLength >= 0 {
+		bh.length, bh.lengthKnown = resp.ContentLength, true
+	}
 	return id, bh
+}
+
+// responseTrailers looks up resp's trailers when called, from the body when
+// it carries them.
+func responseTrailers(resp *http.Response) func() http.Header {
+	if body, ok := resp.Body.(trailerBody); ok {
+		return body.Trailers
+	}
+	return func() http.Header { return resp.Trailer }
 }
 
 // NewWriter creates a BodyHandle whose writer is connected to the supplied Writer
@@ -555,6 +665,9 @@ type PendingRequest struct {
 	response *http.Response // response when complete
 	err      error          // error if request failed
 
+	// cancel aborts the request if the guest never collects it.
+	cancel context.CancelFunc
+
 	// Profile bookkeeping. These fields are nil / zero when profiling is
 	// disabled on the parent Instance, and the synchronization paths below
 	// short-circuit accordingly so the no-profile cost stays a single
@@ -565,9 +678,9 @@ type PendingRequest struct {
 
 	// bodyClosed arbitrates the response-body close between the
 	// recorder's late-completion hook (orphan / incomplete paths) and
-	// the response-handle path (reset() closing wh.Body for responses
-	// the guest converted to a handle). Whichever side wins the swap
-	// performs the close; the other side observes true and skips.
+	// the body handle of a response the guest collected. Whichever side
+	// wins the swap performs the close; the other side observes true and
+	// skips.
 	bodyClosed atomic.Bool
 
 	// headersResp and headersErr hold header changes the guest queued via

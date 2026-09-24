@@ -70,6 +70,11 @@ type Instance struct {
 	ds_response http.ResponseWriter // Where we write the final HTTP response
 	ds_context  context.Context     // Request context, used for cancellation and timeouts
 
+	// backendCtx carries backend requests.
+	// Unlike ds_context, it outlives the guest, so that backend bodies can
+	// finish filling the cache, like in production.
+	backendCtx context.Context
+
 	// ds_originalHeaders holds the header names the client sent, casing and order included.
 	ds_originalHeaders []string
 
@@ -279,6 +284,13 @@ func (i *Instance) reset() {
 		}
 	}
 
+	// Backend requests nobody collected stop here.
+	for _, pr := range i.pendingRequests.handles {
+		if pr != nil && pr.cancel != nil {
+			pr.cancel()
+		}
+	}
+
 	// Wake local next-request timers before dropping their handles so the
 	// timeout goroutines do not outlive the request that created them.
 	for _, promise := range i.requestPromises.handles {
@@ -341,6 +353,7 @@ func (i *Instance) reset() {
 	i.ds_response = nil
 	i.ds_request = nil
 	i.ds_context = nil
+	i.backendCtx = nil
 	i.ds_originalHeaders = nil
 	i.downstreamRequestHandle = 0
 	i.cachedBotInfo = nil
@@ -460,10 +473,14 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.ds_request = r
 	i.ds_response = w
 	i.ds_context = r.Context()
+	backendCtx, cancelBackends := context.WithCancel(context.WithoutCancel(r.Context()))
+	i.backendCtx = backendCtx
 
-	// Interrupt the guest when the request is cancelled.
+	// Interrupt the guest and its backend requests when the request is
+	// cancelled.
 	interrupted := make(chan struct{})
 	stopInterrupt := context.AfterFunc(r.Context(), func() {
+		cancelBackends()
 		i.wasmctx.engine.IncrementEpoch()
 		close(interrupted)
 	})
@@ -498,6 +515,17 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Error running wasm program.\n"))
 		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
 		_, _ = w.Write([]byte(err.Error()))
+	}
+}
+
+func (i *Instance) backendContext() context.Context {
+	switch {
+	case i.backendCtx != nil:
+		return i.backendCtx
+	case i.ds_context != nil:
+		return i.ds_context
+	default:
+		return context.Background()
 	}
 }
 

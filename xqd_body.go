@@ -80,7 +80,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 	if body_end == writeEndFront {
 		// Prepend: Create a MultiReader that reads new data first, then existing content
-		body.reader = io.MultiReader(bytes.NewReader(data), body.reader)
+		body.reader = chainReaders(bytes.NewReader(data), body.reader)
 		body.growKnownLength(int64(len(data)))
 		i.deepBumpBodyWrite(int64(size))
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
@@ -102,12 +102,10 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 	return XqdStatusOK
 }
 
-// xqd_body_read reads up to maxlen bytes from a body handle into guest memory.
-// Copies data from the body identified by handle into guest memory starting at addr.
-// The actual number of bytes read is written to nread_out. This is a streaming operation
-// that consumes bytes from the body's reader (subsequent reads continue from where the last read left off).
-// Returns XqdStatusOK on success (even if 0 bytes read/EOF), XqdErrInvalidHandle if the body handle is invalid,
-// or XqdError if memory or I/O operations fail.
+// xqd_body_read reads the next chunk of a body, up to maxlen bytes, waiting
+// for it to arrive, like production.
+// 0 bytes means the body is done, and a failure that comes with data is
+// returned by the next call.
 func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_out int32) int32 {
 	body := i.bodies.Get(int(handle))
 	if body == nil {
@@ -122,34 +120,30 @@ func (i *Instance) xqd_body_read(handle int32, addr int32, maxlen int32, nread_o
 
 	i.abilog.Printf("body_read: handle=%d addr=%d maxlen=%d", handle, addr, maxlen)
 
-	// Read up to maxlen bytes from the body
-	buf := bytes.NewBuffer(make([]byte, 0, maxlen))
-	ncopied, err := io.Copy(buf, io.LimitReader(body, int64(maxlen)))
-	if err != nil {
-		i.abilog.Printf("body_read: error copying got=%s", err.Error())
+	if err := body.readErr; err != nil {
+		body.readErr = nil
+		i.abilog.Printf("body_read: handle=%d failed: %v", handle, err)
+		return bodyReadStatus(err)
+	}
+
+	i.pauseExecution()
+	n, err := body.readOnce(i.memory.Data()[addr : int64(addr)+int64(maxlen)])
+	i.resumeExecution()
+	if err != nil && err != io.EOF {
+		if n == 0 {
+			i.abilog.Printf("body_read: handle=%d failed: %v", handle, err)
+			return bodyReadStatus(err)
+		}
+		body.readErr = err
+	}
+
+	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, n)
+	i.deepBumpBodyRead(int64(n))
+	if err := i.memory.PutUint32At(uint32(n), int64(nread_out)); err != nil {
 		return XqdError
 	}
 
-	// Write the read data to guest memory
-	nwritten, err := i.memory.WriteAt(buf.Bytes(), int64(addr))
-	if err != nil {
-		i.abilog.Printf("body_read: error writing to guest memory got=%s", err.Error())
-		return XqdError
-	}
-
-	// Sanity check: bytes copied from body should match bytes written to memory
-	if ncopied != int64(nwritten) {
-		i.abilog.Printf("body_read: mismatch: copied=%d wrote=%d", ncopied, nwritten)
-		return XqdError
-	}
-
-	i.abilog.Printf("body_read: handle=%d maxlen=%d read=%d", handle, maxlen, ncopied)
-	i.deepBumpBodyRead(ncopied)
-	if err := i.memory.PutUint32At(uint32(nwritten), int64(nread_out)); err != nil {
-		return XqdError
-	}
-
-	if ncopied == 0 && maxlen > 0 {
+	if n == 0 && maxlen > 0 {
 		body.trailersReady = true
 	}
 
@@ -213,7 +207,7 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 
 	// Chain the readers: dst content followed by src content
 	// This is efficient as it doesn't copy data, just creates a composite reader
-	dst.reader = io.MultiReader(dst.reader, src)
+	dst.reader = chainReaders(dst.reader, src)
 	dst.closer = joinBodyClosers(dst.closer, src)
 	if srcLength := src.Size(); srcLength < 0 {
 		dst.lengthKnown = false
