@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -400,6 +401,45 @@ func TestFastlike(t *testing.T) {
 		}
 		if got := fetches.Load(); got != 2 {
 			st.Errorf("backend fetched %d times for two requests, want 2", got)
+		}
+	})
+
+	t.Run("http-cache-stale-while-revalidate", func(st *testing.T) {
+		st.Parallel()
+		// Stale responses are served while a new one is fetched in the
+		// background.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			n := fetches.Add(1)
+			w.Header().Set("Cache-Control", "max-age=0, stale-while-revalidate=60")
+			_, _ = fmt.Fprintf(w, "v%d", n)
+		})))
+		for n, want := range []string{"v1", "v1", "v2"} {
+			if w := serveGet(inst, "/proxy/swr", nil); w.Code != http.StatusOK || w.Body.String() != want {
+				st.Errorf("request %d: got %d %q, want 200 %q", n+1, w.Code, w.Body.String(), want)
+			}
+			// Whether the third request revalidates depends on a background
+			// write.
+			if got := fetches.Load(); n < 2 && got != int32(n+1) {
+				st.Errorf("request %d: backend fetched %d times, want %d", n+1, got, n+1)
+			}
+		}
+	})
+
+	t.Run("core-cache", func(st *testing.T) {
+		st.Parallel()
+		// Only usable objects are found, and one lookup at a time revalidates.
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		w := serveGet(inst, "/core-cache", nil)
+		want := strings.Join([]string{
+			"fresh: found=true stale_while_revalidate=Some(0ns)",
+			"expired lookup: found=false",
+			"expired transaction: found=false stale=false must_insert=true must_insert_or_update=true",
+			"stale transaction: found=true stale=true must_insert=false must_insert_or_update=true",
+			"stale second transaction: found=true stale=true must_insert=false must_insert_or_update=false",
+		}, "\n")
+		if w.Code != http.StatusOK || w.Body.String() != want {
+			st.Errorf("got %d:\n%s\nwant 200:\n%s", w.Code, w.Body.String(), want)
 		}
 	})
 

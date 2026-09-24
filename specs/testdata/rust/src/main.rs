@@ -100,9 +100,63 @@ fn main(mut req: Request) -> Result<Response, Error> {
             Ok(Response::new().with_status(200).with_body(value))
         },
 
+        (&Method::GET, "/core-cache") => Ok(Response::from_body(core_cache_states()?)),
+
         _ => Ok(Response::new()
             .with_status(404)
             .with_body("The page you requested could not be found")
         ),
     }
+}
+
+// Reports what the core cache API sees for objects of various ages.
+fn core_cache_states() -> Result<String, Error> {
+    use fastly::cache::core::{insert, lookup, CacheKey, Transaction};
+    use std::io::Write;
+    use std::time::Duration;
+
+    let minute = Duration::from_secs(60);
+    let store = |key: &'static str, initial_age: Duration, swr: Duration| -> Result<(), Error> {
+        let mut body = insert(CacheKey::from_static(key.as_bytes()), minute)
+            .initial_age(initial_age)
+            .stale_while_revalidate(swr)
+            .execute()?;
+        body.write_all(key.as_bytes())?;
+        body.finish()?;
+        Ok(())
+    };
+    let describe = |tx: &Transaction| {
+        format!(
+            "found={} stale={} must_insert={} must_insert_or_update={}",
+            tx.found().is_some(),
+            tx.found().is_some_and(|found| found.is_stale()),
+            tx.must_insert(),
+            tx.must_insert_or_update()
+        )
+    };
+    let mut out = Vec::new();
+
+    store("fresh", Duration::ZERO, Duration::ZERO)?;
+    let found = lookup(CacheKey::from_static(b"fresh")).execute()?;
+    out.push(format!(
+        "fresh: found={} stale_while_revalidate={:?}",
+        found.is_some(),
+        found.map(|found| found.stale_while_revalidate())
+    ));
+
+    store("expired", 2 * minute, Duration::ZERO)?;
+    let found = lookup(CacheKey::from_static(b"expired")).execute()?;
+    out.push(format!("expired lookup: found={}", found.is_some()));
+    let tx = Transaction::lookup(CacheKey::from_static(b"expired")).execute()?;
+    out.push(format!("expired transaction: {}", describe(&tx)));
+    tx.cancel_insert_or_update()?;
+
+    store("stale", Duration::from_secs(90), minute)?;
+    let leader = Transaction::lookup(CacheKey::from_static(b"stale")).execute()?;
+    out.push(format!("stale transaction: {}", describe(&leader)));
+    let follower = Transaction::lookup(CacheKey::from_static(b"stale")).execute()?;
+    out.push(format!("stale second transaction: {}", describe(&follower)));
+    leader.cancel_insert_or_update()?;
+
+    Ok(out.join("\n"))
 }

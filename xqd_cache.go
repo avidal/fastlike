@@ -243,18 +243,14 @@ func (i *Instance) xqd_cache_transaction_update(
 	return XqdStatusOK
 }
 
-// xqd_cache_transaction_cancel cancels a cache transaction
+// xqd_cache_transaction_cancel gives up the obligation of a cache handle.
+// Like production, a handle without one is refused.
 func (i *Instance) xqd_cache_transaction_cancel(cache_handle int32) int32 {
 	i.abilog.Println("xqd_cache_transaction_cancel")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil {
+	handle := i.coreCacheHandle(cache_handle)
+	if handle == nil || !i.cache.TransactionCancel(handle.Transaction) {
 		return XqdErrInvalidHandle
-	}
-
-	err := i.cache.TransactionCancel(handle.Transaction)
-	if err != nil {
-		return XqdError
 	}
 
 	return XqdStatusOK
@@ -289,7 +285,7 @@ func (i *Instance) xqd_cache_close(cache_handle int32) int32 {
 	if handle.Transaction != nil && i.cache != nil {
 		// An obligation to fetch that the guest walks away from must not keep
 		// the key pending.
-		_ = i.cache.TransactionCancel(handle.Transaction)
+		i.cache.TransactionCancel(handle.Transaction)
 	}
 
 	return XqdStatusOK
@@ -302,8 +298,8 @@ func (i *Instance) xqd_cache_get_state(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_state")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil {
+	handle := i.coreCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
 
@@ -327,7 +323,9 @@ func (i *Instance) xqd_cache_get_state(
 	return XqdStatusOK
 }
 
-// xqd_cache_get_user_metadata gets user metadata from cached object
+// xqd_cache_get_user_metadata gets user metadata from cached object, including
+// an expired one the handle has to replace.
+// The required size is reported even when the buffer is too small.
 func (i *Instance) xqd_cache_get_user_metadata(
 	cache_handle int32,
 	user_metadata_out_ptr int32,
@@ -336,24 +334,53 @@ func (i *Instance) xqd_cache_get_user_metadata(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_user_metadata")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
+	handle := i.coreCacheHandle(cache_handle)
+	if handle == nil {
 		return XqdErrInvalidHandle
 	}
-
-	metadata := handle.Transaction.Entry.Object.UserMetadata
-	if metadata == nil {
-		metadata = []byte{}
+	obj := handle.Transaction.Entry.Object
+	if obj == nil {
+		return XqdErrNone
 	}
 
+	metadata := obj.UserMetadata
+	i.memory.WriteUint32(nwritten_out, uint32(len(metadata)))
 	if len(metadata) > int(user_metadata_out_len) {
 		return XqdErrBufferLength
 	}
-
 	_, _ = i.memory.WriteAt(metadata, int64(user_metadata_out_ptr))
-	i.memory.WriteUint32(nwritten_out, uint32(len(metadata)))
 
 	return XqdStatusOK
+}
+
+// coreCacheHandle returns a cache handle that holds a lookup result.
+func (i *Instance) coreCacheHandle(cache_handle int32) *CacheHandle {
+	handle := i.cacheHandles.Get(int(cache_handle))
+	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil {
+		return nil
+	}
+	return handle
+}
+
+// foundCacheHandle returns a cache handle that found a usable object, or the
+// status an accessor returns without one.
+func (i *Instance) foundCacheHandle(cache_handle int32) (*CacheHandle, int32) {
+	handle := i.coreCacheHandle(cache_handle)
+	if handle == nil {
+		return nil, XqdErrInvalidHandle
+	}
+	if !handle.Transaction.Entry.State.Found {
+		return nil, XqdErrNone
+	}
+	return handle, XqdStatusOK
+}
+
+func (i *Instance) foundCacheObject(cache_handle int32) (*CachedObject, int32) {
+	handle, status := i.foundCacheHandle(cache_handle)
+	if status != XqdStatusOK {
+		return nil, status
+	}
+	return handle.Transaction.Entry.Object, XqdStatusOK
 }
 
 // xqd_cache_get_body gets the body of a cached object with optional range
@@ -365,13 +392,12 @@ func (i *Instance) xqd_cache_get_body(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_body")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	handle, status := i.foundCacheHandle(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	obj := handle.Transaction.Entry.Object
-
 	alwaysUseRequestedRange := handle.Transaction.Options != nil && handle.Transaction.Options.AlwaysUseRequestedRange
 	bodyID, status := i.newCacheObjectBody(obj, options_mask, options, alwaysUseRequestedRange)
 	if status != XqdStatusOK {
@@ -461,12 +487,10 @@ func (i *Instance) xqd_cache_get_length(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_length")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.foundCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	obj := handle.Transaction.Entry.Object
 	if obj.Length != nil {
 		i.memory.WriteUint64(length_out, *obj.Length)
 		return XqdStatusOK
@@ -483,12 +507,10 @@ func (i *Instance) xqd_cache_get_max_age_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_max_age_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.foundCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	obj := handle.Transaction.Entry.Object
 	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
 
 	return XqdStatusOK
@@ -501,18 +523,13 @@ func (i *Instance) xqd_cache_get_stale_while_revalidate_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_stale_while_revalidate_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.foundCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
+	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
 
-	obj := handle.Transaction.Entry.Object
-	if obj.StaleWhileRevalidateNs > 0 {
-		i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
-		return XqdStatusOK
-	}
-
-	return XqdErrNone
+	return XqdStatusOK
 }
 
 // xqd_cache_get_age_ns gets the age of the cached object in nanoseconds
@@ -522,12 +539,10 @@ func (i *Instance) xqd_cache_get_age_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_age_ns")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.foundCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	obj := handle.Transaction.Entry.Object
 	age := obj.GetAge()
 	i.memory.WriteUint64(duration_out, age)
 
@@ -541,12 +556,10 @@ func (i *Instance) xqd_cache_get_hits(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_hits")
 
-	handle := i.cacheHandles.Get(int(cache_handle))
-	if handle == nil || handle.Transaction == nil || handle.Transaction.Entry == nil || handle.Transaction.Entry.Object == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.foundCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
-
-	obj := handle.Transaction.Entry.Object
 	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
 
 	return XqdStatusOK
@@ -1186,7 +1199,6 @@ func (i *Instance) xqd_cache_replace_get_max_age_ns(
 
 // xqd_cache_replace_get_stale_while_revalidate_ns gets the stale-while-revalidate
 // period of the existing object during replace.
-// Unlike the lookup accessor, production reports a zero period rather than none.
 func (i *Instance) xqd_cache_replace_get_stale_while_revalidate_ns(
 	replace_handle int32,
 	duration_out int32,
