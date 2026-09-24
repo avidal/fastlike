@@ -268,16 +268,9 @@ func TestFastlike(t *testing.T) {
 			}
 			_, _ = w.Write([]byte("cached body"))
 		})))
-		serve := func(path string, header http.Header) *httptest.ResponseRecorder {
-			w := httptest.NewRecorder()
-			r, _ := http.NewRequest("GET", "http://localhost:1337"+path, io.NopCloser(bytes.NewBuffer(nil)))
-			maps.Copy(r.Header, header)
-			inst.ServeHTTP(w, r)
-			return w
-		}
 
 		for n, label := range []string{"miss", "hit"} {
-			w := serve("/proxy/cached", nil)
+			w := serveGet(inst, "/proxy/cached", nil)
 			if w.Code != http.StatusOK || w.Body.String() != "cached body" {
 				st.Errorf("%s: got %d %q, want 200 %q", label, w.Code, w.Body.String(), "cached body")
 			}
@@ -295,7 +288,7 @@ func TestFastlike(t *testing.T) {
 			}
 		}
 
-		w := serve("/proxy/cached", http.Header{"If-None-Match": {`"v1"`}})
+		w := serveGet(inst, "/proxy/cached", http.Header{"If-None-Match": {`"v1"`}})
 		if w.Code != http.StatusNotModified || w.Body.Len() != 0 {
 			st.Errorf("conditional hit: got %d %q, want an empty 304", w.Code, w.Body.String())
 		}
@@ -303,7 +296,7 @@ func TestFastlike(t *testing.T) {
 			st.Errorf("conditional hit: ETag = %q, want %q", got, `"v1"`)
 		}
 
-		w = serve("/proxy/moved", nil)
+		w = serveGet(inst, "/proxy/moved", nil)
 		if w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != "/elsewhere" {
 			st.Errorf("redirect: got %d with Location %q", w.Code, w.Header().Get("Location"))
 		}
@@ -319,11 +312,90 @@ func TestFastlike(t *testing.T) {
 			_, _ = w.Write([]byte("personal"))
 		})))
 		for n := range 2 {
-			w := httptest.NewRecorder()
-			r, _ := http.NewRequest("GET", "http://localhost:1337/proxy/private", io.NopCloser(bytes.NewBuffer(nil)))
-			inst.ServeHTTP(w, r)
-			if w.Code != http.StatusOK || w.Body.String() != "personal" {
+			if w := serveGet(inst, "/proxy/private", nil); w.Code != http.StatusOK || w.Body.String() != "personal" {
 				st.Errorf("request %d: got %d %q", n, w.Code, w.Body.String())
+			}
+		}
+		if got := fetches.Load(); got != 2 {
+			st.Errorf("backend fetched %d times for two requests, want 2", got)
+		}
+	})
+
+	t.Run("http-cache-vary", func(st *testing.T) {
+		st.Parallel()
+		// The suggested vary rule comes from Vary, so each encoding gets its
+		// own variant.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			fetches.Add(1)
+			w.Header().Set("Cache-Control", "max-age=60")
+			w.Header().Set("Vary", "Accept-Encoding")
+			_, _ = w.Write([]byte("encoding:" + r.Header.Get("Accept-Encoding")))
+		})))
+		for _, encoding := range []string{"gzip", "br", "gzip", "br"} {
+			w := serveGet(inst, "/proxy/vary", http.Header{"Accept-Encoding": {encoding}})
+			if want := "encoding:" + encoding; w.Body.String() != want {
+				st.Errorf("Accept-Encoding %s: got %q, want %q", encoding, w.Body.String(), want)
+			}
+		}
+		if got := fetches.Load(); got != 2 {
+			st.Errorf("backend fetched %d times, want 2", got)
+		}
+	})
+
+	t.Run("http-cache-range", func(st *testing.T) {
+		st.Parallel()
+		// Hits answer single ranges with a 206 stating the stored length.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, r *http.Request) {
+			fetches.Add(1)
+			if r.Header.Get("Range") != "" {
+				st.Errorf("backend received the client's Range %q", r.Header.Get("Range"))
+			}
+			w.Header().Set("Cache-Control", "max-age=60")
+			_, _ = w.Write([]byte("0123456789"))
+		})))
+		tests := []struct {
+			rangeHeader  string
+			status       int
+			contentRange string
+			body         string
+		}{
+			{"", http.StatusOK, "", "0123456789"},
+			{"bytes=2-5", http.StatusPartialContent, "bytes 2-5/10", "2345"},
+			{"bytes=-3", http.StatusPartialContent, "bytes 7-9/10", "789"},
+			{"bytes=4-4", http.StatusOK, "", "0123456789"},
+		}
+		for _, tt := range tests {
+			var header http.Header
+			if tt.rangeHeader != "" {
+				header = http.Header{"Range": {tt.rangeHeader}}
+			}
+			w := serveGet(inst, "/proxy/range", header)
+			if w.Code != tt.status || w.Header().Get("Content-Range") != tt.contentRange || w.Body.String() != tt.body {
+				st.Errorf("Range %q: got %d %q %q, want %d %q %q", tt.rangeHeader, w.Code, w.Header().Get("Content-Range"), w.Body.String(), tt.status, tt.contentRange, tt.body)
+			}
+		}
+		if got := fetches.Load(); got != 1 {
+			st.Errorf("backend fetched %d times, want 1", got)
+		}
+	})
+
+	t.Run("http-cache-expires", func(st *testing.T) {
+		st.Parallel()
+		// An Expires equal to Date leaves no freshness, instead of the default
+		// hour.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			fetches.Add(1)
+			now := time.Now().UTC().Format(http.TimeFormat)
+			w.Header().Set("Date", now)
+			w.Header().Set("Expires", now)
+			_, _ = w.Write([]byte("already stale"))
+		})))
+		for range 2 {
+			if w := serveGet(inst, "/proxy/expires", nil); w.Code != http.StatusOK || w.Body.String() != "already stale" {
+				st.Errorf("got %d %q", w.Code, w.Body.String())
 			}
 		}
 		if got := fetches.Load(); got != 2 {
@@ -416,6 +488,15 @@ func failingBackendHandler(t *testing.T) func(string) http.Handler {
 			w.WriteHeader(http.StatusTeapot)
 		})
 	}
+}
+
+// serveGet sends a GET for path with the given headers to inst.
+func serveGet(inst *fastlike.Instance, path string, header http.Header) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	r, _ := http.NewRequest("GET", "http://localhost:1337"+path, io.NopCloser(bytes.NewBuffer(nil)))
+	maps.Copy(r.Header, header)
+	inst.ServeHTTP(w, r)
+	return w
 }
 
 func testBackendHandler(t *testing.T, h http.HandlerFunc) func(string) http.Handler {

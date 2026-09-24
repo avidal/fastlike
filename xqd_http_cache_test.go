@@ -1,6 +1,7 @@
 package fastlike
 
 import (
+	"crypto/sha256"
 	"io"
 	"log"
 	"net/http"
@@ -72,52 +73,17 @@ func TestHttpCacheIsRequestCacheableInvalidHandle(t *testing.T) {
 }
 
 func TestHttpCacheGetSuggestedCacheKey(t *testing.T) {
-	inst := &Instance{
-		requests: &RequestHandles{},
-		memory:   &Memory{ByteMemory(make([]byte, 4096))},
-		abilog:   log.New(io.Discard, "", 0),
+	inst := newHTTPCacheStoreTestInstance()
+	reqID := httpCacheTestRequest(inst, http.MethodGet, nil)
+	if status := inst.xqd_http_cache_get_suggested_cache_key(reqID, httpCacheTestDataPtr, 32, httpCacheTestNwrittenOut); status != XqdStatusOK {
+		t.Fatalf("get_suggested_cache_key status = %d", status)
 	}
-
-	// Create a request
-	rhid, rh := inst.requests.New()
-	rh.Method = "GET"
-	rh.URL, _ = url.Parse("https://example.com/path?query=value")
-
-	// Allocate space for the cache key and nwritten
-	keyPtr := int32(0)
-	keyLen := int32(32) // SHA256 is 32 bytes
-	nwrittenPtr := int32(100)
-
-	// Call get_suggested_cache_key
-	result := inst.xqd_http_cache_get_suggested_cache_key(int32(rhid), keyPtr, keyLen, nwrittenPtr)
-
-	if result != XqdStatusOK {
-		t.Fatalf("xqd_http_cache_get_suggested_cache_key() = %d, want %d", result, XqdStatusOK)
+	want := sha256.Sum256([]byte(logicalCacheKeySalt + "\x00example.com\x00/object\x00"))
+	if got := inst.memory.Data()[httpCacheTestDataPtr : httpCacheTestDataPtr+32]; string(got) != string(want[:]) {
+		t.Errorf("key %x, want %x", got, want)
 	}
-
-	// Verify nwritten is 32
-	nwritten := inst.memory.Uint32(int64(nwrittenPtr))
-	if nwritten != 32 {
-		t.Errorf("nwritten = %d, want 32", nwritten)
-	}
-
-	// Verify the key is 32 bytes and not all zeros
-	key := make([]byte, 32)
-	_, err := inst.memory.ReadAt(key, int64(keyPtr))
-	if err != nil {
-		t.Fatalf("failed to read cache key: %v", err)
-	}
-
-	allZeros := true
-	for _, b := range key {
-		if b != 0 {
-			allZeros = false
-			break
-		}
-	}
-
-	if allZeros {
-		t.Error("cache key is all zeros, expected a valid SHA256 hash")
+	if status := inst.xqd_http_cache_get_suggested_cache_key(reqID, httpCacheTestDataPtr, 32, httpCacheTestNwrittenOut+1); status != XqdErrBadAlignment {
+		t.Errorf("misaligned nwritten_out: status %d, want %d", status, XqdErrBadAlignment)
 	}
 }
 

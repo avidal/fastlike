@@ -82,10 +82,34 @@ type Memory struct {
 }
 
 func (m *Memory) validRange(offset int64, size uint64) bool {
-	if offset < 0 || size > uint64(m.Len()) {
+	n := uint64(m.Len())
+	if offset < 0 || size > n {
 		return false
 	}
-	return uint64(offset) <= uint64(m.Len())-size
+	return uint64(offset) <= n-size
+}
+
+// wiggleField locates a record field the way wiggle checks guest pointers:
+// bounds first, then alignment to the field's size.
+func (m *Memory) wiggleField(record int32, offset, size uint32) (int64, int32) {
+	addr := int64(uint32(record)) + int64(offset)
+	if !m.validRange(addr, uint64(size)) {
+		return 0, XqdErrInvalidArgument
+	}
+	if addr%int64(size) != 0 {
+		return 0, XqdErrBadAlignment
+	}
+	return addr, XqdStatusOK
+}
+
+// wiggleRecord checks a record the way wiggle reads it field by field: the
+// bounds of the first field, its alignment, and then the rest of the record.
+func (m *Memory) wiggleRecord(record int32, align, size uint32) (int64, int32) {
+	addr, status := m.wiggleField(record, 0, align)
+	if status == XqdStatusOK && !m.validRange(addr, uint64(size)) {
+		return 0, XqdErrInvalidArgument
+	}
+	return addr, status
 }
 
 // ReadUint8 reads a uint8 (single byte) from the given offset in memory.

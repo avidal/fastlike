@@ -322,20 +322,10 @@ func (i *Instance) xqd_req_cache_override_v2_set(handle int32, tag int32, ttl in
 
 func (i *Instance) xqd_req_cache_override_v3_set(handle int32, tag int32, override_addr int32) int32 {
 	requireFlags("req_cache_override_v3_set", "cache_override_tag", tag, cacheOverrideTagKnown)
-	// Like wiggle, check the first field's bounds before the alignment, and
-	// the rest of the record afterwards.
-	addr := int64(uint32(override_addr))
-	if !i.memory.validRange(addr, 4) {
-		i.abilog.Printf("req_cache_override_v3_set: record at %#x out of bounds", uint32(override_addr))
-		return XqdErrInvalidArgument
-	}
-	if addr%4 != 0 {
-		i.abilog.Printf("req_cache_override_v3_set: record at %#x not aligned", uint32(override_addr))
-		return XqdErrBadAlignment
-	}
-	if !i.memory.validRange(addr, cacheOverrideSize) {
-		i.abilog.Printf("req_cache_override_v3_set: record at %#x out of bounds", uint32(override_addr))
-		return XqdErrInvalidArgument
+	addr, status := i.memory.wiggleRecord(override_addr, 4, cacheOverrideSize)
+	if status != XqdStatusOK {
+		i.abilog.Printf("req_cache_override_v3_set: record at %#x out of bounds or not aligned", uint32(override_addr))
+		return status
 	}
 	sk := i.memory.Uint32(addr + 8)
 	skLen := i.memory.Uint32(addr + 12)

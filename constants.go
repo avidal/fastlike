@@ -116,8 +116,23 @@ const (
 	CacheLookupStateMustInsertOrUpdate uint32 = 1 << 3
 )
 
+// HTTP cache lookup options mask
+const (
+	HttpCacheLookupOptionsMaskReserved    uint32 = 1 << 0
+	HttpCacheLookupOptionsMaskOverrideKey uint32 = 1 << 1
+	HttpCacheLookupOptionsMaskBackendName uint32 = 1 << 2
+
+	httpCacheLookupOptionsKnown = HttpCacheLookupOptionsMaskReserved | HttpCacheLookupOptionsMaskOverrideKey |
+		HttpCacheLookupOptionsMaskBackendName
+)
+
+// httpCacheLookupOptionsSize covers the override key and backend name
+// pointers and lengths, all u32.
+const httpCacheLookupOptionsSize = 16
+
 // HTTP cache write options mask
 const (
+	HttpCacheWriteOptionsMaskReserved               uint32 = 1 << 0
 	HttpCacheWriteOptionsMaskVaryRule               uint32 = 1 << 1
 	HttpCacheWriteOptionsMaskInitialAgeNs           uint32 = 1 << 2
 	HttpCacheWriteOptionsMaskStaleWhileRevalidateNs uint32 = 1 << 3
@@ -125,6 +140,11 @@ const (
 	HttpCacheWriteOptionsMaskLength                 uint32 = 1 << 5
 	HttpCacheWriteOptionsMaskSensitiveData          uint32 = 1 << 6
 	HttpCacheWriteOptionsMaskStaleIfErrorNs         uint32 = 1 << 7
+
+	httpCacheWriteOptionsKnown = HttpCacheWriteOptionsMaskReserved | HttpCacheWriteOptionsMaskVaryRule |
+		HttpCacheWriteOptionsMaskInitialAgeNs | HttpCacheWriteOptionsMaskStaleWhileRevalidateNs |
+		HttpCacheWriteOptionsMaskSurrogateKeys | HttpCacheWriteOptionsMaskLength |
+		HttpCacheWriteOptionsMaskSensitiveData | HttpCacheWriteOptionsMaskStaleIfErrorNs
 )
 
 // HTTP cache storage actions
