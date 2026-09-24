@@ -24,9 +24,8 @@ var errStreamingBodyAbandoned = errors.New("streaming body abandoned")
 
 const maxPendingRequests int32 = 16 * 1024
 
-// cachingSendError marks the transport outcome for which Fastly servers expose a
-// populated SendErrorDetail from the pending-request v2 calls. Other errors
-// deliberately receive an Ok detail even though the hostcall itself failed.
+// cachingSendError marks transport failures, the only ones with a precise
+// error detail.
 type cachingSendError struct {
 	err error
 }
@@ -34,12 +33,19 @@ type cachingSendError struct {
 func (e *cachingSendError) Error() string { return e.err.Error() }
 func (e *cachingSendError) Unwrap() error { return e.err }
 
+// pendingRequestErrorDetail describes how a pending request ended.
+// Other failures are internal errors, since an Ok detail next to a failed
+// status panics the fastly 0.13 SDK.
 func pendingRequestErrorDetail(err error) *SendErrorDetail {
 	var sendErr *cachingSendError
-	if errors.As(err, &sendErr) {
+	switch {
+	case err == nil:
+		return createErrorDetailFromError(nil)
+	case errors.As(err, &sendErr):
 		return createErrorDetailFromError(sendErr.err)
+	default:
+		return &SendErrorDetail{Tag: SendErrorDetailInternalError}
 	}
-	return createErrorDetailFromError(nil)
 }
 
 // SendErrorDetail represents the error details structure for send_v2/send_v3

@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"math"
 	"sync"
@@ -168,12 +169,12 @@ func (i *Instance) xqd_cache_transaction_insert(
 		return status
 	}
 
-	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
+	obj, err := i.cache.TransactionInsert(handle.Transaction, writeOpts)
+	if err != nil {
+		return transactionWriteStatus(err)
+	}
 	bodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
 	i.memory.WriteUint32(body_handle_out, uint32(bodyID))
-
-	// Complete the transaction
-	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
 }
@@ -201,15 +202,15 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 		return status
 	}
 
-	obj := i.cache.Insert(handle.Transaction.Key, writeOpts)
+	obj, err := i.cache.TransactionInsert(handle.Transaction, writeOpts)
+	if err != nil {
+		return transactionWriteStatus(err)
+	}
 	writeBodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
 	readHandleID := i.cacheHandles.New(usableTransaction(handle.Transaction.Key, obj))
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
-
-	// Complete the original transaction
-	i.cache.CompleteTransaction(handle.Transaction)
 
 	return XqdStatusOK
 }
@@ -232,15 +233,19 @@ func (i *Instance) xqd_cache_transaction_update(
 		return status
 	}
 
-	err := i.cache.TransactionUpdate(handle.Transaction, writeOpts)
-	if err != nil {
-		return XqdError
+	if _, err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
+		return transactionWriteStatus(err)
 	}
 
-	// Complete the transaction
-	i.cache.CompleteTransaction(handle.Transaction)
-
 	return XqdStatusOK
+}
+
+// transactionWriteStatus maps a refused cache write to its status.
+func transactionWriteStatus(err error) int32 {
+	if errors.Is(err, errNoObligation) {
+		return XqdErrInvalidHandle
+	}
+	return XqdError
 }
 
 // xqd_cache_transaction_cancel gives up the obligation of a cache handle.

@@ -426,6 +426,29 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("http-cache-stale-if-error", func(st *testing.T) {
+		st.Parallel()
+		// A stale response is served when its revalidation fails, and the
+		// next request revalidates again.
+		var fetches atomic.Int32
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			n := fetches.Add(1)
+			if n == 2 {
+				panic(http.ErrAbortHandler)
+			}
+			w.Header().Set("Cache-Control", "max-age=0, stale-if-error=60")
+			_, _ = fmt.Fprintf(w, "v%d", n)
+		})))
+		for n, want := range []string{"v1", "v1", "v3"} {
+			if w := serveGet(inst, "/proxy/sie", nil); w.Code != http.StatusOK || w.Body.String() != want {
+				st.Errorf("request %d: got %d %q, want 200 %q", n+1, w.Code, w.Body.String(), want)
+			}
+			if got := fetches.Load(); got != int32(n+1) {
+				st.Errorf("request %d: backend fetched %d times, want %d", n+1, got, n+1)
+			}
+		}
+	})
+
 	t.Run("core-cache", func(st *testing.T) {
 		st.Parallel()
 		// Only usable objects are found, and one lookup at a time revalidates.
