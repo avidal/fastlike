@@ -63,9 +63,9 @@ func (i *Instance) xqd_backend_is_dynamic(backendNamePtr int32, backendNameLen i
 		return XqdErrInvalidArgument
 	}
 
-	// Return 1 if dynamic, 0 if static
+	// Only guest-registered backends count, not shields.
 	var isDynamic uint32
-	if backend.IsDynamic {
+	if backend.dynamicRegistration != nil {
 		isDynamic = 1
 	}
 	i.memory.PutUint32(isDynamic, int64(isDynamicOut))
@@ -211,8 +211,7 @@ func (i *Instance) xqd_backend_get_connect_timeout_ms(backend_addr int32, backen
 		return XqdErrInvalidArgument
 	}
 
-	// Return the configured timeout (or 0 if not set)
-	i.memory.PutUint32(b.ConnectTimeoutMs, int64(timeout_out))
+	i.memory.PutUint32(uint32(b.connectTimeout().Milliseconds()), int64(timeout_out))
 	return XqdStatusOK
 }
 
@@ -234,7 +233,6 @@ func (i *Instance) xqd_backend_get_first_byte_timeout_ms(backend_addr int32, bac
 		return XqdErrInvalidArgument
 	}
 
-	// Return the configured timeout (or 0 if not set)
 	i.memory.PutUint32(b.FirstByteTimeoutMs, int64(timeout_out))
 	return XqdStatusOK
 }
@@ -257,7 +255,6 @@ func (i *Instance) xqd_backend_get_between_bytes_timeout_ms(backend_addr int32, 
 		return XqdErrInvalidArgument
 	}
 
-	// Return the configured timeout (or 0 if not set)
 	i.memory.PutUint32(b.BetweenBytesTimeoutMs, int64(timeout_out))
 	return XqdStatusOK
 }

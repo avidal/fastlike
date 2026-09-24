@@ -143,9 +143,38 @@ The catch-all is not registered under a name that hostcall can look up, so an ov
 The value has to be a plain authority, a hostname or IP address with an optional port, so a full URL or anything carrying a path or whitespace is rejected at startup.
 So is an override that names a backend no `-backend` configured, since that is nearly always a typo and the alternative is an upstream that quietly keeps seeing the original `Host`.
 
+### Backend Timeouts
+
+A backend started with `-backend` behaves like a production backend whose configuration sets no timeouts.
+It gets 1 second to connect, DNS and TLS included, and no first-byte or between-bytes timeout.
+`-backend-timeouts` sets all three, in milliseconds, the way a service's backend configuration does:
+
+```bash
+# 1 s to connect, 15 s for the response headers, 10 s between two chunks of the body
+fastlike -wasm my-program.wasm \
+  -backend api=localhost:8000 \
+  -backend-timeouts api=1000,15000,10000
+```
+
+A first-byte or between-bytes timeout of 0 turns it off.
+A connect timeout of 0 is rejected, since production would fail every new connection.
+The name has to match a named `-backend`, and the catch-all backend keeps the defaults.
+
+The timeouts follow production's rules.
+The connect timeout only runs while a request sets up a new connection, so reusing an idle one, or waiting under a dynamic backend's `max_connections` limit, does not count.
+When it expires, the request fails, but the connection keeps being set up and serves a later request from the pool.
+The first-byte timeout starts once the request has a connection, so it also covers sending the request body.
+The between-bytes timeout only fails a read that finds nothing waiting, and it restarts every time the guest gets a chunk.
+A timeout fails the guest's send with the matching error detail, rather than turning into a 502 response.
+
+Dynamic backends that leave a timeout unset get production's defaults: 1 s to connect, 15 s for the first byte and 10 s between bytes.
+Shield backends wait 15 s for the first byte and 60 s between bytes unless the guest asks otherwise, and they get 2 s to connect.
+In both cases the `get_*_timeout_ms` hostcalls report what production reports.
+As in production, a dynamic backend's `max_connections` limits how many requests wait for their response headers at the same time, rather than how many connections are open.
+
 ### Simulating Unreliable Backends
 
-Append `@N` to a backend address to simulate flakiness, where `N` is the percentage of requests that should reach the upstream successfully. The remaining requests are answered with a synthetic 502, identical in shape to the response Fastlike emits when a real upstream is unreachable. This is handy for exercising error paths in your guest program without actually taking a backend down.
+Append `@N` to a backend address to simulate flakiness, where `N` is the percentage of requests that should reach the upstream successfully. The remaining requests are answered with a synthetic 502 response. A real upstream that cannot be reached fails the guest's send instead, as it does in production. This is handy for exercising error paths in your guest program without actually taking a backend down.
 
 ```bash
 # api responds normally for roughly half of requests, the rest get a 502
@@ -425,7 +454,7 @@ curl -H "fastlike-verbose: 1" http://localhost:5000/
 
 ### Backend Configuration
 
-Support for named backend configurations. Complex backend configurations with timeouts, SSL, and more are available through the Go API but not through the CLI. Reliability simulation (the `@N` suffix described above) is the one exception, and is exposed on both the CLI and the Go API.
+Support for named backend configurations. Complex backend configurations with SSL, keepalive settings and more are available through the Go API but not through the CLI. Timeouts, host overrides and reliability simulation, described above, are exposed on both the CLI and the Go API.
 
 ### Cache Support
 

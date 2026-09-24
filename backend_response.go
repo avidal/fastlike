@@ -267,6 +267,15 @@ func captureBackendError(ctx context.Context, err error) bool {
 	return ok
 }
 
+// ProxyErrorHandler is an httputil.ReverseProxy error handler that fails the
+// guest's send like a transport error, and answers with a 502 outside one.
+func ProxyErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	if !captureBackendError(r.Context(), err) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
+	}
+}
+
 // serveBackend runs handler for req in its own goroutine.
 // The writer is ready once the headers are in, or the handler failed before
 // sending them.

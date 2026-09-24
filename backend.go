@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
+	"sync"
 	"time"
 )
 
@@ -48,10 +51,17 @@ type Backend struct {
 
 	dynamicRegistration *dynamicBackendRegistration
 
-	// Timeout settings (in milliseconds)
+	// Timeout settings (in milliseconds).
+	// Zero disables a first-byte or between-bytes timeout, and means the
+	// default connect timeout unless ConnectTimeoutSet.
 	ConnectTimeoutMs      uint32
+	ConnectTimeoutSet     bool
 	FirstByteTimeoutMs    uint32
 	BetweenBytesTimeoutMs uint32
+
+	// Guest overrides of a shield's timeouts, which only requests see.
+	firstByteOverrideMs    *uint32
+	betweenBytesOverrideMs *uint32
 
 	// HTTP keepalive time (in milliseconds)
 	HTTPKeepaliveTimeMs uint32
@@ -107,7 +117,7 @@ type Backend struct {
 
 	// Connection pool settings
 	PreferIPv6     bool   // Prefer IPv6 addresses over IPv4 when resolving backends
-	MaxConnections uint32 // Maximum connections in pool (0 = unlimited)
+	MaxConnections uint32 // Requests waiting for their headers at once, and idle pool size (0 = unlimited)
 	MaxUse         uint32 // How many times a pooled connection can be reused (0 = unlimited)
 	MaxLifetimeMs  uint32 // Upper bound for how long a keepalive connection can remain open (0 = unlimited)
 
@@ -116,8 +126,7 @@ type Backend struct {
 
 	// UptimePercent simulates backend reliability for testing. When non-nil, each
 	// request to this backend has a UptimePercent / 100 chance of being forwarded
-	// normally; otherwise the runtime synthesises a 502 response identical to the
-	// one produced when a real upstream is unreachable. Valid values are 0..100;
+	// normally; otherwise the runtime synthesises a 502 response. Valid values are 0..100;
 	// 0 means the backend always appears down, 100 means no simulation. A nil
 	// value disables simulation entirely (the default for every existing
 	// construction path).
@@ -229,9 +238,8 @@ func OverrideHostHandler(h http.Handler, host string) http.Handler {
 // on the supplied uptime percentage. A nil percentage or a value of 100 short
 // circuits and returns the original handler unchanged; any other value in
 // [0, 99] makes the wrapper draw a random number per request and emit a 502
-// when the draw falls outside the success window. The 502 body matches the
-// shape produced by the real RoundTrip failure path so guest code observes
-// identical behavior to a genuine outage.
+// when the draw falls outside the success window. The 502 body matches
+// ProxyErrorHandler's.
 func wrapWithReliability(h http.Handler, uptime *uint8) http.Handler {
 	if uptime == nil || *uptime >= 100 {
 		return h
@@ -296,7 +304,7 @@ func (i *Instance) resolveBackendHandler(name string) (http.Handler, bool, time.
 	if b == nil {
 		return i.defaultBackend(name), false, 0
 	}
-	return b.Handler, b.Transport != nil, time.Duration(b.BetweenBytesTimeoutMs) * time.Millisecond
+	return b.Handler, b.Transport != nil, b.betweenBytesTimeout()
 }
 
 // defaultBackend returns a handler that responds with 502 Bad Gateway for unknown backends.
@@ -400,13 +408,13 @@ func (b *Backend) tlsClientConfig() *tls.Config {
 }
 
 // CreateTransport creates an http.Transport configured according to the backend's settings.
+// TimeoutTransport applies the connect and first-byte timeouts.
 func (b *Backend) CreateTransport() *http.Transport {
+	// Connections outlive a connect timeout, so these limits are a backstop.
+	connect := b.connectTimeout()
 	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
+		Timeout:   max(30*time.Second, connect),
 		KeepAlive: 30 * time.Second,
-	}
-	if b.ConnectTimeoutMs > 0 {
-		dialer.Timeout = time.Duration(b.ConnectTimeoutMs) * time.Millisecond
 	}
 	if b.TCPKeepaliveSet {
 		if b.TCPKeepaliveEnable {
@@ -432,7 +440,7 @@ func (b *Backend) CreateTransport() *http.Transport {
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   max(10*time.Second, connect),
 		ExpectContinueTimeout: 1 * time.Second,
 		// Production never asks for compression the guest did not ask for.
 		DisableCompression: true,
@@ -459,20 +467,10 @@ func (b *Backend) CreateTransport() *http.Transport {
 		transport.IdleConnTimeout = time.Duration(b.HTTPKeepaliveTimeMs) * time.Millisecond
 	}
 
-	if b.FirstByteTimeoutMs > 0 {
-		transport.ResponseHeaderTimeout = time.Duration(b.FirstByteTimeoutMs) * time.Millisecond
-	}
-
 	// Apply connection pool settings
 	if b.MaxConnections > 0 {
 		transport.MaxIdleConns = int(b.MaxConnections)
 		transport.MaxIdleConnsPerHost = int(b.MaxConnections)
-		if b.IsDynamic {
-			// pooling_limits.max_connections is a hard cap on a dynamic
-			// backend, while embedder-configured static backends keep the
-			// historical idle-pool semantics of this field.
-			transport.MaxConnsPerHost = int(b.MaxConnections)
-		}
 	}
 
 	if b.MaxLifetimeMs > 0 {
@@ -482,12 +480,205 @@ func (b *Backend) CreateTransport() *http.Transport {
 	return transport
 }
 
+// Production's defaults for the timeouts a backend leaves unset.
+const (
+	defaultConnectTimeoutMs             = 1000
+	dynamicDefaultFirstByteTimeoutMs    = 15000
+	dynamicDefaultBetweenBytesTimeoutMs = 10000
+)
+
+var (
+	errConnectTimeout   = errors.New("backend connect timeout")
+	errFirstByteTimeout = errors.New("backend first-byte timeout")
+)
+
+func (b *Backend) connectTimeout() time.Duration {
+	if b.ConnectTimeoutMs == 0 && !b.ConnectTimeoutSet {
+		return defaultConnectTimeoutMs * time.Millisecond
+	}
+	return time.Duration(b.ConnectTimeoutMs) * time.Millisecond
+}
+
+func (b *Backend) firstByteTimeout() time.Duration {
+	if b.firstByteOverrideMs != nil {
+		return time.Duration(*b.firstByteOverrideMs) * time.Millisecond
+	}
+	return time.Duration(b.FirstByteTimeoutMs) * time.Millisecond
+}
+
+func (b *Backend) betweenBytesTimeout() time.Duration {
+	if b.betweenBytesOverrideMs != nil {
+		return time.Duration(*b.betweenBytesOverrideMs) * time.Millisecond
+	}
+	return time.Duration(b.BetweenBytesTimeoutMs) * time.Millisecond
+}
+
+// TimeoutTransport wraps transport with the backend's connect and first-byte
+// timeouts and MaxConnections limit, applied the way production does.
+// The connect timeout only covers a request's own new connection, and the
+// first-byte timeout lasts until the headers arrive.
+// MaxConnections limits the requests waiting for their headers.
+func (b *Backend) TimeoutTransport(transport http.RoundTripper) http.RoundTripper {
+	t := &timeoutTransport{
+		transport: transport,
+		connect:   b.connectTimeout(),
+		firstByte: b.firstByteTimeout(),
+	}
+	if b.MaxConnections > 0 {
+		t.permits = make(chan struct{}, b.MaxConnections)
+	}
+	return t
+}
+
+type timeoutTransport struct {
+	transport http.RoundTripper
+	connect   time.Duration
+	firstByte time.Duration
+	permits   chan struct{}
+}
+
+func (t *timeoutTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.permits != nil {
+		select {
+		case t.permits <- struct{}{}:
+			defer func() { <-t.permits }()
+		case <-req.Context().Done():
+			return nil, context.Cause(req.Context())
+		}
+	}
+
+	// Cancelling leaves the dial running, and net/http pools its connection.
+	ctx, cancel := context.WithCancelCause(req.Context())
+	d := &roundTripDeadlines{connect: t.connect, firstByte: t.firstByte, cancel: cancel}
+	trace := &httptrace.ClientTrace{
+		DNSStart:          func(httptrace.DNSStartInfo) { d.dialing() },
+		ConnectStart:      func(string, string) { d.dialing() },
+		TLSHandshakeStart: d.dialing,
+		GotConn:           func(httptrace.GotConnInfo) { d.connected() },
+	}
+	resp, err := t.transport.RoundTrip(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if expired := d.finish(); expired != nil {
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		return nil, expired
+	}
+	if err != nil {
+		cancel(err)
+		return nil, err
+	}
+	// ReverseProxy needs the writable body of a protocol switch as it is.
+	if _, ok := resp.Body.(io.Writer); !ok {
+		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	}
+	return resp, nil
+}
+
+type roundTripPhase int
+
+const (
+	phaseWaiting roundTripPhase = iota
+	phaseDialing
+	phaseConnected
+	phaseFinished
+)
+
+// roundTripDeadlines runs one round trip's timers, each for the phase it
+// started in.
+type roundTripDeadlines struct {
+	connect   time.Duration
+	firstByte time.Duration
+	cancel    context.CancelCauseFunc
+
+	mu      sync.Mutex
+	phase   roundTripPhase
+	timer   *time.Timer
+	expired error
+}
+
+// dialing runs on net/http's dial goroutine, which can outlive the request.
+func (d *roundTripDeadlines) dialing() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.phase == phaseWaiting {
+		d.phase = phaseDialing
+		d.startLocked(d.connect, errConnectTimeout)
+	}
+}
+
+func (d *roundTripDeadlines) connected() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// A retry on another connection keeps the first-byte timer.
+	if d.phase > phaseDialing {
+		return
+	}
+	d.phase = phaseConnected
+	d.stopLocked()
+	if d.firstByte > 0 {
+		d.startLocked(d.firstByte, errFirstByteTimeout)
+	}
+}
+
+func (d *roundTripDeadlines) startLocked(timeout time.Duration, err error) {
+	// Production's zero connect timeout fails at once.
+	if timeout <= 0 {
+		d.expireLocked(err)
+		return
+	}
+	phase := d.phase
+	d.timer = time.AfterFunc(timeout, func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		// Stop cannot recall a callback that already started.
+		if d.phase == phase {
+			d.expireLocked(err)
+		}
+	})
+}
+
+func (d *roundTripDeadlines) stopLocked() {
+	if d.timer != nil {
+		d.timer.Stop()
+		d.timer = nil
+	}
+}
+
+func (d *roundTripDeadlines) expireLocked(err error) {
+	d.expired = err
+	d.phase = phaseFinished
+	d.stopLocked()
+	d.cancel(err)
+}
+
+// finish returns the timeout that cut the round trip, if any.
+func (d *roundTripDeadlines) finish() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.phase = phaseFinished
+	d.stopLocked()
+	return d.expired
+}
+
+// cancelOnClose ends the round trip's context with its body.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelCauseFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel(nil)
+	return err
+}
+
 // newTransportHandler builds the proxy handler for a fastlike-managed
 // backend, recording the transport on the Backend so tracing and reset()
 // cleanup can observe it.
 func (b *Backend) newTransportHandler() http.Handler {
 	transport := b.CreateTransport()
 	b.Transport = transport
+	roundTripper := b.TimeoutTransport(transport)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The connection goes to the registered target, while the Host header
 		// follows viceroy's precedence: the host override, then the Host
@@ -500,12 +691,9 @@ func (b *Backend) newTransportHandler() http.Handler {
 		r.URL.Scheme = b.URL.Scheme
 		r.URL.Host = b.URL.Host
 
-		resp, err := transport.RoundTrip(r)
+		resp, err := roundTripper.RoundTrip(r)
 		if err != nil {
-			if !captureBackendError(r.Context(), err) {
-				w.WriteHeader(http.StatusBadGateway)
-				_, _ = fmt.Fprintf(w, "Backend request failed: %v", err)
-			}
+			ProxyErrorHandler(w, r, err)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()

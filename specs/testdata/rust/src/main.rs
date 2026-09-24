@@ -121,11 +121,48 @@ fn main(mut req: Request) -> Result<Response, Error> {
             }
         },
 
+        (&Method::GET, "/backend-timeouts") => Ok(Response::from_body(backend_timeouts()?)),
+
         _ => Ok(Response::new()
             .with_status(404)
             .with_body("The page you requested could not be found")
         ),
     }
+}
+
+// Reports what the timeout getters return for dynamic and shield backends.
+fn backend_timeouts() -> Result<String, Error> {
+    use fastly::shielding::Shield;
+    use fastly::Backend;
+    use std::time::Duration;
+
+    let describe = |label: &str, backend: &Backend| {
+        format!(
+            "{label}: {} connect={} first_byte={} between_bytes={}",
+            backend.name(),
+            backend.get_connect_timeout().as_millis(),
+            backend.get_first_byte_timeout().as_millis(),
+            backend.get_between_bytes_timeout().as_millis()
+        )
+    };
+    let status = |status| Error::msg(format!("{status:?}"));
+    let mut out = Vec::new();
+
+    let unset = Backend::builder("unset", "origin.example.org").finish()?;
+    out.push(describe("unset", &unset));
+    let explicit = Backend::builder("explicit", "origin.example.org")
+        .connect_timeout(Duration::from_millis(2500))
+        .first_byte_timeout(Duration::ZERO)
+        .between_bytes_timeout(Duration::from_secs(5))
+        .finish()?;
+    out.push(describe("explicit", &explicit));
+
+    let shield = Shield::new("site").map_err(status)?;
+    out.push(describe("shield", &shield.encrypted_backend().map_err(status)?));
+    let overridden = shield.with_first_byte_timeout(Duration::from_secs(5));
+    out.push(describe("shield with a first-byte timeout", &overridden.encrypted_backend().map_err(status)?));
+
+    Ok(out.join("\n"))
 }
 
 // Reports what the core cache API sees for objects of various ages.

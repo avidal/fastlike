@@ -89,6 +89,13 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		}
 	}
 
+	switch {
+	case errors.Is(err, errConnectTimeout):
+		return &SendErrorDetail{Tag: SendErrorDetailConnectionTimeout}
+	case errors.Is(err, errFirstByteTimeout):
+		return &SendErrorDetail{Tag: SendErrorDetailHttpResponseTimeout}
+	}
+
 	// Parse the error to determine the specific error type
 	errStr := err.Error()
 
@@ -123,9 +130,7 @@ func createErrorDetailFromError(err error) *SendErrorDetail {
 		}
 	}
 
-	// Go's Transport.ResponseHeaderTimeout (the first-byte timeout) reports this
-	// exact phrase; it maps to http_response_timeout, not the broader
-	// connection_timeout below (which is failing to open the connection).
+	// An embedder transport's ResponseHeaderTimeout, a first-byte timeout.
 	if strings.Contains(errStr, "timeout awaiting response headers") {
 		return &SendErrorDetail{
 			Tag:  SendErrorDetailHttpResponseTimeout,
@@ -2031,18 +2036,22 @@ func (i *Instance) xqd_req_register_dynamic_backend(name_addr int32, name_size i
 		registration.hostOverride = hostOverride
 	}
 
+	// Explicit timeouts are taken as they are, even zero.
 	if mask&BackendConfigOptionsConnectTimeout != 0 {
 		backend.ConnectTimeoutMs = config.ConnectTimeoutMs
-		registration.connectTimeoutMs = config.ConnectTimeoutMs
+		backend.ConnectTimeoutSet = true
 	}
+	backend.FirstByteTimeoutMs = dynamicDefaultFirstByteTimeoutMs
 	if mask&BackendConfigOptionsFirstByteTimeout != 0 {
 		backend.FirstByteTimeoutMs = config.FirstByteTimeoutMs
-		registration.firstByteTimeoutMs = config.FirstByteTimeoutMs
 	}
+	backend.BetweenBytesTimeoutMs = dynamicDefaultBetweenBytesTimeoutMs
 	if mask&BackendConfigOptionsBetweenBytesTimeout != 0 {
 		backend.BetweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
-		registration.betweenBytesTimeoutMs = config.BetweenBytesTimeoutMs
 	}
+	registration.connectTimeoutMs = backend.ConnectTimeoutMs
+	registration.firstByteTimeoutMs = backend.FirstByteTimeoutMs
+	registration.betweenBytesTimeoutMs = backend.BetweenBytesTimeoutMs
 	if mask&BackendConfigOptionsSSLMinVersion != 0 {
 		backend.SSLMinVersion = config.SSLMinVersion
 		backend.SSLMinVersionSet = true
