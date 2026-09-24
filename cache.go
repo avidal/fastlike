@@ -2,7 +2,7 @@ package fastlike
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"io"
 	"math"
 	"slices"
@@ -49,8 +49,9 @@ type CachedObject struct {
 type cachePeriod int
 
 const (
-	periodFresh cachePeriod = iota
-	periodStale             // within stale-while-revalidate
+	periodFresh        cachePeriod = iota
+	periodStale                    // within stale-while-revalidate
+	periodStaleIfError             // within stale-if-error
 	periodExpired
 )
 
@@ -64,12 +65,15 @@ func cacheInstant(t time.Time) int64 {
 	return int64(t.Sub(cacheClockBase)) + 1
 }
 
-// CacheState represents the state flags for a cache lookup
+// CacheState represents the state flags for a cache lookup, as CacheD
+// reports them.
 type CacheState struct {
 	Found              bool
 	Usable             bool
 	Stale              bool
 	MustInsertOrUpdate bool
+	UsableIfError      bool // within the stale-if-error period
+	RevalidationFailed bool // served stale after a failed revalidation
 }
 
 // CacheEntry holds a cache entry and its state
@@ -95,6 +99,13 @@ type CacheTransaction struct {
 type CacheLookupOptions struct {
 	RequestHeaders          []byte
 	AlwaysUseRequestedRange bool
+}
+
+func (o *CacheLookupOptions) requestHeaders() []byte {
+	if o == nil {
+		return nil
+	}
+	return o.RequestHeaders
 }
 
 // CacheWriteOptions holds options for cache insertion
@@ -259,6 +270,11 @@ func settledTransaction(key []byte, entry *CacheEntry, options *CacheLookupOptio
 	return tx
 }
 
+// holdsObligation tells whether tx still owes the cache an object.
+func (tx *CacheTransaction) holdsObligation() bool {
+	return tx.Entry != nil && tx.Entry.State.MustInsertOrUpdate
+}
+
 // usableTransaction serves obj whatever its age, as production does for the
 // handles returned by stream-back inserts and fresh updates.
 func usableTransaction(key []byte, obj *CachedObject) *CacheTransaction {
@@ -271,13 +287,8 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var requestHeaders []byte
-	if options != nil {
-		requestHeaders = options.RequestHeaders
-	}
-
 	now := time.Now()
-	obj, period := c.findVariantPeriod(key, requestHeaders, now)
+	obj, period := c.findVariantPeriod(key, options.requestHeaders(), now)
 	if period == periodExpired {
 		return &CacheEntry{}
 	}
@@ -302,11 +313,6 @@ func (c *Cache) findVariantPeriod(key, requestHeaders []byte, now time.Time) (*C
 func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner any) *CacheTransaction {
 	keyStr := cacheKey(key)
 
-	var requestHeaders []byte
-	if options != nil {
-		requestHeaders = options.RequestHeaders
-	}
-
 	c.mu.Lock()
 
 	var obj *CachedObject
@@ -314,22 +320,18 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 	var period cachePeriod
 	for {
 		now = time.Now()
-		obj, period = c.findVariantPeriod(key, requestHeaders, now)
+		obj, period = c.findVariantPeriod(key, options.requestHeaders(), now)
 		if period != periodExpired {
 			break
 		}
 
-		var wait chan struct{}
-		if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil {
-			wait = pending.done
-		} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil {
-			wait = pending.done
-		} else if own := c.transactions[keyStr]; own != nil && own.owner == owner {
-			c.mu.Unlock()
-			<-own.ready
-			return own
-		}
+		wait, _ := c.pendingWorkFrom(keyStr, owner)
 		if wait == nil {
+			if own := c.transactions[keyStr]; own != nil && own.owner == owner {
+				c.mu.Unlock()
+				<-own.ready
+				return own
+			}
 			break
 		}
 		c.mu.Unlock()
@@ -365,12 +367,69 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 	return tx
 }
 
+// TransactionRefresh waits for the pending revalidation of the stale object
+// tx found, like production's transaction_refresh.
+// A guest waiting for its own revalidation joins it instead.
+func (c *Cache) TransactionRefresh(tx *CacheTransaction) *CacheTransaction {
+	keyStr := cacheKey(tx.Key)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for {
+		now := time.Now()
+		if obj, period := c.findVariantPeriod(tx.Key, tx.Options.requestHeaders(), now); period == periodFresh {
+			state, _ := obj.hit(period, now)
+			tx.Entry = &CacheEntry{Object: obj, State: state}
+			return tx
+		}
+
+		wait, leader := c.pendingWorkFrom(keyStr, tx.owner)
+		if wait == nil {
+			if own := c.transactions[keyStr]; own != nil && own.owner == tx.owner {
+				return own
+			}
+			tx.Entry.State.MustInsertOrUpdate = true
+			c.transactions[keyStr] = tx
+			return tx
+		}
+		c.mu.Unlock()
+		<-wait
+		c.mu.Lock()
+
+		// CacheD only cancels the waiters of the same variant.
+		if leader != nil && leader.Entry.State.RevalidationFailed && sameVariant(leader.Entry.Object, tx.Entry.Object) {
+			tx.Entry.State.RevalidationFailed = true
+			return tx
+		}
+	}
+}
+
+// sameVariant tells whether a and b answer the same requests.
+func sameVariant(a, b *CachedObject) bool {
+	return a.VaryRule == b.VaryRule && bytes.Equal(a.VaryHeaders, b.VaryHeaders)
+}
+
 // Insert inserts an object into the cache
 func (c *Cache) Insert(key []byte, options *CacheWriteOptions) *CachedObject {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.store(cacheKey(key), options)
+}
+
+var errNoObligation = errors.New("the transaction does not owe the cache an object")
+
+// TransactionInsert stores a new object for tx, which uses up its obligation.
+func (c *Cache) TransactionInsert(tx *CacheTransaction, options *CacheWriteOptions) (*CachedObject, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !tx.holdsObligation() {
+		return nil, errNoObligation
+	}
+	obj := c.store(cacheKey(tx.Key), options)
+	c.takeObligation(tx)
+	return obj, nil
 }
 
 // store files a new object under keyStr.
@@ -414,16 +473,19 @@ func (c *Cache) store(keyStr string, options *CacheWriteOptions) *CachedObject {
 	return obj
 }
 
-// TransactionUpdate updates metadata for an existing cached object
-func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptions) error {
-	if tx.Entry == nil || tx.Entry.Object == nil {
-		return fmt.Errorf("no object to update")
-	}
-
+// TransactionUpdate freshens the object tx found, which uses up its
+// obligation, and returns it.
+func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptions) (*CachedObject, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if !tx.holdsObligation() {
+		return nil, errNoObligation
+	}
 	obj := tx.Entry.Object
+	if obj == nil {
+		return nil, errors.New("no object to update")
+	}
 
 	// Update metadata
 	obj.MaxAgeNs = options.MaxAgeNs
@@ -451,7 +513,8 @@ func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptio
 	obj.InitialAgeNs = 0
 	obj.softPurgedAt.Store(0)
 
-	return nil
+	c.takeObligation(tx)
+	return obj, nil
 }
 
 // TransactionCancel gives up the obligation of a transaction, and reports
@@ -460,25 +523,22 @@ func (c *Cache) TransactionCancel(tx *CacheTransaction) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.takeObligation(tx)
+}
+
+// takeObligation ends the obligation of tx like production's take_go_get,
+// and reports whether it had one.
+// The caller holds the lock.
+func (c *Cache) takeObligation(tx *CacheTransaction) bool {
 	c.finishTransaction(tx)
-	if tx.Entry == nil || !tx.Entry.State.MustInsertOrUpdate {
+	if !tx.holdsObligation() {
 		return false
 	}
 	tx.Entry.State.MustInsertOrUpdate = false
 	if !tx.Entry.State.Found {
 		tx.Entry.Object = nil
 	}
-
 	return true
-}
-
-// CompleteTransaction marks a cache transaction as complete and removes it from the
-// pending transactions map, allowing new transactions for the same key to proceed.
-func (c *Cache) CompleteTransaction(tx *CacheTransaction) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.finishTransaction(tx)
 }
 
 // AbandonTransactions completes every pending transaction started by owner.
@@ -509,6 +569,19 @@ func (c *Cache) finishTransaction(tx *CacheTransaction) {
 	close(tx.done)
 }
 
+// pendingWorkFrom returns what a lookup by owner must wait for, and the
+// transaction behind it if any.
+// The caller holds the lock.
+func (c *Cache) pendingWorkFrom(keyStr string, owner any) (<-chan struct{}, *CacheTransaction) {
+	if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil {
+		return pending.done, nil
+	}
+	if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil {
+		return pending.done, pending
+	}
+	return nil, nil
+}
+
 // pendingTransactionFrom returns a pending transaction on keyStr started by
 // another owner, or nil.
 // The caller holds the lock.
@@ -520,27 +593,20 @@ func (c *Cache) pendingTransactionFrom(keyStr string, owner any) *CacheTransacti
 	return tx
 }
 
-// TransactionChooseStale resolves a cache transaction with a stale object if one is available
-// within the stale-if-error window. Returns true if a stale object was chosen.
+// TransactionChooseStale serves the found object instead of revalidating it,
+// to the lookups waiting for that revalidation too, and reports whether tx
+// held the obligation for a found object.
 func (c *Cache) TransactionChooseStale(tx *CacheTransaction) bool {
-	if tx.Entry == nil || tx.Entry.Object == nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !tx.holdsObligation() || !tx.Entry.State.Found {
 		return false
 	}
+	tx.Entry.State.RevalidationFailed = true
+	c.takeObligation(tx)
 
-	obj := tx.Entry.Object
-	if obj.StaleIfErrorNs == 0 {
-		return false
-	}
-
-	age := obj.GetAge()
-	// Object must be stale (past max_age) but within the stale-if-error window
-	if age > obj.MaxAgeNs && age <= obj.MaxAgeNs+obj.StaleIfErrorNs {
-		// Production reports the chosen object as found.
-		tx.Entry.State = CacheState{Found: true, Usable: true, Stale: true}
-		return true
-	}
-
-	return false
+	return true
 }
 
 // Replace starts a replace operation for key on behalf of owner.
@@ -555,12 +621,8 @@ func (c *Cache) Replace(key []byte, options *CacheReplaceOptions, owner any) *Ca
 	c.mu.Lock()
 	if options.ReplaceStrategy == CacheReplaceWait {
 		for {
-			var wait chan struct{}
-			if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil {
-				wait = pending.done
-			} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil {
-				wait = pending.done
-			} else {
+			wait, _ := c.pendingWorkFrom(keyStr, owner)
+			if wait == nil {
 				break
 			}
 			c.mu.Unlock()
@@ -748,6 +810,8 @@ func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 		return periodFresh
 	case staleFor < obj.StaleWhileRevalidateNs:
 		return periodStale
+	case staleFor < obj.StaleIfErrorNs:
+		return periodStaleIfError
 	default:
 		return periodExpired
 	}
@@ -757,8 +821,9 @@ func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 // revalidation offer, which plain lookups use up too, as in CacheD.
 func (obj *CachedObject) hit(period cachePeriod, now time.Time) (CacheState, bool) {
 	obj.HitCount.Add(1)
-	stale := period == periodStale
-	return CacheState{Found: true, Usable: true, Stale: stale}, stale && obj.offerRevalidation(now)
+	stale := period != periodFresh
+	state := CacheState{Found: true, Usable: true, Stale: stale, UsableIfError: period == periodStaleIfError}
+	return state, stale && obj.offerRevalidation(now)
 }
 
 // offerRevalidation applies CacheD's revalidation throttle.

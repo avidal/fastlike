@@ -333,12 +333,12 @@ func TestHttpCacheNotModifiedHeader(t *testing.T) {
 
 func TestHttpCacheRevalidation(t *testing.T) {
 	inst := newHTTPCacheStoreTestInstance()
-	storeObject(t, inst, http.StatusOK, http.Header{
+	storeHTTPObject(t, inst, http.Header{
 		"Etag":           {`"v1"`},
 		"Last-Modified":  {"Tue, 22 Sep 2026 10:00:00 GMT"},
 		"Content-Length": {"5"},
 		"X-Version":      {"1"},
-	}, "hello")
+	}, httpStaleObject, "hello")
 
 	reqID := httpCacheTestRequest(inst, http.MethodHead, http.Header{"Range": {"bytes=0-1"}, "If-Match": {`"v1"`}})
 	cacheHandle := httpCacheTransactionLookup(t, inst, reqID)

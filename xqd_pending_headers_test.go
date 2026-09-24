@@ -209,7 +209,7 @@ func TestPendingReqSelectSuppressesSelectedRequestError(t *testing.T) {
 	}
 }
 
-func TestPendingReqSelectV2WritesOkDetailForNonCachingError(t *testing.T) {
+func TestPendingReqSelectV2WritesInternalErrorForOtherFailures(t *testing.T) {
 	i := newPendingTestInstance()
 	phid, pr := i.pendingRequests.New()
 	pr.Complete(nil, errors.New("backend failed"))
@@ -219,8 +219,8 @@ func TestPendingReqSelectV2WritesOkDetailForNonCachingError(t *testing.T) {
 	if status := i.xqd_pending_req_select_v2(0, 1, 100, 104, 108, 112); status != XqdStatusOK {
 		t.Fatalf("pending_req_select_v2 status = %d, want %d", status, XqdStatusOK)
 	}
-	if got := i.memory.Uint32(100); got != SendErrorDetailOk {
-		t.Fatalf("error detail tag = %d, want %d", got, SendErrorDetailOk)
+	if got := i.memory.Uint32(100); got != SendErrorDetailInternalError {
+		t.Fatalf("error detail tag = %d, want %d", got, SendErrorDetailInternalError)
 	}
 }
 

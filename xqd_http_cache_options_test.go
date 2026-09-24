@@ -399,6 +399,7 @@ func TestHttpCacheInsertAddsTheKeySurrogateKey(t *testing.T) {
 		{"a b", "a b " + keySK},
 		{keySK + " a", keySK + " a"},
 	} {
+		inst := newHTTPCacheStoreTestInstance()
 		cacheHandle := httpCacheTransactionLookup(t, inst, httpCacheTestRequest(inst, http.MethodGet, nil))
 		copy(inst.memory.Data()[httpCacheTestDataPtr:], tt.guestKeys)
 		inst.memory.PutUint32(httpCacheTestDataPtr, httpCacheTestOptions+httpCacheOptionsSurrogateKeys)

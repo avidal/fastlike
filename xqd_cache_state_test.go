@@ -50,6 +50,16 @@ func nanoseconds(d time.Duration) *uint64 {
 	return &ns
 }
 
+func transactionInsertFinished(t *testing.T, cache *Cache, tx *CacheTransaction, options *CacheWriteOptions) *CachedObject {
+	t.Helper()
+	obj, err := cache.TransactionInsert(tx, options)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	obj.FinishWrite()
+	return obj
+}
+
 func sharedCacheInstance(i *Instance) *Instance {
 	other := newCacheReplaceTestInstance()
 	other.cache = i.cache
@@ -298,23 +308,6 @@ func TestCacheUserMetadataShortBufferReportsSize(t *testing.T) {
 	}
 }
 
-func TestCacheChosenStaleObjectIsFound(t *testing.T) {
-	cache := NewCache()
-	key := []byte("key")
-	cache.Insert(key, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute), InitialAgeNs: nanoseconds(90 * time.Second), StaleIfErrorNs: nanoseconds(time.Minute)}).FinishWrite()
-
-	tx := cache.TransactionLookup(key, nil, "owner")
-	if tx.Entry.State != (CacheState{MustInsertOrUpdate: true}) {
-		t.Fatalf("state = %+v, want only must-insert-or-update", tx.Entry.State)
-	}
-	if !cache.TransactionChooseStale(tx) {
-		t.Fatal("the stale object was not chosen")
-	}
-	if want := (CacheState{Found: true, Usable: true, Stale: true}); tx.Entry.State != want {
-		t.Fatalf("state = %+v, want %+v", tx.Entry.State, want)
-	}
-}
-
 func TestCacheReplaceReportsEveryUnfreshObjectAsStale(t *testing.T) {
 	tests := []struct {
 		name string
@@ -400,10 +393,9 @@ func TestCacheUpdateClearsSoftPurge(t *testing.T) {
 	if tx.Entry.State != (CacheState{MustInsertOrUpdate: true}) || tx.Entry.Object != obj {
 		t.Fatalf("lookup after the purge: state = %+v, want only must-insert-or-update on the purged object", tx.Entry.State)
 	}
-	if err := cache.TransactionUpdate(tx, &CacheWriteOptions{MaxAgeNs: uint64(time.Hour)}); err != nil {
+	if _, err := cache.TransactionUpdate(tx, &CacheWriteOptions{MaxAgeNs: uint64(time.Hour)}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	cache.CompleteTransaction(tx)
 	if state := cache.Lookup(key, nil).State; state != (CacheState{Found: true, Usable: true}) {
 		t.Fatalf("state after the update = %+v, want fresh", state)
 	}
@@ -444,28 +436,9 @@ func TestCacheCancelGivesUpTheObligation(t *testing.T) {
 
 func TestHttpCacheAccessorsWithoutObject(t *testing.T) {
 	inst := newHTTPCacheStoreTestInstance()
-	inst.memory.WriteUint64(httpCacheTestOptions, 0)
-	storeObject(t, inst, http.StatusOK, nil, "body")
+	storeHTTPObject(t, inst, nil, httpFreshness{}, "body")
 
-	handle := httpCachePlainLookup(t, inst, httpCacheTestRequest(inst, http.MethodGet, nil))
-	accessors := map[string]func() int32{
-		"get_length":     func() int32 { return inst.xqd_http_cache_get_length(handle, httpCacheTestSecondOut) },
-		"get_max_age_ns": func() int32 { return inst.xqd_http_cache_get_max_age_ns(handle, httpCacheTestSecondOut) },
-		"get_stale_while_revalidate_ns": func() int32 {
-			return inst.xqd_http_cache_get_stale_while_revalidate_ns(handle, httpCacheTestSecondOut)
-		},
-		"get_stale_if_error_ns": func() int32 { return inst.xqd_http_cache_get_stale_if_error_ns(handle, httpCacheTestSecondOut) },
-		"get_age_ns":            func() int32 { return inst.xqd_http_cache_get_age_ns(handle, httpCacheTestSecondOut) },
-		"get_hits":              func() int32 { return inst.xqd_http_cache_get_hits(handle, httpCacheTestSecondOut) },
-		"get_sensitive_data":    func() int32 { return inst.xqd_http_cache_get_sensitive_data(handle, httpCacheTestSecondOut) },
-		"get_surrogate_keys": func() int32 {
-			return inst.xqd_http_cache_get_surrogate_keys(handle, httpCacheTestSecondOut, 64, httpCacheTestHandleOut)
-		},
-		"get_vary_rule": func() int32 {
-			return inst.xqd_http_cache_get_vary_rule(handle, httpCacheTestSecondOut, 64, httpCacheTestHandleOut)
-		},
-	}
-	checkStatuses(t, accessors, XqdErrNone)
+	checkHTTPNotFoundAccessors(t, inst, httpCachePlainLookup(t, inst, httpCacheTestRequest(inst, http.MethodGet, nil)))
 }
 
 func TestHttpCacheAbandonNeedsAnObligation(t *testing.T) {
@@ -501,5 +474,52 @@ func TestCacheRevalidationIsOfferedOnceToConcurrentLookups(t *testing.T) {
 		if n := offers.Load(); n != 1 {
 			t.Fatalf("%d concurrent lookups got the revalidation offer, want 1", n)
 		}
+	}
+}
+
+func TestCacheInsertUsesUpTheObligation(t *testing.T) {
+	i := newCacheReplaceTestInstance()
+	insertTestObject(t, i, "key", expiredObject)
+
+	leader := transactionLookup(t, i, "key")
+	mask := writeCacheWriteOptions(i, freshObject)
+	if status := i.xqd_cache_transaction_insert(leader, mask, replaceTestWriteOptsPtr, replaceTestHandleOut); status != XqdStatusOK {
+		t.Fatalf("transaction_insert status = %d", status)
+	}
+	if state := handleState(t, i, leader); state != 0 {
+		t.Fatalf("state after the insert = %#x, want 0", state)
+	}
+	if status := i.xqd_cache_get_user_metadata(leader, replaceTestMetadataOut, 64, replaceTestNwrittenOut); status != XqdErrNone {
+		t.Fatalf("get_user_metadata after the insert: status = %d, want %d", status, XqdErrNone)
+	}
+	calls := map[string]func() int32{
+		"transaction_cancel": func() int32 { return i.xqd_cache_transaction_cancel(leader) },
+		"transaction_insert": func() int32 {
+			return i.xqd_cache_transaction_insert(leader, mask, replaceTestWriteOptsPtr, replaceTestHandleOut)
+		},
+		"transaction_insert_and_stream_back": func() int32 {
+			return i.xqd_cache_transaction_insert_and_stream_back(leader, mask, replaceTestWriteOptsPtr, replaceTestHandleOut, replaceTestValueOut)
+		},
+		"transaction_update": func() int32 {
+			return i.xqd_cache_transaction_update(leader, mask, replaceTestWriteOptsPtr)
+		},
+	}
+	checkStatuses(t, calls, XqdErrInvalidHandle)
+}
+
+func TestCacheUpdateUsesUpTheObligation(t *testing.T) {
+	i := newCacheReplaceTestInstance()
+	insertTestObject(t, i, "key", staleObject)
+
+	leader := transactionLookup(t, i, "key")
+	mask := writeCacheWriteOptions(i, freshObject)
+	if status := i.xqd_cache_transaction_update(leader, mask, replaceTestWriteOptsPtr); status != XqdStatusOK {
+		t.Fatalf("transaction_update status = %d", status)
+	}
+	if state := handleState(t, i, leader); state != staleState {
+		t.Fatalf("state after the update = %#x, want %#x", state, staleState)
+	}
+	if status := i.xqd_cache_transaction_update(leader, mask, replaceTestWriteOptsPtr); status != XqdErrInvalidHandle {
+		t.Fatalf("second update: status = %d, want %d", status, XqdErrInvalidHandle)
 	}
 }

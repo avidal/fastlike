@@ -114,6 +114,7 @@ const (
 	CacheLookupStateUsable             uint32 = 1 << 1
 	CacheLookupStateStale              uint32 = 1 << 2
 	CacheLookupStateMustInsertOrUpdate uint32 = 1 << 3
+	CacheLookupStateUsableIfError      uint32 = 1 << 4
 )
 
 // HTTP cache lookup options mask

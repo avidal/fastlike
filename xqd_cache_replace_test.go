@@ -696,9 +696,7 @@ func TestCacheReplaceWaitStrategyQueuesBehindTransactions(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	inserted := cache.Insert(key, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute)})
-	inserted.FinishWrite()
-	cache.CompleteTransaction(tx)
+	inserted := transactionInsertFinished(t, cache, tx, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute)})
 
 	select {
 	case r := <-waited:
@@ -845,9 +843,7 @@ func TestCacheTransactionLookupCollapsesOnForeignTransaction(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	inserted := cache.Insert(key, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute)})
-	inserted.FinishWrite()
-	cache.CompleteTransaction(fetcher)
+	inserted := transactionInsertFinished(t, cache, fetcher, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute)})
 
 	select {
 	case tx := <-waited:
