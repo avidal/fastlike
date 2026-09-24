@@ -43,6 +43,10 @@ type CachedObject struct {
 
 	// When the object was first soft purged, as a cacheInstant.
 	softPurgedAt atomic.Int64
+
+	// Final size plus one once the write succeeded, so lookups never wait for
+	// the writer.
+	completedLength atomic.Int64
 }
 
 // cachePeriod mirrors CacheD's stale status.
@@ -51,7 +55,7 @@ type cachePeriod int
 const (
 	periodFresh        cachePeriod = iota
 	periodStale                    // within stale-while-revalidate
-	periodStaleIfError             // within stale-if-error
+	periodStaleIfError             // within stale-if-error, for the HTTP cache only
 	periodExpired
 )
 
@@ -60,9 +64,19 @@ const revalidationInterval = time.Second
 
 var cacheClockBase = time.Now()
 
-// cacheInstant turns t into monotonic nanoseconds, where 0 means never.
+// cachedClock is t on CacheD's clock, which only counts whole milliseconds.
+func cachedClock(t time.Time) time.Duration {
+	d := t.Sub(cacheClockBase)
+	ms := d.Truncate(time.Millisecond)
+	if ms > d {
+		ms -= time.Millisecond
+	}
+	return ms
+}
+
+// cacheInstant turns t into an instant of CacheD's clock, where 0 means never.
 func cacheInstant(t time.Time) int64 {
-	return int64(t.Sub(cacheClockBase)) + 1
+	return int64(cachedClock(t)) + 1
 }
 
 // CacheState represents the state flags for a cache lookup, as CacheD
@@ -72,14 +86,103 @@ type CacheState struct {
 	Usable             bool
 	Stale              bool
 	MustInsertOrUpdate bool
-	UsableIfError      bool // within the stale-if-error period
 	RevalidationFailed bool // served stale after a failed revalidation
+	StreamedBack       bool // returned by a write, usable whatever its age
 }
 
 // CacheEntry holds a cache entry and its state
 type CacheEntry struct {
-	Object *CachedObject
-	State  CacheState
+	Object   *CachedObject
+	State    CacheState
+	Metadata ObjectMetadata
+}
+
+// ObjectMetadata is an object as a lookup saw it, which handles keep so that
+// their answers do not change afterwards.
+type ObjectMetadata struct {
+	MaxAgeNs               uint64
+	StaleWhileRevalidateNs uint64
+	StaleIfErrorNs         uint64
+	AgeNs                  uint64
+	Hits                   uint64
+	Length                 uint64
+	LengthKnown            bool
+	UserMetadata           []byte
+	Response               *storedResponse
+
+	// Age at which the object went stale, soft purges included.
+	staleAtNs uint64
+}
+
+// metadataAt snapshots obj for a lookup that started at start.
+// The caller holds the cache lock.
+func (obj *CachedObject) metadataAt(start time.Time, hits uint64) ObjectMetadata {
+	m := ObjectMetadata{
+		MaxAgeNs:               obj.MaxAgeNs,
+		StaleWhileRevalidateNs: obj.StaleWhileRevalidateNs,
+		StaleIfErrorNs:         obj.StaleIfErrorNs,
+		AgeNs:                  obj.ageAt(start),
+		Hits:                   hits,
+		UserMetadata:           obj.UserMetadata,
+		Response:               obj.Response,
+		staleAtNs:              obj.MaxAgeNs,
+	}
+	m.Length, m.LengthKnown = obj.knownLength()
+	if purged := obj.softPurgedAt.Load(); purged != 0 {
+		m.staleAtNs = min(m.staleAtNs, obj.ageAtClock(time.Duration(purged-1)))
+	}
+	return m
+}
+
+// knownLength is the declared length, or the final one.
+// Impossible declared lengths are ignored, since unlike CacheD, Fastlike does
+// not reject bodies that do not match them.
+func (obj *CachedObject) knownLength() (uint64, bool) {
+	if obj.Length != nil && *obj.Length <= math.MaxInt64 {
+		return *obj.Length, true
+	}
+
+	if n := obj.completedLength.Load(); n > 0 {
+		return uint64(n - 1), true
+	}
+	return 0, false
+}
+
+// httpPeriod classifies what a lookup found like production's HTTP cache,
+// which differs from CacheD at the boundaries.
+func (e *CacheEntry) httpPeriod() cachePeriod {
+	if e.Object == nil {
+		return periodExpired
+	}
+	m := &e.Metadata
+	switch {
+	case m.AgeNs <= m.staleAtNs:
+		return periodFresh
+	case m.AgeNs <= saturatingAdd(m.staleAtNs, m.StaleWhileRevalidateNs):
+		return periodStale
+	case m.AgeNs <= saturatingAdd(m.staleAtNs, m.StaleIfErrorNs):
+		return periodStaleIfError
+	default:
+		return periodExpired
+	}
+}
+
+func saturatingAdd(a, b uint64) uint64 {
+	if a > math.MaxUint64-b {
+		return math.MaxUint64
+	}
+	return a + b
+}
+
+// offsetAge moves age by d, saturating at zero and at the largest age.
+func offsetAge(age uint64, d time.Duration) uint64 {
+	if d >= 0 {
+		return saturatingAdd(age, uint64(d))
+	}
+	if back := uint64(-d); back < age {
+		return age - back
+	}
+	return 0
 }
 
 // CacheTransaction represents an ongoing cache transaction with request collapsing
@@ -93,6 +196,9 @@ type CacheTransaction struct {
 	owner          any
 	done           chan struct{} // closed once the transaction is completed or cancelled
 	finished       bool
+
+	// When the lookup that gave the obligation started.
+	lookupStart time.Time
 }
 
 // CacheLookupOptions holds options for cache lookup
@@ -145,25 +251,13 @@ type CacheReplaceOptions struct {
 // or the operation is abandoned.
 type CacheReplace struct {
 	Key      []byte
-	Existing *CachedObject
 	Options  *CacheReplaceOptions
 	owner    any
 	done     chan struct{}
 	finished bool
-}
 
-// State reports the existing object as the replace accessors expose it.
-// Found and usable always go together here because early SDKs inferred
-// usability from the found bit alone.
-func (r *CacheReplace) State() CacheState {
-	if r.Existing == nil {
-		return CacheState{}
-	}
-	return CacheState{
-		Found:  true,
-		Usable: true,
-		Stale:  r.Existing.periodAt(time.Now()) != periodFresh,
-	}
+	// The object to replace, if any, as the replace found it.
+	Existing CacheEntry
 }
 
 // Cache is an in-memory cache with request collapsing support
@@ -275,12 +369,6 @@ func (tx *CacheTransaction) holdsObligation() bool {
 	return tx.Entry != nil && tx.Entry.State.MustInsertOrUpdate
 }
 
-// usableTransaction serves obj whatever its age, as production does for the
-// handles returned by stream-back inserts and fresh updates.
-func usableTransaction(key []byte, obj *CachedObject) *CacheTransaction {
-	return settledTransaction(key, &CacheEntry{Object: obj, State: CacheState{Found: true, Usable: true}}, nil)
-}
-
 // Lookup performs a non-transactional cache lookup, which only finds usable
 // objects.
 func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
@@ -292,8 +380,8 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	if period == periodExpired {
 		return &CacheEntry{}
 	}
-	state, _ := obj.hit(period, now)
-	return &CacheEntry{Object: obj, State: state}
+	entry, _ := obj.hit(period, now, now)
+	return entry
 }
 
 // findVariantPeriod treats a missing variant as expired.
@@ -310,16 +398,17 @@ func (c *Cache) findVariantPeriod(key, requestHeaders []byte, now time.Time) (*C
 // transaction pending waits for that work to finish and then looks again,
 // instead of fetching on its own.
 // The caller's own pending transaction is joined rather than waited for.
+// Ages count from the start of the lookup, even if it waited, as in CacheD.
 func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner any) *CacheTransaction {
 	keyStr := cacheKey(key)
+	start := time.Now()
 
 	c.mu.Lock()
 
 	var obj *CachedObject
-	var now time.Time
 	var period cachePeriod
+	now := start
 	for {
-		now = time.Now()
 		obj, period = c.findVariantPeriod(key, options.requestHeaders(), now)
 		if period != periodExpired {
 			break
@@ -337,24 +426,29 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 		c.mu.Unlock()
 		<-wait
 		c.mu.Lock()
+		now = time.Now()
 	}
 
 	tx := &CacheTransaction{
-		Key:     key,
-		Options: options,
-		owner:   owner,
-		ready:   make(chan struct{}),
-		done:    make(chan struct{}),
+		Key:         key,
+		Options:     options,
+		owner:       owner,
+		ready:       make(chan struct{}),
+		done:        make(chan struct{}),
+		lookupStart: start,
 	}
 
 	if period == periodExpired {
 		// The expired object is kept for its metadata, which revalidation needs.
 		tx.Entry = &CacheEntry{Object: obj, State: CacheState{MustInsertOrUpdate: true}}
+		if obj != nil {
+			tx.Entry.Metadata = obj.metadataAt(start, obj.HitCount.Load())
+		}
 	} else {
-		state, offered := obj.hit(period, now)
+		entry, offered := obj.hit(period, now, start)
 		// Nobody revalidates while the key is busy.
-		state.MustInsertOrUpdate = offered && c.transactions[keyStr] == nil && len(c.replaces[keyStr]) == 0
-		tx.Entry = &CacheEntry{Object: obj, State: state}
+		entry.State.MustInsertOrUpdate = offered && c.transactions[keyStr] == nil && len(c.replaces[keyStr]) == 0
+		tx.Entry = entry
 	}
 	if tx.Entry.State.MustInsertOrUpdate {
 		c.transactions[keyStr] = tx
@@ -370,16 +464,17 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 // TransactionRefresh waits for the pending revalidation of the stale object
 // tx found, like production's transaction_refresh.
 // A guest waiting for its own revalidation joins it instead.
+// tx keeps what its lookup saw unless a fresh object comes out of it.
 func (c *Cache) TransactionRefresh(tx *CacheTransaction) *CacheTransaction {
 	keyStr := cacheKey(tx.Key)
+	tx.lookupStart = time.Now()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	now := tx.lookupStart
 	for {
-		now := time.Now()
 		if obj, period := c.findVariantPeriod(tx.Key, tx.Options.requestHeaders(), now); period == periodFresh {
-			state, _ := obj.hit(period, now)
-			tx.Entry = &CacheEntry{Object: obj, State: state}
+			tx.Entry, _ = obj.hit(period, now, tx.lookupStart)
 			return tx
 		}
 
@@ -395,6 +490,7 @@ func (c *Cache) TransactionRefresh(tx *CacheTransaction) *CacheTransaction {
 		c.mu.Unlock()
 		<-wait
 		c.mu.Lock()
+		now = time.Now()
 
 		// CacheD only cancels the waiters of the same variant.
 		if leader != nil && leader.Entry.State.RevalidationFailed && sameVariant(leader.Entry.Object, tx.Entry.Object) {
@@ -424,6 +520,26 @@ func (c *Cache) TransactionInsert(tx *CacheTransaction, options *CacheWriteOptio
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	return c.transactionInsert(tx, options)
+}
+
+// TransactionInsertAndStreamBack is TransactionInsert, also returning the
+// entry that reads the object back, as the lookup production attaches to the
+// insert sees it.
+func (c *Cache) TransactionInsertAndStreamBack(tx *CacheTransaction, options *CacheWriteOptions) (*CacheEntry, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	obj, err := c.transactionInsert(tx, options)
+	if err != nil {
+		return nil, err
+	}
+	state := CacheState{Found: true, Usable: true, Stale: obj.periodAt(obj.InsertTime) != periodFresh, StreamedBack: true}
+	return &CacheEntry{Object: obj, State: state, Metadata: obj.metadataAt(obj.InsertTime, 0)}, nil
+}
+
+// transactionInsert is TransactionInsert for a caller holding the lock.
+func (c *Cache) transactionInsert(tx *CacheTransaction, options *CacheWriteOptions) (*CachedObject, error) {
 	if !tx.holdsObligation() {
 		return nil, errNoObligation
 	}
@@ -436,31 +552,22 @@ func (c *Cache) TransactionInsert(tx *CacheTransaction, options *CacheWriteOptio
 // The caller holds the lock.
 func (c *Cache) store(keyStr string, options *CacheWriteOptions) *CachedObject {
 	obj := &CachedObject{
-		Body:          &bytes.Buffer{},
-		MaxAgeNs:      options.MaxAgeNs,
-		VaryRule:      options.VaryRule,
-		SurrogateKeys: options.SurrogateKeys,
-		UserMetadata:  options.UserMetadata,
-		Length:        options.Length,
-		VaryHeaders:   extractVaryHeaders(options.VaryRule, options.RequestHeaders),
-		InsertTime:    time.Now(),
-		WriteComplete: false,
-		WriteCond:     sync.NewCond(&sync.Mutex{}),
-		SensitiveData: options.SensitiveData,
-		Response:      options.Response,
-	}
-
-	if options.InitialAgeNs != nil {
-		obj.InitialAgeNs = *options.InitialAgeNs
-	}
-	if options.StaleWhileRevalidateNs != nil {
-		obj.StaleWhileRevalidateNs = *options.StaleWhileRevalidateNs
-	}
-	if options.EdgeMaxAgeNs != nil {
-		obj.EdgeMaxAgeNs = *options.EdgeMaxAgeNs
-	}
-	if options.StaleIfErrorNs != nil {
-		obj.StaleIfErrorNs = *options.StaleIfErrorNs
+		Body:                   &bytes.Buffer{},
+		MaxAgeNs:               options.MaxAgeNs,
+		VaryRule:               options.VaryRule,
+		SurrogateKeys:          options.SurrogateKeys,
+		UserMetadata:           options.UserMetadata,
+		Length:                 options.Length,
+		VaryHeaders:            extractVaryHeaders(options.VaryRule, options.RequestHeaders),
+		InsertTime:             time.Now(),
+		WriteComplete:          false,
+		WriteCond:              sync.NewCond(&sync.Mutex{}),
+		SensitiveData:          options.SensitiveData,
+		Response:               options.Response,
+		InitialAgeNs:           orZero(options.InitialAgeNs),
+		StaleWhileRevalidateNs: orZero(options.StaleWhileRevalidateNs),
+		EdgeMaxAgeNs:           orZero(options.EdgeMaxAgeNs),
+		StaleIfErrorNs:         orZero(options.StaleIfErrorNs),
 	}
 
 	c.objects[keyStr] = append(c.objects[keyStr], obj)
@@ -473,12 +580,40 @@ func (c *Cache) store(keyStr string, options *CacheWriteOptions) *CachedObject {
 	return obj
 }
 
+func orZero(p *uint64) uint64 {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
 // TransactionUpdate freshens the object tx found, which uses up its
-// obligation, and returns it.
-func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptions) (*CachedObject, error) {
+// obligation.
+func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptions) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	_, err := c.transactionUpdate(tx, options)
+	return err
+}
+
+// TransactionUpdateAndReturnFresh is TransactionUpdate, also returning the
+// entry that serves the updated object.
+// As in CacheD, that is a hit, aged from the lookup that gave the obligation.
+func (c *Cache) TransactionUpdateAndReturnFresh(tx *CacheTransaction, options *CacheWriteOptions) (*CacheEntry, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	obj, err := c.transactionUpdate(tx, options)
+	if err != nil {
+		return nil, err
+	}
+	state := CacheState{Found: true, Usable: true, StreamedBack: true}
+	return &CacheEntry{Object: obj, State: state, Metadata: obj.metadataAt(tx.lookupStart, obj.HitCount.Add(1))}, nil
+}
+
+// transactionUpdate is TransactionUpdate for a caller holding the lock.
+func (c *Cache) transactionUpdate(tx *CacheTransaction, options *CacheWriteOptions) (*CachedObject, error) {
 	if !tx.holdsObligation() {
 		return nil, errNoObligation
 	}
@@ -487,30 +622,19 @@ func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptio
 		return nil, errors.New("no object to update")
 	}
 
-	// Update metadata
+	// Options left out go back to their defaults, as in production, except the
+	// vary rule, surrogate keys and sensitive flag, which stay.
 	obj.MaxAgeNs = options.MaxAgeNs
-	if options.InitialAgeNs != nil {
-		obj.InitialAgeNs = *options.InitialAgeNs
-	}
-	if options.StaleWhileRevalidateNs != nil {
-		obj.StaleWhileRevalidateNs = *options.StaleWhileRevalidateNs
-	}
-	if options.EdgeMaxAgeNs != nil {
-		obj.EdgeMaxAgeNs = *options.EdgeMaxAgeNs
-	}
-	if options.StaleIfErrorNs != nil {
-		obj.StaleIfErrorNs = *options.StaleIfErrorNs
-	}
-	if options.UserMetadata != nil {
-		obj.UserMetadata = options.UserMetadata
-	}
+	obj.InitialAgeNs = orZero(options.InitialAgeNs)
+	obj.StaleWhileRevalidateNs = orZero(options.StaleWhileRevalidateNs)
+	obj.EdgeMaxAgeNs = orZero(options.EdgeMaxAgeNs)
+	obj.StaleIfErrorNs = orZero(options.StaleIfErrorNs)
+	obj.UserMetadata = options.UserMetadata
 	if options.Response != nil {
 		obj.Response = options.Response
 	}
 
-	// Reset age
 	obj.InsertTime = time.Now()
-	obj.InitialAgeNs = 0
 	obj.softPurgedAt.Store(0)
 
 	c.takeObligation(tx)
@@ -615,8 +739,10 @@ func (c *Cache) TransactionChooseStale(tx *CacheTransaction) bool {
 // The wait strategy queues behind pending replaces and transactional inserts,
 // but only those of other owners, since a guest runs one hostcall at a time
 // and could never resolve its own.
+// As in CacheD, the existing object counts a hit.
 func (c *Cache) Replace(key []byte, options *CacheReplaceOptions, owner any) *CacheReplace {
 	keyStr := cacheKey(key)
+	start := time.Now()
 
 	c.mu.Lock()
 	if options.ReplaceStrategy == CacheReplaceWait {
@@ -632,16 +758,23 @@ func (c *Cache) Replace(key []byte, options *CacheReplaceOptions, owner any) *Ca
 	}
 
 	existing := c.findMatchingVariant(key, options.RequestHeaders)
-	if existing != nil && options.ReplaceStrategy == CacheReplaceImmediateForceMiss {
-		c.removeObject(keyStr, existing)
-	}
-
 	r := &CacheReplace{
-		Key:      key,
-		Existing: existing,
-		Options:  options,
-		owner:    owner,
-		done:     make(chan struct{}),
+		Key:     key,
+		Options: options,
+		owner:   owner,
+		done:    make(chan struct{}),
+	}
+	if existing != nil {
+		// Found implies usable for early SDKs, and CacheD judges staleness at
+		// the start of the replace.
+		r.Existing = CacheEntry{
+			Object:   existing,
+			State:    CacheState{Found: true, Usable: true, Stale: existing.periodAt(start) != periodFresh},
+			Metadata: existing.metadataAt(start, existing.HitCount.Add(1)),
+		}
+		if options.ReplaceStrategy == CacheReplaceImmediateForceMiss {
+			c.removeObject(keyStr, existing)
+		}
 	}
 	c.replaces[keyStr] = append(c.replaces[keyStr], r)
 	c.mu.Unlock()
@@ -667,8 +800,8 @@ func (c *Cache) ReplaceInsert(r *CacheReplace, options *CacheWriteOptions) *Cach
 	defer c.mu.Unlock()
 
 	keyStr := cacheKey(r.Key)
-	if r.Existing != nil {
-		c.removeObject(keyStr, r.Existing)
+	if r.Existing.Object != nil {
+		c.removeObject(keyStr, r.Existing.Object)
 	}
 	obj := c.store(keyStr, options)
 	c.finishReplace(keyStr, r)
@@ -782,19 +915,24 @@ func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 	return count
 }
 
-// GetAge returns the age of a cached object in nanoseconds
-func (obj *CachedObject) GetAge() uint64 {
-	return obj.ageAt(time.Now())
+// ageAt is obj's age at t on CacheD's clock, never below zero.
+func (obj *CachedObject) ageAt(t time.Time) uint64 {
+	return obj.ageAtClock(cachedClock(t))
 }
 
-func (obj *CachedObject) ageAt(now time.Time) uint64 {
-	return uint64(now.Sub(obj.InsertTime).Nanoseconds()) + obj.InitialAgeNs
+// ageAtClock is ageAt for an instant of CacheD's clock.
+func (obj *CachedObject) ageAtClock(c time.Duration) uint64 {
+	return offsetAge(obj.InitialAgeNs, c-cachedClock(obj.InsertTime))
 }
 
 // periodAt follows CacheD, soft purges included.
+// Both stale periods count as stale here, only the HTTP cache tells them apart.
 func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 	age := obj.ageAt(now)
-	fresh := age < obj.MaxAgeNs
+	// Before its origin, an object is fresh even with a max age of 0.
+	elapsed := cachedClock(now) - cachedClock(obj.InsertTime)
+	beforeOrigin := elapsed < 0 && uint64(-elapsed) > obj.InitialAgeNs
+	fresh := beforeOrigin || age < obj.MaxAgeNs
 	var staleFor uint64
 	if !fresh {
 		staleFor = age - obj.MaxAgeNs
@@ -808,10 +946,8 @@ func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 	switch {
 	case fresh:
 		return periodFresh
-	case staleFor < obj.StaleWhileRevalidateNs:
+	case staleFor < max(obj.StaleWhileRevalidateNs, obj.StaleIfErrorNs):
 		return periodStale
-	case staleFor < obj.StaleIfErrorNs:
-		return periodStaleIfError
 	default:
 		return periodExpired
 	}
@@ -819,11 +955,14 @@ func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 
 // hit counts a lookup of a usable object and reports whether it gets the
 // revalidation offer, which plain lookups use up too, as in CacheD.
-func (obj *CachedObject) hit(period cachePeriod, now time.Time) (CacheState, bool) {
-	obj.HitCount.Add(1)
+func (obj *CachedObject) hit(period cachePeriod, now, start time.Time) (*CacheEntry, bool) {
 	stale := period != periodFresh
-	state := CacheState{Found: true, Usable: true, Stale: stale, UsableIfError: period == periodStaleIfError}
-	return state, stale && obj.offerRevalidation(now)
+	entry := &CacheEntry{
+		Object:   obj,
+		State:    CacheState{Found: true, Usable: true, Stale: stale},
+		Metadata: obj.metadataAt(start, obj.HitCount.Add(1)),
+	}
+	return entry, stale && obj.offerRevalidation(now)
 }
 
 // offerRevalidation applies CacheD's revalidation throttle.
@@ -848,22 +987,6 @@ func (obj *CachedObject) streaming() bool {
 	defer obj.WriteCond.L.Unlock()
 
 	return !obj.WriteComplete
-}
-
-// KnownLength reports the object size once the writer announced it or finished
-// streaming.
-func (obj *CachedObject) KnownLength() (int64, bool) {
-	if obj.Length != nil && *obj.Length <= math.MaxInt64 {
-		return int64(*obj.Length), true
-	}
-
-	obj.WriteCond.L.Lock()
-	defer obj.WriteCond.L.Unlock()
-
-	if obj.WriteComplete {
-		return int64(obj.Body.Len()), true
-	}
-	return 0, false
 }
 
 // ReadBody reads from the cached body at the specified offset.
@@ -913,6 +1036,9 @@ func (obj *CachedObject) WriteBody(p []byte) (int, error) {
 func (obj *CachedObject) FinishWrite() {
 	obj.WriteCond.L.Lock()
 	obj.WriteComplete = true
+	if !obj.WriteFailed {
+		obj.completedLength.Store(int64(obj.Body.Len()) + 1)
+	}
 	obj.WriteCond.L.Unlock()
 	obj.WriteCond.Broadcast()
 }
@@ -923,6 +1049,7 @@ func (obj *CachedObject) AbortWrite() {
 	obj.WriteCond.L.Lock()
 	obj.WriteComplete = true
 	obj.WriteFailed = true
+	obj.completedLength.Store(0)
 	obj.WriteCond.L.Unlock()
 	obj.WriteCond.Broadcast()
 }

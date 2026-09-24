@@ -145,23 +145,18 @@ func TestCacheTransactionLookupOfExpiredObject(t *testing.T) {
 	checkNotFoundAccessors(t, i, handle)
 
 	// The metadata of the expired object is still there to revalidate it.
-	if status := i.xqd_cache_get_user_metadata(handle, replaceTestMetadataOut, 64, replaceTestNwrittenOut); status != XqdStatusOK {
-		t.Fatalf("get_user_metadata status = %d, want %d", status, XqdStatusOK)
-	}
-	metadata := make([]byte, i.memory.Uint32(replaceTestNwrittenOut))
-	_, _ = i.memory.ReadAt(metadata, replaceTestMetadataOut)
-	if string(metadata) != "meta" {
+	if metadata := cacheUserMetadata(t, i, handle); metadata != "meta" {
 		t.Fatalf("user metadata = %q, want %q", metadata, "meta")
 	}
 
-	// Lookups that found nothing did not count as hits.
+	// Lookups that found nothing did not count as hits, only the replace did.
 	plainLookup(t, i, "key")
 	replace := beginReplace(t, i, "key", CacheReplaceImmediate)
 	if status := i.xqd_cache_replace_get_hits(replace, replaceTestValueOut); status != XqdStatusOK {
 		t.Fatalf("replace_get_hits status = %d, want %d", status, XqdStatusOK)
 	}
-	if hits := i.memory.ReadUint64(replaceTestValueOut); hits != 0 {
-		t.Fatalf("hits = %d, want 0", hits)
+	if hits := i.memory.ReadUint64(replaceTestValueOut); hits != 1 {
+		t.Fatalf("hits = %d, want 1", hits)
 	}
 }
 
@@ -361,7 +356,7 @@ func TestCacheSoftPurgeStartsTheStaleWindow(t *testing.T) {
 			if state := cache.Lookup(key, nil).State; state != tt.want {
 				t.Fatalf("state = %+v, want %+v", state, tt.want)
 			}
-			if age := obj.GetAge(); age < uint64(tt.initialAge) || age > uint64(tt.initialAge+time.Minute) {
+			if age := obj.ageAt(time.Now()); age < uint64(tt.initialAge) || age > uint64(tt.initialAge+time.Minute) {
 				t.Fatalf("age = %v after the purge, want about %v", time.Duration(age), tt.initialAge)
 			}
 		})
@@ -393,7 +388,7 @@ func TestCacheUpdateClearsSoftPurge(t *testing.T) {
 	if tx.Entry.State != (CacheState{MustInsertOrUpdate: true}) || tx.Entry.Object != obj {
 		t.Fatalf("lookup after the purge: state = %+v, want only must-insert-or-update on the purged object", tx.Entry.State)
 	}
-	if _, err := cache.TransactionUpdate(tx, &CacheWriteOptions{MaxAgeNs: uint64(time.Hour)}); err != nil {
+	if err := cache.TransactionUpdate(tx, &CacheWriteOptions{MaxAgeNs: uint64(time.Hour)}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if state := cache.Lookup(key, nil).State; state != (CacheState{Found: true, Usable: true}) {

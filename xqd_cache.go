@@ -202,12 +202,12 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 		return status
 	}
 
-	obj, err := i.cache.TransactionInsert(handle.Transaction, writeOpts)
+	entry, err := i.cache.TransactionInsertAndStreamBack(handle.Transaction, writeOpts)
 	if err != nil {
 		return transactionWriteStatus(err)
 	}
-	writeBodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
-	readHandleID := i.cacheHandles.New(usableTransaction(handle.Transaction.Key, obj))
+	writeBodyID := i.newCacheInsertBody(entry.Object, handle.Transaction.Key)
+	readHandleID := i.cacheHandles.New(settledTransaction(handle.Transaction.Key, entry, nil))
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
@@ -233,7 +233,7 @@ func (i *Instance) xqd_cache_transaction_update(
 		return status
 	}
 
-	if _, err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
+	if err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
 		return transactionWriteStatus(err)
 	}
 
@@ -343,12 +343,12 @@ func (i *Instance) xqd_cache_get_user_metadata(
 	if handle == nil {
 		return XqdErrInvalidHandle
 	}
-	obj := handle.Transaction.Entry.Object
-	if obj == nil {
+	entry := handle.Transaction.Entry
+	if entry.Object == nil {
 		return XqdErrNone
 	}
 
-	metadata := obj.UserMetadata
+	metadata := entry.Metadata.UserMetadata
 	i.memory.WriteUint32(nwritten_out, uint32(len(metadata)))
 	if len(metadata) > int(user_metadata_out_len) {
 		return XqdErrBufferLength
@@ -380,12 +380,13 @@ func (i *Instance) foundCacheHandle(cache_handle int32) (*CacheHandle, int32) {
 	return handle, XqdStatusOK
 }
 
-func (i *Instance) foundCacheObject(cache_handle int32) (*CachedObject, int32) {
+// foundCacheMetadata returns what a handle's lookup saw of the object it found.
+func (i *Instance) foundCacheMetadata(cache_handle int32) (*ObjectMetadata, int32) {
 	handle, status := i.foundCacheHandle(cache_handle)
 	if status != XqdStatusOK {
 		return nil, status
 	}
-	return handle.Transaction.Entry.Object, XqdStatusOK
+	return &handle.Transaction.Entry.Metadata, XqdStatusOK
 }
 
 // xqd_cache_get_body gets the body of a cached object with optional range
@@ -402,9 +403,8 @@ func (i *Instance) xqd_cache_get_body(
 		return status
 	}
 
-	obj := handle.Transaction.Entry.Object
 	alwaysUseRequestedRange := handle.Transaction.Options != nil && handle.Transaction.Options.AlwaysUseRequestedRange
-	bodyID, status := i.newCacheObjectBody(obj, options_mask, options, alwaysUseRequestedRange)
+	bodyID, status := i.newCacheObjectBody(handle.Transaction.Entry, options_mask, options, alwaysUseRequestedRange)
 	if status != XqdStatusOK {
 		return status
 	}
@@ -413,12 +413,12 @@ func (i *Instance) xqd_cache_get_body(
 	return XqdStatusOK
 }
 
-// newCacheObjectBody creates a body handle reading obj, restricted to the
-// optional inclusive from/to range.
-// A range outside a known size falls back to the whole body.
+// newCacheObjectBody creates a body handle reading the object found, restricted
+// to the optional inclusive from/to range.
+// A range outside the size known at lookup falls back to the whole body.
 // With an unknown size the range is honored only when the guest insists, and
 // the read then fails if the object ends early.
-func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, options int32, alwaysUseRequestedRange bool) (int, int32) {
+func (i *Instance) newCacheObjectBody(found *CacheEntry, options_mask uint32, options int32, alwaysUseRequestedRange bool) (int, int32) {
 	r := byteRange{
 		hasFirst: options_mask&CacheGetBodyOptionsMaskFrom != 0,
 		hasLast:  options_mask&CacheGetBodyOptionsMaskTo != 0,
@@ -434,18 +434,20 @@ func (i *Instance) newCacheObjectBody(obj *CachedObject, options_mask uint32, op
 		return 0, XqdErrInvalidArgument
 	}
 
-	bodyID, _ := i.bodies.NewReader(io.NopCloser(cacheRangeReader(obj, r, alwaysUseRequestedRange)))
+	reader := cacheRangeReader(found.Object, found.Metadata.Length, found.Metadata.LengthKnown, r, alwaysUseRequestedRange)
+	bodyID, _ := i.bodies.NewReader(io.NopCloser(reader))
 	return bodyID, XqdStatusOK
 }
 
-// cacheRangeReader reads r of obj the way CacheD serves it.
-func cacheRangeReader(obj *CachedObject, r byteRange, alwaysUseRequestedRange bool) io.Reader {
+// cacheRangeReader reads r of obj the way CacheD serves it, given the length
+// known at lookup.
+func cacheRangeReader(obj *CachedObject, length uint64, lengthKnown bool, r byteRange, alwaysUseRequestedRange bool) io.Reader {
 	reader := &cacheBodyReader{cache: obj}
 	if !r.hasFirst && !r.hasLast {
 		return reader
 	}
 
-	size, sizeKnown := obj.KnownLength()
+	size, sizeKnown := int64(length), lengthKnown
 	switch {
 	case sizeKnown && !r.hasFirst:
 		// A lone end bound asks for the last bytes, and CacheD serves the
@@ -492,17 +494,21 @@ func (i *Instance) xqd_cache_get_length(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_length")
 
-	obj, status := i.foundCacheObject(cache_handle)
+	found, status := i.foundCacheMetadata(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	if obj.Length != nil {
-		i.memory.WriteUint64(length_out, *obj.Length)
-		return XqdStatusOK
-	}
+	return i.writeKnownLength(found, length_out)
+}
 
-	// If length is not known, return NONE
-	return XqdErrNone
+// writeKnownLength writes the length a lookup knew, or returns XqdErrNone when
+// it knew none.
+func (i *Instance) writeKnownLength(found *ObjectMetadata, length_out int32) int32 {
+	if !found.LengthKnown {
+		return XqdErrNone
+	}
+	i.memory.WriteUint64(length_out, found.Length)
+	return XqdStatusOK
 }
 
 // xqd_cache_get_max_age_ns gets the max age in nanoseconds
@@ -512,11 +518,11 @@ func (i *Instance) xqd_cache_get_max_age_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_max_age_ns")
 
-	obj, status := i.foundCacheObject(cache_handle)
+	found, status := i.foundCacheMetadata(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
+	i.memory.WriteUint64(duration_out, found.MaxAgeNs)
 
 	return XqdStatusOK
 }
@@ -528,11 +534,11 @@ func (i *Instance) xqd_cache_get_stale_while_revalidate_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_stale_while_revalidate_ns")
 
-	obj, status := i.foundCacheObject(cache_handle)
+	found, status := i.foundCacheMetadata(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
+	i.memory.WriteUint64(duration_out, found.StaleWhileRevalidateNs)
 
 	return XqdStatusOK
 }
@@ -544,12 +550,11 @@ func (i *Instance) xqd_cache_get_age_ns(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_age_ns")
 
-	obj, status := i.foundCacheObject(cache_handle)
+	found, status := i.foundCacheMetadata(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	age := obj.GetAge()
-	i.memory.WriteUint64(duration_out, age)
+	i.memory.WriteUint64(duration_out, found.AgeNs)
 
 	return XqdStatusOK
 }
@@ -561,11 +566,11 @@ func (i *Instance) xqd_cache_get_hits(
 ) int32 {
 	i.abilog.Println("xqd_cache_get_hits")
 
-	obj, status := i.foundCacheObject(cache_handle)
+	found, status := i.foundCacheMetadata(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
+	i.memory.WriteUint64(hits_out, found.Hits)
 
 	return XqdStatusOK
 }
@@ -1001,17 +1006,17 @@ func (i *Instance) readCacheReplaceOptions(mask uint32, optionsPtr int32) (*Cach
 	return opts, XqdStatusOK
 }
 
-// cacheReplaceExisting returns the object a replace handle is replacing, or
-// XqdErrNone when there was none.
-func (i *Instance) cacheReplaceExisting(replace_handle int32) (*CachedObject, int32) {
+// cacheReplaceExisting returns what a replace found under its key, or
+// XqdErrNone when it found nothing.
+func (i *Instance) cacheReplaceExisting(replace_handle int32) (*CacheEntry, int32) {
 	handle := i.cacheReplaceHandles.Get(int(replace_handle))
 	if handle == nil {
 		return nil, XqdErrInvalidHandle
 	}
-	if handle.Replace.Existing == nil {
+	if handle.Replace.Existing.Object == nil {
 		return nil, XqdErrNone
 	}
-	return handle.Replace.Existing, XqdStatusOK
+	return &handle.Replace.Existing, XqdStatusOK
 }
 
 // xqd_cache_replace begins a replace operation and returns a replace handle
@@ -1040,7 +1045,7 @@ func (i *Instance) xqd_cache_replace(
 
 	i.deepBumpCacheLookup()
 	replace := i.cache.Replace(key, replaceOpts, i)
-	i.deepBumpCacheOutcome(replace.State())
+	i.deepBumpCacheOutcome(replace.Existing.State)
 
 	handleID := i.cacheReplaceHandles.New(replace)
 	i.memory.WriteUint32(replace_handle_out, uint32(handleID))
@@ -1092,12 +1097,12 @@ func (i *Instance) xqd_cache_replace_get_age_ns(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(duration_out, obj.GetAge())
+	i.memory.WriteUint64(duration_out, existing.Metadata.AgeNs)
 
 	return XqdStatusOK
 }
@@ -1115,7 +1120,7 @@ func (i *Instance) xqd_cache_replace_get_body(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
@@ -1126,7 +1131,7 @@ func (i *Instance) xqd_cache_replace_get_body(
 		return XqdErrInvalidHandle
 	}
 
-	bodyID, status := i.newCacheObjectBody(obj, options_mask, options, handle.Replace.Options.AlwaysUseRequestedRange)
+	bodyID, status := i.newCacheObjectBody(existing, options_mask, options, handle.Replace.Options.AlwaysUseRequestedRange)
 	if status != XqdStatusOK {
 		return status
 	}
@@ -1147,12 +1152,12 @@ func (i *Instance) xqd_cache_replace_get_hits(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
+	i.memory.WriteUint64(hits_out, existing.Metadata.Hits)
 
 	return XqdStatusOK
 }
@@ -1168,17 +1173,11 @@ func (i *Instance) xqd_cache_replace_get_length(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-	if obj.Length == nil {
-		return XqdErrNone
-	}
-
-	i.memory.WriteUint64(length_out, *obj.Length)
-
-	return XqdStatusOK
+	return i.writeKnownLength(&existing.Metadata, length_out)
 }
 
 // xqd_cache_replace_get_max_age_ns gets the max age of the existing object during replace
@@ -1192,12 +1191,12 @@ func (i *Instance) xqd_cache_replace_get_max_age_ns(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
+	i.memory.WriteUint64(duration_out, existing.Metadata.MaxAgeNs)
 
 	return XqdStatusOK
 }
@@ -1214,12 +1213,12 @@ func (i *Instance) xqd_cache_replace_get_stale_while_revalidate_ns(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
+	i.memory.WriteUint64(duration_out, existing.Metadata.StaleWhileRevalidateNs)
 
 	return XqdStatusOK
 }
@@ -1241,7 +1240,7 @@ func (i *Instance) xqd_cache_replace_get_state(
 		return XqdErrInvalidHandle
 	}
 
-	state := handle.Replace.State()
+	state := handle.Replace.Existing.State
 	var flags uint32
 	if state.Found {
 		flags |= CacheLookupStateFound
@@ -1272,14 +1271,14 @@ func (i *Instance) xqd_cache_replace_get_user_metadata(
 		return XqdErrInvalidArgument
 	}
 
-	obj, status := i.cacheReplaceExisting(replace_handle)
+	existing, status := i.cacheReplaceExisting(replace_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
 	// The required size is reported before the buffer is looked at, so a
 	// guest can probe with an empty buffer.
-	metadata := obj.UserMetadata
+	metadata := existing.Metadata.UserMetadata
 	i.memory.WriteUint32(nwritten_out, uint32(len(metadata)))
 	if len(metadata) > int(user_metadata_out_len) {
 		return XqdErrBufferLength
@@ -1303,10 +1302,11 @@ type cacheSuffixReader struct {
 
 func (r *cacheSuffixReader) Read(p []byte) (int, error) {
 	if r.inner == nil {
-		if _, failed := r.cache.waitForWriteComplete(); failed {
+		size, failed := r.cache.waitForWriteComplete()
+		if failed {
 			return 0, io.ErrUnexpectedEOF
 		}
-		r.inner = cacheRangeReader(r.cache, byteRange{last: r.count, hasLast: true}, false)
+		r.inner = cacheRangeReader(r.cache, uint64(size), true, byteRange{last: r.count, hasLast: true}, false)
 	}
 	return r.inner.Read(p)
 }

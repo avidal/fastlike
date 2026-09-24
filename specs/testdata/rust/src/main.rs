@@ -144,6 +144,20 @@ fn core_cache_states() -> Result<String, Error> {
         found.map(|found| found.stale_while_revalidate())
     ));
 
+    // Handles keep their lookup's hit count, and complete objects report a
+    // length.
+    let mut body = insert(CacheKey::from_static(b"unsized"), minute).execute()?;
+    body.write_all(b"0123456789")?;
+    body.finish()?;
+    let first = lookup(CacheKey::from_static(b"unsized")).execute()?;
+    let second = lookup(CacheKey::from_static(b"unsized")).execute()?;
+    out.push(format!(
+        "snapshot: first_hits={:?} second_hits={:?} length={:?}",
+        first.as_ref().map(|found| found.hits()),
+        second.as_ref().map(|found| found.hits()),
+        first.as_ref().map(|found| found.known_length())
+    ));
+
     store("expired", 2 * minute, Duration::ZERO)?;
     let found = lookup(CacheKey::from_static(b"expired")).execute()?;
     out.push(format!("expired lookup: found={}", found.is_some()));

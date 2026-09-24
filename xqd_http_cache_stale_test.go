@@ -24,16 +24,22 @@ var (
 	httpExpiredObject      = httpFreshness{maxAge: time.Minute, initialAge: 3 * time.Minute, swr: time.Minute, sie: time.Minute}
 )
 
+// writeHTTPFreshness writes f to the test write options, which
+// httpTestObjectWriteMask describes.
+func writeHTTPFreshness(inst *Instance, f httpFreshness) {
+	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsMaxAgeNs, uint64(f.maxAge))
+	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsInitialAgeNs, uint64(f.initialAge))
+	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsStaleWhileRevalidateNs, uint64(f.swr))
+	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsStaleIfErrorNs, uint64(f.sie))
+}
+
 // insertHTTPObject stores a complete 200 response through cacheHandle.
 func insertHTTPObject(t *testing.T, inst *Instance, cacheHandle int32, header http.Header, f httpFreshness, body string) {
 	t.Helper()
 	if header == nil {
 		header = http.Header{}
 	}
-	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsMaxAgeNs, uint64(f.maxAge))
-	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsInitialAgeNs, uint64(f.initialAge))
-	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsStaleWhileRevalidateNs, uint64(f.swr))
-	inst.memory.WriteUint64(httpCacheTestOptions+httpCacheOptionsStaleIfErrorNs, uint64(f.sie))
+	writeHTTPFreshness(inst, f)
 	resp := httpCacheTestResponse(inst, http.StatusOK, header)
 	if status := inst.xqd_http_cache_transaction_insert(cacheHandle, resp, httpTestObjectWriteMask, httpCacheTestOptions, httpCacheTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("transaction_insert status = %d", status)
@@ -285,6 +291,14 @@ func TestHttpCacheStaleIfErrorLookupWaitsForTheRevalidation(t *testing.T) {
 			},
 			usableIfErrorState | CacheLookupStateMustInsertOrUpdate, "stale",
 		},
+		{
+			// Judged when the waiter wakes up, a max-age=0 response has expired.
+			"replaced by an expired response",
+			func(t *testing.T, a *Instance, leader int32) {
+				insertHTTPObject(t, a, leader, nil, httpFreshness{}, "expired")
+			},
+			usableIfErrorState | CacheLookupStateMustInsertOrUpdate, "stale",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -408,9 +422,12 @@ func TestCacheStaleIfErrorKeepsObjectsAround(t *testing.T) {
 	key := []byte("key")
 	cache.Insert(key, staleIfErrorWriteOptions()).FinishWrite()
 
-	want := CacheState{Found: true, Usable: true, Stale: true, UsableIfError: true}
-	if state := cache.Lookup(key, nil).State; state != want {
-		t.Fatalf("state = %+v, want %+v", state, want)
+	entry := cache.Lookup(key, nil)
+	if want := (CacheState{Found: true, Usable: true, Stale: true}); entry.State != want {
+		t.Fatalf("state = %+v, want %+v", entry.State, want)
+	}
+	if period := entry.httpPeriod(); period != periodStaleIfError {
+		t.Fatalf("HTTP period = %d, want stale-if-error", period)
 	}
 }
 
