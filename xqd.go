@@ -144,19 +144,22 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	i.ds_response.WriteHeader(w.StatusCode)
 
 	if streaming {
-		// Streaming mode: redirect the body handle's writer to the HTTP
-		// response so that future body_write calls go directly to the client.
+		// Like production, the client gets what the body already holds, then
+		// what the guest writes next.
+		if _, err := io.Copy(i.ds_response, b); err != nil {
+			i.abilog.Printf("resp_send_downstream: body cut short: %s", err.Error())
+		}
 		b.RedirectWriter(i.ds_response)
 		return XqdStatusOK
 	}
 
 	// Non-streaming: copy body immediately and close.
+	// Production sends the body after the call returns, so a body that fails
+	// now is only cut short.
 	b = i.bodies.Take(int(bhandle))
 	defer func() { _ = b.Close() }()
-	_, err := io.Copy(i.ds_response, b)
-	if err != nil {
-		i.abilog.Printf("resp_send_downstream: copy err, got %s", err.Error())
-		return XqdError
+	if _, err := io.Copy(i.ds_response, b); err != nil {
+		i.abilog.Printf("resp_send_downstream: body cut short: %s", err.Error())
 	}
 
 	return XqdStatusOK
@@ -215,10 +218,10 @@ func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
 
 	defer func() { _ = resp.Body.Close() }()
 	if _, err := io.Copy(i.ds_response, resp.Body); err != nil {
-		i.abilog.Printf("send_downstream_pending: copy err, got %s", err.Error())
-		return XqdError
+		i.abilog.Printf("send_downstream_pending: body cut short: %s", err.Error())
+		return XqdStatusOK
 	}
-	for name, values := range resp.Trailer {
+	for name, values := range responseTrailers(resp)() {
 		i.ds_response.Header()[http.TrailerPrefix+http.CanonicalHeaderKey(name)] = slices.Clone(values)
 	}
 

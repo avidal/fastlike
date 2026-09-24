@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"testing/iotest"
 )
 
 func TestAutoDecompression(t *testing.T) {
@@ -59,18 +60,9 @@ func TestAutoDecompression(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create the response body
-			var body []byte
+			body := originalBody
 			if tt.compressBody {
-				var buf bytes.Buffer
-				gzWriter := gzip.NewWriter(&buf)
-				_, err := gzWriter.Write(originalBody)
-				if err != nil {
-					t.Fatalf("Failed to compress body: %v", err)
-				}
-				_ = gzWriter.Close()
-				body = buf.Bytes()
-			} else {
-				body = originalBody
+				body = gzipBytes(originalBody)
 			}
 
 			// Create the response
@@ -91,10 +83,7 @@ func TestAutoDecompression(t *testing.T) {
 				encodings = ContentEncodingsGzip
 			}
 
-			err := applyAutoDecompression(resp, encodings)
-			if err != nil && tt.expectedDecompressed {
-				t.Fatalf("applyAutoDecompression failed: %v", err)
-			}
+			applyAutoDecompression(resp, encodings)
 
 			// Read the response body
 			resultBody, err := io.ReadAll(resp.Body)
@@ -128,34 +117,66 @@ func TestAutoDecompression(t *testing.T) {
 }
 
 func TestAutoDecompressionInvalidGzip(t *testing.T) {
-	// Test that invalid gzip data is handled gracefully
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Encoding": []string{"gzip"}},
 		Body:       io.NopCloser(bytes.NewReader([]byte("this is not valid gzip data"))),
 	}
+	applyAutoDecompression(resp, ContentEncodingsGzip)
 
-	// Apply auto-decompression
-	err := applyAutoDecompression(resp, ContentEncodingsGzip)
-
-	// Should return an error but not crash
-	if err == nil {
-		t.Error("Expected error for invalid gzip data")
-	}
-
-	// Response should still be readable
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("Failed to read response body: %v", err)
-	}
-
-	// Body should be the original (invalid) gzip data
-	if string(body) != "this is not valid gzip data" {
-		t.Errorf("Unexpected body content: %q", body)
-	}
-
-	// Content-Encoding header should be removed even if decompression failed
 	if resp.Header.Get("Content-Encoding") != "" {
-		t.Errorf("Content-Encoding header was not removed after failed decompression")
+		t.Errorf("Content-Encoding header was not removed")
 	}
+	// Production reports corrupt data as a generic read error.
+	_, err := io.ReadAll(resp.Body)
+	if err == nil || bodyReadStatus(err) != XqdError {
+		t.Fatalf("reading a corrupt gzip body: err = %v, want a generic error", err)
+	}
+}
+
+// Production never checks the end of the gzip stream, so a truncated stream
+// or a bad checksum just ends the body.
+func TestAutoDecompressionIgnoresStreamEnd(t *testing.T) {
+	compressed := gzipBytes(bytes.Repeat([]byte("abcdefgh"), 1024))
+
+	badChecksum := bytes.Clone(compressed)
+	badChecksum[len(badChecksum)-8] ^= 0xff
+	for name, body := range map[string][]byte{
+		"truncated":    compressed[:len(compressed)/2],
+		"bad checksum": badChecksum,
+		"empty":        nil,
+	} {
+		resp := &http.Response{
+			Header: http.Header{"Content-Encoding": []string{"gzip"}},
+			Body:   io.NopCloser(bytes.NewReader(body)),
+		}
+		applyAutoDecompression(resp, ContentEncodingsGzip)
+		if _, err := io.ReadAll(resp.Body); err != nil {
+			t.Errorf("%s: read error %v, want a clean end", name, err)
+		}
+	}
+}
+
+// A failure of the compressed body itself stays visible through the
+// decompressor.
+func TestAutoDecompressionKeepsSourceFailure(t *testing.T) {
+	compressed := gzipBytes(bytes.Repeat([]byte("abcdefgh"), 1024))
+	truncated := &backendBodyError{err: io.ErrUnexpectedEOF}
+	resp := &http.Response{
+		Header: http.Header{"Content-Encoding": []string{"x-gzip"}},
+		Body:   io.NopCloser(io.MultiReader(bytes.NewReader(compressed[:len(compressed)/2]), iotest.ErrReader(truncated))),
+	}
+	applyAutoDecompression(resp, ContentEncodingsGzip)
+	_, err := io.ReadAll(resp.Body)
+	if bodyReadStatus(err) != XqdErrHttpIncomplete {
+		t.Fatalf("read error %v, want the incomplete source", err)
+	}
+}
+
+func gzipBytes(data []byte) []byte {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write(data)
+	_ = zw.Close()
+	return buf.Bytes()
 }

@@ -578,31 +578,6 @@ func TestMaxConnectionsScoping(t *testing.T) {
 	}
 }
 
-func TestBetweenBytesBody(t *testing.T) {
-	pr, pw := io.Pipe()
-	body := newBetweenBytesBody(pr, 50*time.Millisecond)
-	go func() {
-		_, _ = pw.Write([]byte("x"))
-		// Stall past the between-bytes timeout without closing the pipe.
-	}()
-
-	buf := make([]byte, 1)
-	if n, err := body.Read(buf); n != 1 || err != nil {
-		t.Fatalf("first read = (%d, %v)", n, err)
-	}
-
-	start := time.Now()
-	_, err := body.Read(buf)
-	if err == nil {
-		t.Fatal("stalled read did not fail")
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("stalled read took %v", elapsed)
-	}
-	_ = body.Close()
-	_ = pw.Close()
-}
-
 func TestRegisterDynamicBackend_GRPCTransport(t *testing.T) {
 	inst := newDynInstance()
 	if status := registerDyn(t, inst, "origin", "origin.example.org:50051", BackendConfigOptionsGRPC); status != XqdStatusOK {

@@ -121,7 +121,7 @@ func TestAddBackend_AppliesReliabilityWrap(t *testing.T) {
 	i := &Instance{backends: map[string]*Backend{}}
 	i.addBackend("flaky", &Backend{Handler: inner, UptimePercent: ptrU8(0)})
 
-	h, _ := i.resolveBackendHandler("flaky")
+	h, _, _ := i.resolveBackendHandler("flaky")
 	for n := 0; n < 10; n++ {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "http://example/", nil)

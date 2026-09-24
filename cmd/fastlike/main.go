@@ -34,6 +34,8 @@ var cliTransport = &http.Transport{
 	IdleConnTimeout:       90 * time.Second,
 	TLSHandshakeTimeout:   10 * time.Second,
 	ExpectContinueTimeout: 1 * time.Second,
+	// Production never asks for compression the guest did not ask for.
+	DisableCompression: true,
 }
 
 func main() {
