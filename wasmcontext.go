@@ -8,20 +8,12 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v46"
 )
 
-// wasmContext holds the compiled wasm module, engine, and shared linker that are reused across all requests.
-// This allows amortizing the expensive compilation and linking steps across multiple request instances.
-//
-// Thread-safe sharing model:
-//   - engine, module, linker: Read-only, safely shared across all instances
-//   - store: Created fresh per-request in Instance.setup()
-//   - wasm instance: Created fresh per-request in Instance.setup()
-//
-// The linker can be shared because host functions retrieve per-request state from the store's
-// attached data (via caller.Data()) rather than capturing instance state in closures.
+// wasmContext holds what an Instance compiles once and reuses for every request it serves.
+// Instances must not share it: cancelling a request interrupts every guest of the engine.
 type wasmContext struct {
-	engine *wasmtime.Engine // Shared wasm engine
-	module *wasmtime.Module // Compiled wasm module (shared, read-only)
-	linker *wasmtime.Linker // Shared linker with host functions (shared, read-only)
+	engine *wasmtime.Engine
+	module *wasmtime.Module
+	linker *wasmtime.Linker
 }
 
 // guestTrap is what a hostcall panics with to trap the guest instead of
@@ -253,6 +245,15 @@ func safeWrap1i64(name string, fn func(*Instance, int64) int32) func(*wasmtime.C
 	}
 }
 
+// Resource limits of Fastly's production runtime for core wasm modules.
+const (
+	maxWasmStack         = 1000000
+	maxWasmMemoryBytes   = 128 << 20
+	maxWasmTableElements = 100000
+	maxWasmTables        = 1
+	maxWasmMemories      = 2
+)
+
 // newEngineConfig builds the wasmtime config every engine in Fastlike is created from,
 // so that they all accept the same guests. profileCfg may be nil.
 func newEngineConfig(profileCfg *profile.CompileConfig) *wasmtime.Config {
@@ -268,8 +269,14 @@ func newEngineConfig(profileCfg *profile.CompileConfig) *wasmtime.Config {
 	// making swizzle instructions slow and relaxed-simd essentially useless, sigh.
 	config.SetWasmRelaxedSIMDDeterministic(true)
 
-	// Note: Epoch interruption is temporarily disabled due to bugs in wasmtime-go v37
-	// TODO: Re-enable when upgrading: config.SetEpochInterruption(true)
+	// Production's Wasmtime is built without GC and threads, and rejects guests using them.
+	config.SetGCSupport(false)
+	config.SetWasmThreads(false)
+
+	config.SetMaxWasmStack(maxWasmStack)
+
+	// Lets a cancelled request interrupt its guest.
+	config.SetEpochInterruption(true)
 
 	if profileCfg != nil {
 		if strat, supported := profile.NativeProfilerStrategy(profileCfg.Mode); supported {
@@ -280,9 +287,8 @@ func newEngineConfig(profileCfg *profile.CompileConfig) *wasmtime.Config {
 	return config
 }
 
-// compile creates a wasm engine, module, and shared linker from the provided wasm bytes.
+// compile creates a wasm engine, module, and linker from the provided wasm bytes.
 // The compiled artifacts are stored in wasmContext for reuse across requests.
-// This is called once per Fastlike instance (or when reloading).
 //
 // profileCfg carries compile-time profile configuration. When mode is
 // native or combined, SetProfiler is called on the engine config before
@@ -298,9 +304,7 @@ func (i *Instance) compile(wasmbytes []byte, profileCfg *profile.CompileConfig) 
 	module, err := wasmtime.NewModule(engine, wasmbytes)
 	check(err)
 
-	// Create a shared linker and link all host functions
-	// The linker is shared across all requests because host functions retrieve
-	// per-request state from caller.Data() rather than capturing it in closures
+	// Reused across requests, so host functions read per-request state from caller.Data().
 	linker := wasmtime.NewLinker(engine)
 	check(linker.DefineWasi())
 	link(linker)
@@ -313,7 +317,6 @@ func (i *Instance) compile(wasmbytes []byte, profileCfg *profile.CompileConfig) 
 	// failure. This only fills in imports left undefined by link/linklegacy.
 	check(linker.DefineUnknownImportsAsTraps(module))
 
-	// Store for reuse across all request instances
 	i.wasmctx = &wasmContext{
 		engine: engine,
 		module: module,

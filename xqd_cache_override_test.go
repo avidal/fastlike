@@ -3,8 +3,6 @@ package fastlike
 import (
 	"strings"
 	"testing"
-
-	"github.com/bytecodealliance/wasmtime-go/v46"
 )
 
 // The guest re-exports the cache override imports, so the tests go through the
@@ -16,6 +14,7 @@ const cacheOverrideGuestWat = `(module
   (import "env" "xqd_req_cache_override_set" (func $legacy_v1 (param i32 i32 i32 i32) (result i32)))
   (import "env" "xqd_req_cache_override_v2_set" (func $legacy_v2 (param i32 i32 i32 i32 i32 i32) (result i32)))
   (memory (export "memory") 1)
+  (func (export "_start"))
   (export "v1" (func $v1))
   (export "v2" (func $v2))
   (export "v3" (func $v3))
@@ -36,12 +35,10 @@ type cacheOverrideGuest struct {
 
 func newCacheOverrideGuest(t *testing.T) *cacheOverrideGuest {
 	t.Helper()
-	wasmbytes, err := wasmtime.Wat2Wasm(cacheOverrideGuestWat)
-	if err != nil {
-		t.Fatalf("wat2wasm: %v", err)
+	i := newWatInstance(t, cacheOverrideGuestWat)
+	if _, err := i.setup(); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
-	i := NewInstance(wasmbytes)
-	i.setup()
 	handle, _ := i.requests.New()
 	return &cacheOverrideGuest{instance: i, handle: int32(handle)}
 }

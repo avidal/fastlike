@@ -434,3 +434,15 @@ Full HTTP caching support with request collapsing and surrogate key management -
 ### Request Loops Prevention
 
 Fastlike adds "Fastlike" to the `cdn-loop` header to prevent infinite request loops. If a loop is detected, it returns a 508 Loop Detected error.
+
+### Runtime Limits
+
+The WebAssembly engine is configured like the one Fastly runs in production, so a module that works locally should also be accepted once deployed.
+Modules using threads (shared memories or atomics), `externref`, exceptions or the GC proposal are refused, as production refuses to deploy them.
+
+Each request gets a fresh instance with the same limits as production.
+The wasm stack is 1,000,000 bytes deep, and linear memory cannot grow past 128 MiB, where `memory.grow` returns -1.
+The table cannot grow past 100,000 elements, and a module can define at most two memories and one table.
+A module that cannot be instantiated within these limits gets a 500 for every request.
+
+When a request is cancelled, for instance because the client went away, the guest is interrupted even if it is stuck in a loop.

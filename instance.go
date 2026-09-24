@@ -2,11 +2,11 @@ package fastlike
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -42,7 +42,6 @@ func isCleanExit(err error) bool {
 // The Instance type itself has no exported fields or methods (besides http.Handler), as all
 // configuration is done via functional options passed to NewInstance() or Instantiate().
 type Instance struct {
-	// wasmctx holds the compiled wasm module, shared across all instances
 	wasmctx *wasmContext
 
 	// Per-request wasm state (reset after each request)
@@ -357,10 +356,9 @@ func (i *Instance) reset() {
 	i.executionStartTime = time.Time{}
 }
 
-// setup initializes a fresh wasm instance for a new request.
-// It creates a new store with attached instance data, configures WASI, and instantiates the module
-// using the shared linker.
-func (i *Instance) setup() {
+// setup instantiates the guest for a new request and returns its entry point.
+// Failures are returned so that the request gets a 500, like in production.
+func (i *Instance) setup() (*wasmtime.Func, error) {
 	// Ensure critical fields are initialized
 	if i.wasmctx == nil || i.wasmctx.engine == nil || i.wasmctx.module == nil || i.wasmctx.linker == nil {
 		panic("wasmctx not properly initialized")
@@ -369,6 +367,7 @@ func (i *Instance) setup() {
 	// Create a fresh store for this request with the Instance attached as data
 	// Host functions retrieve this Instance via caller.Data() to access per-request state
 	i.store = wasmtime.NewStoreWithData(i.wasmctx.engine, i)
+	i.store.Limiter(maxWasmMemoryBytes, maxWasmTableElements, 1, maxWasmTables, maxWasmMemories)
 
 	// Configure WASI (WebAssembly System Interface) for this store
 	wasicfg := wasmtime.NewWasiConfig()
@@ -382,44 +381,50 @@ func (i *Instance) setup() {
 	)
 	i.store.SetWasi(wasicfg)
 
-	// Set epoch deadline for interruption
-	// Using 1 epoch so that a single IncrementEpoch() call will trigger interruption
+	// Lets a cancelled request interrupt the guest.
 	i.store.SetEpochDeadline(1)
 
 	// Initialize memory early with a placeholder so functions don't crash
 	// This will be replaced with the real memory after instantiation
 	i.memory = &Memory{nil}
 
-	// Instantiate the module using the shared linker
-	// The linker was configured at compile time with all host functions
 	var err error
 	i.wasm, err = i.wasmctx.linker.Instantiate(i.store, i.wasmctx.module)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	// Get memory export
-	memExport := i.wasm.GetExport(i.store, "memory")
-	if memExport == nil {
-		panic("memory export not found in wasm module")
+	var mem *wasmtime.Memory
+	if export := i.wasm.GetExport(i.store, "memory"); export != nil {
+		mem = export.Memory()
 	}
-	memObj := memExport.Memory()
-	if memObj == nil {
-		panic("memory export is not a memory object")
+	if mem == nil {
+		return nil, errors.New("the module does not export a memory named \"memory\"")
 	}
-	i.memory = &Memory{&wasmMemory{store: i.store, mem: memObj}}
+	i.memory = &Memory{&wasmMemory{store: i.store, mem: mem}}
+
+	entry := i.wasm.GetFunc(i.store, "_start")
+	if entry == nil {
+		return nil, errors.New("the module does not export a function named \"_start\"")
+	}
+	return entry, nil
 }
 
 // ServeHTTP serves the supplied request and response pair. This is not safe to call twice.
 func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	i.setup()
+	// Clean up even when setup fails.
+	defer i.reset()
 
-	// Preserve the original writer for narrow code paths (e.g. the
-	// httptest.ResponseRecorder workaround below) that mutate the recorder
-	// directly. The trace wrapper observes the same underlying writer, so
-	// recorded status/byte counts still reflect those direct mutations
-	// only via Status() snapshots taken at finalize time.
-	originalWriter := w
+	// Claim the captured header names before any path can return early.
+	i.ds_originalHeaders = claimOriginalHeaderNames(r)
+
+	entry, err := i.setup()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("Error instantiating wasm program.\n"))
+		_, _ = w.Write([]byte(err.Error()))
+		return
+	}
 
 	// beginTrace returns w wrapped in a traceResponseWriter when profiling
 	// is enabled, or w unchanged when it is off. Shadowing w forces every
@@ -427,14 +432,8 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// to the guest) through the wrapper.
 	w = i.beginTrace(w, r)
 
-	// Defer registration order matters: reset() registered first runs
-	// second, so finalizeTrace registered second runs first while
-	// ds_request/ds_response/ds_context are still populated.
-	defer i.reset()
+	// Runs before reset, which clears the request state the trace reads.
 	defer i.finalizeTrace()
-
-	// Claim the captured header names before any path can return early.
-	i.ds_originalHeaders = claimOriginalHeaderNames(r)
 
 	// Check for request loops using the cdn-loop header
 	// We add "fastlike" to this header on each subrequest
@@ -462,47 +461,25 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.ds_response = w
 	i.ds_context = r.Context()
 
-	// Start a goroutine to handle request cancellation (timeout/deadline/client disconnect)
-	// If the context cancels before execution completes, we interrupt the wasm program
-	donech := make(chan struct{}, 1)
-	go func(ctx context.Context) {
-		select {
-		case <-ctx.Done():
-			// Context cancelled - interrupt the wasm execution
-			i.wasmctx.engine.IncrementEpoch()
-		case <-donech:
-			// Execution completed normally - nothing to do
-		}
-	}(r.Context())
+	// Interrupt the guest when the request is cancelled.
+	interrupted := make(chan struct{})
+	stopInterrupt := context.AfterFunc(r.Context(), func() {
+		i.wasmctx.engine.IncrementEpoch()
+		close(interrupted)
+	})
 
-	// Call the wasm program's entrypoint
 	// The guest program is responsible for:
 	// 1. Getting a handle to the downstream request (via body_downstream_get)
 	// 2. Processing the request (making subrequests, manipulating headers, etc.)
 	// 3. Sending a response downstream (via resp_send_downstream)
-
-	// Start tracking CPU time before entering guest code
 	i.startExecution()
-
-	// Look up the "_start" function export
-	startExport := i.wasm.GetExport(i.store, "_start")
-	if startExport == nil {
-		panic("_start export not found in wasm module")
-	}
-
-	entry := startExport.Func()
-	if entry == nil {
-		panic("'_start' export is not a function")
-	}
-
-	// Execute the guest program
-	_, err := entry.Call(i.store)
-
-	// Stop tracking CPU time after guest code completes
+	_, err = entry.Call(i.store)
 	i.stopExecution()
 
-	// Signal that execution is complete
-	donech <- struct{}{}
+	// A late interrupt must not reach the next request served by this instance.
+	if !stopInterrupt() {
+		<-interrupted
+	}
 
 	// Handle wasm execution errors.
 	// A clean exit (exit code 0) is normal for WASI programs — wasmtime
@@ -521,24 +498,6 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("Error running wasm program.\n"))
 		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
 		_, _ = w.Write([]byte(err.Error()))
-		return
-	}
-
-	// Workaround for wasmtime-go v37 epoch interruption bugs:
-	// If the context was cancelled but the wasm completed "successfully",
-	// we need to override the response to indicate an interrupt occurred.
-	// This only works with httptest.ResponseRecorder (used in tests).
-	// TODO: Remove this workaround when upgrading to a fixed wasmtime-go version
-	if i.ds_context.Err() != nil {
-		i.markOutcome(profile.TraceOutcomeCtxCanceled)
-		if rec, ok := originalWriter.(*httptest.ResponseRecorder); ok {
-			// Override the response to indicate an interrupt
-			rec.Code = http.StatusInternalServerError
-			rec.Body.Reset()
-			_, _ = rec.Body.WriteString("Error running wasm program.\n")
-			_, _ = rec.Body.WriteString("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n")
-			_, _ = rec.Body.WriteString("wasm trap: interrupt")
-		}
 	}
 }
 
