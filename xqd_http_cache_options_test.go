@@ -165,7 +165,7 @@ func TestRequestedRange(t *testing.T) {
 func TestContentRange(t *testing.T) {
 	tests := []struct {
 		r          byteRange
-		total      int64
+		total      uint64
 		totalKnown bool
 		want       string
 	}{

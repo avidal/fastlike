@@ -99,13 +99,18 @@ func insertTestObject(t *testing.T, i *Instance, key string, obj replaceTestObje
 	}
 }
 
+// writeReplaceStrategy lays out replace options without request headers.
+func writeReplaceStrategy(i *Instance, strategy CacheReplaceStrategy) {
+	i.memory.WriteUint32(replaceTestReplaceOpts, uint32(HandleInvalid))
+	i.memory.WriteUint32(replaceTestReplaceOpts+4, uint32(strategy))
+}
+
 // beginReplace starts a replace for key with the given strategy and returns the replace handle.
 func beginReplace(t *testing.T, i *Instance, key string, strategy CacheReplaceStrategy) int32 {
 	t.Helper()
 	keyPtr, keyLen := writeCacheKey(i, key)
 	mask := CacheReplaceOptionsMaskReplaceStrategy
-	i.memory.WriteUint32(replaceTestReplaceOpts, uint32(HandleInvalid))
-	i.memory.WriteUint32(replaceTestReplaceOpts+4, uint32(strategy))
+	writeReplaceStrategy(i, strategy)
 	if status := i.xqd_cache_replace(keyPtr, keyLen, mask, replaceTestReplaceOpts, replaceTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("cache_replace status = %d, want %d", status, XqdStatusOK)
 	}
@@ -245,8 +250,8 @@ func TestCacheReplaceExposesExistingObject(t *testing.T) {
 	if status := i.xqd_cache_replace_get_hits(handle, replaceTestValueOut); status != XqdStatusOK {
 		t.Fatalf("replace_get_hits status = %d", status)
 	}
-	if got := i.memory.Uint64(replaceTestValueOut); got != 1 {
-		t.Fatalf("replace_get_hits = %d, want 1 after one lookup", got)
+	if got := i.memory.Uint64(replaceTestValueOut); got != 2 {
+		t.Fatalf("replace_get_hits = %d, want 2 after one lookup and the replace", got)
 	}
 
 	if status := i.xqd_cache_replace_get_user_metadata(handle, replaceTestMetadataOut, 128, replaceTestNwrittenOut); status != XqdStatusOK {
@@ -534,8 +539,7 @@ func TestCacheReplaceOptionValidation(t *testing.T) {
 	i := newCacheReplaceTestInstance()
 	keyPtr, keyLen := writeCacheKey(i, "key")
 
-	i.memory.WriteUint32(replaceTestReplaceOpts, uint32(HandleInvalid))
-	i.memory.WriteUint32(replaceTestReplaceOpts+4, 42)
+	writeReplaceStrategy(i, 42)
 	if status := i.xqd_cache_replace(keyPtr, keyLen, CacheReplaceOptionsMaskReplaceStrategy, replaceTestReplaceOpts, replaceTestHandleOut); status != XqdErrInvalidArgument {
 		t.Fatalf("unknown strategy status = %d, want %d", status, XqdErrInvalidArgument)
 	}
@@ -592,7 +596,7 @@ func TestCacheReplaceWaitStrategyWaitsForOtherOwners(t *testing.T) {
 
 	select {
 	case r := <-second:
-		if r.Existing != obj {
+		if r.Existing.Object != obj {
 			t.Fatal("the waiting replace did not see the object inserted before it")
 		}
 	case <-time.After(2 * time.Second):
@@ -664,13 +668,13 @@ func TestCacheReplaceFindsVaryVariantByRequestHeaders(t *testing.T) {
 	brObj := cache.Insert(key, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute), VaryRule: "accept-encoding", RequestHeaders: br})
 	brObj.FinishWrite()
 
-	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: gzip}, "owner").Existing; got != gzipObj {
+	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: gzip}, "owner").Existing.Object; got != gzipObj {
 		t.Fatal("replace with gzip headers did not find the gzip variant")
 	}
-	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: br}, "owner").Existing; got != brObj {
+	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: br}, "owner").Existing.Object; got != brObj {
 		t.Fatal("replace with br headers did not find the br variant")
 	}
-	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: []byte("Accept-Encoding: zstd\r\n")}, "owner").Existing; got != nil {
+	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: []byte("Accept-Encoding: zstd\r\n")}, "owner").Existing.Object; got != nil {
 		t.Fatal("replace with unmatched headers found a variant")
 	}
 	if got := cache.Lookup(key, &CacheLookupOptions{RequestHeaders: br}).Object; got != brObj {
@@ -700,7 +704,7 @@ func TestCacheReplaceWaitStrategyQueuesBehindTransactions(t *testing.T) {
 
 	select {
 	case r := <-waited:
-		if r.Existing != inserted {
+		if r.Existing.Object != inserted {
 			t.Fatal("the waiting replace did not see the object the transaction inserted")
 		}
 	case <-time.After(2 * time.Second):
@@ -778,7 +782,7 @@ func TestCacheVaryRuleWithSeveralHeaders(t *testing.T) {
 	enObj := cache.Insert(key, &CacheWriteOptions{MaxAgeNs: uint64(time.Minute), VaryRule: "accept-encoding accept-language", RequestHeaders: gzipEn})
 	enObj.FinishWrite()
 
-	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: gzipFr}, "owner").Existing; got != frObj {
+	if got := cache.Replace(key, &CacheReplaceOptions{RequestHeaders: gzipFr}, "owner").Existing.Object; got != frObj {
 		t.Fatal("replace did not find the fr variant of a space separated vary rule")
 	}
 	if got := cache.Lookup(key, &CacheLookupOptions{RequestHeaders: gzipEn}).Object; got != enObj {
@@ -858,8 +862,7 @@ func TestCacheTransactionLookupCollapsesOnForeignTransaction(t *testing.T) {
 func TestCacheReplaceRejectsBadOutputPointers(t *testing.T) {
 	i := newCacheReplaceTestInstance()
 	keyPtr, keyLen := writeCacheKey(i, "key")
-	i.memory.WriteUint32(replaceTestReplaceOpts, uint32(HandleInvalid))
-	i.memory.WriteUint32(replaceTestReplaceOpts+4, uint32(CacheReplaceImmediate))
+	writeReplaceStrategy(i, CacheReplaceImmediate)
 
 	pastTheEnd := int32(i.memory.Len())
 	if status := i.xqd_cache_replace(keyPtr, keyLen, CacheReplaceOptionsMaskReplaceStrategy, replaceTestReplaceOpts, pastTheEnd); status != XqdErrInvalidArgument {

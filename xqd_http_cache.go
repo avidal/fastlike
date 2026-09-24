@@ -176,7 +176,7 @@ func (i *Instance) xqd_http_cache_lookup(
 	}
 
 	entry := i.cache.Lookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders})
-	handleID := i.newHTTPCacheHandle(settledTransaction(key, entry, nil), entry.head(), lookup)
+	handleID := i.newHTTPCacheHandle(settledTransaction(key, entry, nil), lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -198,10 +198,10 @@ func (i *Instance) xqd_http_cache_transaction_lookup(
 
 	tx := i.cache.TransactionLookup(key, &CacheLookupOptions{RequestHeaders: lookup.requestHeaders}, i)
 	// A stale-if-error object is only usable after a failed revalidation.
-	if tx.Entry.State.UsableIfError && !tx.Entry.State.MustInsertOrUpdate {
+	if !tx.Entry.State.MustInsertOrUpdate && tx.Entry.httpPeriod() == periodStaleIfError {
 		tx = i.cache.TransactionRefresh(tx)
 	}
-	handleID := i.newHTTPCacheHandle(tx, tx.Entry.head(), lookup)
+	handleID := i.newHTTPCacheHandle(tx, lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(handleID))
 
 	return XqdStatusOK
@@ -248,12 +248,12 @@ func (i *Instance) xqd_http_cache_transaction_insert_and_stream_back(
 	if status != XqdStatusOK {
 		return status
 	}
-	obj, err := i.cache.TransactionInsert(handle.Transaction, writeOpts)
+	entry, err := i.cache.TransactionInsertAndStreamBack(handle.Transaction, writeOpts)
 	if err != nil {
 		return transactionWriteStatus(err)
 	}
-	writeBodyID := i.newCacheInsertBody(obj, handle.Transaction.Key)
-	readHandleID := i.newHTTPCacheHandle(usableTransaction(handle.Transaction.Key, obj), writeOpts.Response, handle.lookup)
+	writeBodyID := i.newCacheInsertBody(entry.Object, handle.Transaction.Key)
+	readHandleID := i.newHTTPCacheHandle(settledTransaction(handle.Transaction.Key, entry, nil), handle.lookup)
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
@@ -316,7 +316,7 @@ func (i *Instance) xqd_http_cache_transaction_update(
 	if status != XqdStatusOK {
 		return status
 	}
-	if _, err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
+	if err := i.cache.TransactionUpdate(handle.Transaction, writeOpts); err != nil {
 		return transactionWriteStatus(err)
 	}
 
@@ -338,11 +338,11 @@ func (i *Instance) xqd_http_cache_transaction_update_and_return_fresh(
 	if status != XqdStatusOK {
 		return status
 	}
-	obj, err := i.cache.TransactionUpdate(handle.Transaction, writeOpts)
+	entry, err := i.cache.TransactionUpdateAndReturnFresh(handle.Transaction, writeOpts)
 	if err != nil {
 		return transactionWriteStatus(err)
 	}
-	freshHandleID := i.newHTTPCacheHandle(usableTransaction(handle.Transaction.Key, obj), writeOpts.Response, handle.lookup)
+	freshHandleID := i.newHTTPCacheHandle(settledTransaction(handle.Transaction.Key, entry, nil), handle.lookup)
 	i.memory.WriteUint32(cache_handle_out, uint32(freshHandleID))
 
 	return XqdStatusOK
@@ -404,8 +404,8 @@ func (i *Instance) xqd_http_cache_get_suggested_backend_request(
 	}
 
 	backendReq := cloneRequestHead(handle.lookup.request)
-	if handle.storedResponse != nil {
-		prepareRevalidationRequest(backendReq, handle.storedResponse.header)
+	if stored := handle.storedResponse(); stored != nil {
+		prepareRevalidationRequest(backendReq, stored.header)
 	} else {
 		prepareFullBackendRequest(backendReq)
 	}
@@ -438,25 +438,15 @@ func newHTTPCacheLookup(req *RequestHandle) *httpCacheLookup {
 	}
 }
 
-// newHTTPCacheHandle registers a cache handle with the head and length it
-// found, which production keeps per handle.
-// Writes pass the head they stored, which a waiter they woke may replace.
-func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, head *storedResponse, lookup *httpCacheLookup) int {
+func (i *Instance) newHTTPCacheHandle(tx *CacheTransaction, lookup *httpCacheLookup) int {
 	id := i.cacheHandles.New(tx)
-	handle := i.cacheHandles.Get(id)
-	handle.lookup = lookup
-	if tx.Entry.Object != nil {
-		handle.storedResponse = head
-		handle.foundLength, handle.foundLengthKnown = tx.Entry.Object.KnownLength()
-	}
+	i.cacheHandles.Get(id).lookup = lookup
 	return id
 }
 
-func (e *CacheEntry) head() *storedResponse {
-	if e.Object == nil {
-		return nil
-	}
-	return e.Object.Response
+// storedResponse is the head the handle's lookup found, as it was then.
+func (h *CacheHandle) storedResponse() *storedResponse {
+	return h.Transaction.Entry.Metadata.Response
 }
 
 // httpCacheHandle returns an HTTP cache handle, rejecting core cache ones like
@@ -469,11 +459,11 @@ func (i *Instance) httpCacheHandle(cache_handle int32) *CacheHandle {
 	return handle
 }
 
-// httpCacheObject returns the object an HTTP cache handle found, or the status
-// an accessor returns without one.
+// httpCacheFound returns the entry of an HTTP cache handle that found an
+// object, or the status an accessor returns without one.
 // Objects kept only for revalidation do not count, unusable stale-if-error
 // ones do.
-func (i *Instance) httpCacheObject(cache_handle int32) (*CachedObject, int32) {
+func (i *Instance) httpCacheFound(cache_handle int32) (*CacheEntry, int32) {
 	handle := i.httpCacheHandle(cache_handle)
 	if handle == nil || handle.Transaction.Entry == nil {
 		return nil, XqdErrInvalidHandle
@@ -481,13 +471,27 @@ func (i *Instance) httpCacheObject(cache_handle int32) (*CachedObject, int32) {
 	if !handle.Transaction.Entry.State.Found {
 		return nil, XqdErrNone
 	}
-	return handle.Transaction.Entry.Object, XqdStatusOK
+	return handle.Transaction.Entry, XqdStatusOK
 }
 
 // httpUsable tells whether the HTTP cache can serve what a lookup found,
 // which within stale-if-error takes a failed revalidation.
-func httpUsable(state CacheState) bool {
-	return state.Usable && (!state.UsableIfError || state.RevalidationFailed)
+// What a write returns is always usable.
+func httpUsable(e *CacheEntry) bool {
+	if e.State.StreamedBack {
+		return true
+	}
+	if !e.State.Usable {
+		return false
+	}
+	switch e.httpPeriod() {
+	case periodFresh, periodStale:
+		return true
+	case periodStaleIfError:
+		return e.State.RevalidationFailed
+	default:
+		return false
+	}
 }
 
 // cloneRequestHead copies the method, URL, headers and host of a request.
@@ -677,7 +681,7 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 	response.Trailer = resp.Trailer.Clone()
 
 	var storageAction uint32
-	if stored := handle.storedResponse; stored != nil && resp.StatusCode == http.StatusNotModified {
+	if stored := handle.storedResponse(); stored != nil && resp.StatusCode == http.StatusNotModified {
 		storageAction = HttpStorageActionUpdate
 		response.StatusCode = stored.status
 		response.Status = http.StatusText(stored.status)
@@ -716,8 +720,8 @@ func (i *Instance) xqd_http_cache_get_found_response(
 	}
 
 	entry := handle.Transaction.Entry
-	stored := handle.storedResponse
-	if !httpUsable(entry.State) || entry.Object == nil || stored == nil {
+	stored := handle.storedResponse()
+	if !httpUsable(entry) || stored == nil {
 		return XqdErrNone
 	}
 
@@ -739,7 +743,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 		// always reflects the request, whatever the stored status.
 		if r, ok := requestedRange(handle.lookup.request); ok {
 			bodyRange = r
-			if contentRange, ok := r.contentRange(handle.foundLength, handle.foundLengthKnown); ok {
+			if contentRange, ok := r.contentRange(entry.Metadata.Length, entry.Metadata.LengthKnown); ok {
 				status = http.StatusPartialContent
 				header.Add("Content-Range", contentRange)
 			}
@@ -755,7 +759,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 
 	var bodyID int
 	if withBody {
-		reader := cacheRangeReader(entry.Object, bodyRange, true)
+		reader := cacheRangeReader(entry.Object, entry.Metadata.Length, entry.Metadata.LengthKnown, bodyRange, true)
 		bodyID, _ = i.bodies.NewReader(io.NopCloser(reader))
 	} else {
 		bodyID, _ = i.bodies.NewBuffer()
@@ -768,7 +772,8 @@ func (i *Instance) xqd_http_cache_get_found_response(
 }
 
 // xqd_http_cache_get_state gets cache lookup state.
-// Like production, found and usable go together.
+// Like production, found and usable go together, and the period comes from
+// what the lookup saw, found or not.
 func (i *Instance) xqd_http_cache_get_state(
 	cache_handle int32,
 	cache_lookup_state_out int32,
@@ -780,18 +785,18 @@ func (i *Instance) xqd_http_cache_get_state(
 		return XqdErrInvalidHandle
 	}
 
-	state := handle.Transaction.Entry.State
+	entry := handle.Transaction.Entry
 	var flags uint32
-	if httpUsable(state) {
+	if httpUsable(entry) {
 		flags |= CacheLookupStateFound | CacheLookupStateUsable
 	}
-	if state.Stale {
+	switch entry.httpPeriod() {
+	case periodStale:
 		flags |= CacheLookupStateStale
+	case periodStaleIfError:
+		flags |= CacheLookupStateStale | CacheLookupStateUsableIfError
 	}
-	if state.UsableIfError {
-		flags |= CacheLookupStateUsableIfError
-	}
-	if state.MustInsertOrUpdate {
+	if entry.State.MustInsertOrUpdate {
 		flags |= CacheLookupStateMustInsertOrUpdate
 	}
 
@@ -807,17 +812,11 @@ func (i *Instance) xqd_http_cache_get_length(
 ) int32 {
 	i.abilog.Println("http_cache_get_length")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
-
-	if obj.Length != nil {
-		i.memory.WriteUint64(length_out, *obj.Length)
-		return XqdStatusOK
-	}
-
-	return XqdErrNone
+	return i.writeKnownLength(&found.Metadata, length_out)
 }
 
 // xqd_http_cache_get_max_age_ns gets max age in nanoseconds
@@ -827,12 +826,12 @@ func (i *Instance) xqd_http_cache_get_max_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_max_age_ns")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
+	i.memory.WriteUint64(duration_out, found.Metadata.MaxAgeNs)
 
 	return XqdStatusOK
 }
@@ -844,13 +843,13 @@ func (i *Instance) xqd_http_cache_get_stale_while_revalidate_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_while_revalidate_ns")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
 	// Always return the value (even if 0) - the Rust library expects it to be present
-	i.memory.WriteUint64(duration_out, obj.StaleWhileRevalidateNs)
+	i.memory.WriteUint64(duration_out, found.Metadata.StaleWhileRevalidateNs)
 
 	return XqdStatusOK
 }
@@ -862,12 +861,12 @@ func (i *Instance) xqd_http_cache_get_stale_if_error_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_if_error_ns")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(duration_out, obj.StaleIfErrorNs)
+	i.memory.WriteUint64(duration_out, found.Metadata.StaleIfErrorNs)
 
 	return XqdStatusOK
 }
@@ -891,13 +890,12 @@ func (i *Instance) xqd_http_cache_get_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_age_ns")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	age := obj.GetAge()
-	i.memory.WriteUint64(duration_out, age)
+	i.memory.WriteUint64(duration_out, found.Metadata.AgeNs)
 
 	return XqdStatusOK
 }
@@ -909,12 +907,12 @@ func (i *Instance) xqd_http_cache_get_hits(
 ) int32 {
 	i.abilog.Println("http_cache_get_hits")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
+	i.memory.WriteUint64(hits_out, found.Metadata.Hits)
 
 	return XqdStatusOK
 }
@@ -926,13 +924,13 @@ func (i *Instance) xqd_http_cache_get_sensitive_data(
 ) int32 {
 	i.abilog.Println("http_cache_get_sensitive_data")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
 	sensitive := uint32(0)
-	if obj.SensitiveData {
+	if found.Object.SensitiveData {
 		sensitive = 1
 	}
 
@@ -950,15 +948,15 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 ) int32 {
 	i.abilog.Println("http_cache_get_surrogate_keys")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
 	// Join surrogate keys with spaces (empty list is OK - write 0 bytes)
 	keysStr := ""
-	if len(obj.SurrogateKeys) > 0 {
-		for idx, key := range obj.SurrogateKeys {
+	if len(found.Object.SurrogateKeys) > 0 {
+		for idx, key := range found.Object.SurrogateKeys {
 			if idx > 0 {
 				keysStr += " "
 			}
@@ -990,12 +988,12 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 ) int32 {
 	i.abilog.Println("http_cache_get_vary_rule")
 
-	obj, status := i.httpCacheObject(cache_handle)
+	found, status := i.httpCacheFound(cache_handle)
 	if status != XqdStatusOK {
 		return status
 	}
 
-	ruleBytes := []byte(obj.VaryRule) // Empty string is OK - write 0 bytes
+	ruleBytes := []byte(found.Object.VaryRule) // Empty string is OK - write 0 bytes
 
 	if len(ruleBytes) > int(rule_out_len) {
 		i.memory.WriteUint32(nwritten_out, uint32(len(ruleBytes)))

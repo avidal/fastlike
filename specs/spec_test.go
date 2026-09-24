@@ -440,6 +440,9 @@ func TestFastlike(t *testing.T) {
 			_, _ = fmt.Fprintf(w, "v%d", n)
 		})))
 		for n, want := range []string{"v1", "v1", "v3"} {
+			// A max-age=0 response stays fresh for the millisecond it was
+			// stored in.
+			time.Sleep(2 * time.Millisecond)
 			if w := serveGet(inst, "/proxy/sie", nil); w.Code != http.StatusOK || w.Body.String() != want {
 				st.Errorf("request %d: got %d %q, want 200 %q", n+1, w.Code, w.Body.String(), want)
 			}
@@ -456,6 +459,7 @@ func TestFastlike(t *testing.T) {
 		w := serveGet(inst, "/core-cache", nil)
 		want := strings.Join([]string{
 			"fresh: found=true stale_while_revalidate=Some(0ns)",
+			"snapshot: first_hits=Some(1) second_hits=Some(2) length=Some(Some(10))",
 			"expired lookup: found=false",
 			"expired transaction: found=false stale=false must_insert=true must_insert_or_update=true",
 			"stale transaction: found=true stale=true must_insert=false must_insert_or_update=true",

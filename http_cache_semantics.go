@@ -413,14 +413,13 @@ func requestedRange(req *http.Request) (byteRange, bool) {
 // Prefix and suffix ranges of an object of unknown length get no 206.
 // The arithmetic wraps like production's release build does, for instance
 // with a suffix longer than the object.
-func (r byteRange) contentRange(total int64, totalKnown bool) (string, bool) {
+func (r byteRange) contentRange(t uint64, totalKnown bool) (string, bool) {
 	if !totalKnown {
 		if r.hasFirst && r.hasLast {
 			return fmt.Sprintf("bytes %d-%d/*", r.first, r.last), true
 		}
 		return "", false
 	}
-	t := uint64(total)
 	first, last := r.first, r.last
 	switch {
 	case !r.hasLast:
