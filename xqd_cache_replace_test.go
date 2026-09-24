@@ -133,26 +133,13 @@ func executeReplace(t *testing.T, i *Instance, handle int32, obj replaceTestObje
 // lookupState runs a plain lookup for key and returns its state flags.
 func lookupState(t *testing.T, i *Instance, key string) uint32 {
 	t.Helper()
-	keyPtr, keyLen := writeCacheKey(i, key)
-	if status := i.xqd_cache_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
-		t.Fatalf("cache_lookup status = %d, want %d", status, XqdStatusOK)
-	}
-	handle := int32(i.memory.Uint32(replaceTestHandleOut))
-	if status := i.xqd_cache_get_state(handle, replaceTestValueOut); status != XqdStatusOK {
-		t.Fatalf("cache_get_state status = %d, want %d", status, XqdStatusOK)
-	}
-	return i.memory.Uint32(replaceTestValueOut)
+	return handleState(t, i, plainLookup(t, i, key))
 }
 
 // lookupContent runs a plain lookup for key and reads the whole cached body.
 func lookupContent(t *testing.T, i *Instance, key string) string {
 	t.Helper()
-	keyPtr, keyLen := writeCacheKey(i, key)
-	if status := i.xqd_cache_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
-		t.Fatalf("cache_lookup status = %d, want %d", status, XqdStatusOK)
-	}
-	handle := int32(i.memory.Uint32(replaceTestHandleOut))
-	if status := i.xqd_cache_get_body(handle, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
+	if status := i.xqd_cache_get_body(plainLookup(t, i, key), 0, 0, replaceTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("cache_get_body status = %d, want %d", status, XqdStatusOK)
 	}
 	return readTestBody(t, i, int(i.memory.Uint32(replaceTestHandleOut)))
@@ -192,11 +179,7 @@ func TestCacheReplaceWithoutExistingObject(t *testing.T) {
 			return i.xqd_cache_replace_get_user_metadata(handle, replaceTestMetadataOut, 128, replaceTestNwrittenOut)
 		},
 	}
-	for name, call := range accessors {
-		if status := call(); status != XqdErrNone {
-			t.Errorf("%s on a replace without an existing object: status = %d, want %d", name, status, XqdErrNone)
-		}
-	}
+	checkStatuses(t, accessors, XqdErrNone)
 
 	executeReplace(t, i, handle, replaceTestObject{content: "fresh", maxAge: time.Minute, metadata: "meta", length: true, finish: true})
 
@@ -288,9 +271,7 @@ func TestCacheReplaceExposesExistingObject(t *testing.T) {
 	if content := lookupContent(t, i, "key"); content != "new content" {
 		t.Fatalf("lookup content after replace = %q, want %q", content, "new content")
 	}
-	if variants := len(i.cache.objects[cacheKey([]byte("key"))]); variants != 1 {
-		t.Fatalf("variants stored after replace = %d, want 1", variants)
-	}
+	onlyObject(t, i, "key")
 }
 
 func TestCacheReplaceUserMetadataShortBuffer(t *testing.T) {
@@ -529,11 +510,7 @@ func TestCacheReplaceHandlesDoNotCollideWithCacheHandles(t *testing.T) {
 	i := newCacheReplaceTestInstance()
 	insertTestObject(t, i, "key", replaceTestObject{content: "old", maxAge: time.Minute, finish: true})
 
-	keyPtr, keyLen := writeCacheKey(i, "key")
-	if status := i.xqd_cache_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
-		t.Fatalf("cache_lookup status = %d", status)
-	}
-	cacheHandle := int32(i.memory.Uint32(replaceTestHandleOut))
+	cacheHandle := plainLookup(t, i, "key")
 	replaceHandle := beginReplace(t, i, "key", CacheReplaceImmediate)
 
 	if cacheHandle == replaceHandle {
@@ -956,11 +933,7 @@ func TestCacheReplaceAccessorsRejectBadPointers(t *testing.T) {
 			return i.xqd_cache_replace_get_user_metadata(handle, replaceTestMetadataOut, 128, pastTheEnd)
 		},
 	}
-	for name, call := range checks {
-		if status := call(); status != XqdErrInvalidArgument {
-			t.Errorf("%s with a bad pointer: status = %d, want %d", name, status, XqdErrInvalidArgument)
-		}
-	}
+	checkStatuses(t, checks, XqdErrInvalidArgument)
 	if len(i.bodies.handles) != bodies {
 		t.Fatal("a rejected replace_get_body allocated a body handle")
 	}
@@ -968,11 +941,7 @@ func TestCacheReplaceAccessorsRejectBadPointers(t *testing.T) {
 
 func TestCacheCloseCancelsPendingTransaction(t *testing.T) {
 	i := newCacheReplaceTestInstance()
-	keyPtr, keyLen := writeCacheKey(i, "key")
-	if status := i.xqd_cache_transaction_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
-		t.Fatalf("transaction_lookup status = %d", status)
-	}
-	handle := int32(i.memory.Uint32(replaceTestHandleOut))
+	handle := transactionLookup(t, i, "key")
 	if len(i.cache.transactions) != 1 {
 		t.Fatal("a miss transaction lookup did not register a pending transaction")
 	}
@@ -1071,11 +1040,7 @@ func TestCacheReplaceAbandonedBodyIsDiscarded(t *testing.T) {
 
 	// A reader that started before the writer gave up must not be told the
 	// prefix is the whole object.
-	keyPtr, keyLen := writeCacheKey(i, "key")
-	if status := i.xqd_cache_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
-		t.Fatalf("cache_lookup status = %d", status)
-	}
-	if status := i.xqd_cache_get_body(int32(i.memory.Uint32(replaceTestHandleOut)), 0, 0, replaceTestHandleOut); status != XqdStatusOK {
+	if status := i.xqd_cache_get_body(plainLookup(t, i, "key"), 0, 0, replaceTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("cache_get_body status = %d", status)
 	}
 	reader := i.bodies.Get(int(i.memory.Uint32(replaceTestHandleOut)))
@@ -1253,7 +1218,7 @@ func TestCacheReplaceHugeDeclaredLengthFallsBackToRealSize(t *testing.T) {
 	i := newCacheReplaceTestInstance()
 	insertTestObject(t, i, "key", replaceTestObject{content: "0123456789", maxAge: time.Minute, finish: true})
 	huge := ^uint64(0)
-	i.cache.objects[cacheKey([]byte("key"))][0].Length = &huge
+	onlyObject(t, i, "key").Length = &huge
 	handle := beginReplace(t, i, "key", CacheReplaceImmediate)
 
 	i.memory.WriteUint64(replaceTestBodyOptsPtr+8, 3)

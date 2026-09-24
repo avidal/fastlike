@@ -37,6 +37,31 @@ type CachedObject struct {
 	// Response is the head of HTTP cache objects.
 	// Updates replace it, so handles keep the head they found.
 	Response *storedResponse
+
+	// When a revalidation was last offered, as a cacheInstant.
+	lastRevalidation atomic.Int64
+
+	// When the object was first soft purged, as a cacheInstant.
+	softPurgedAt atomic.Int64
+}
+
+// cachePeriod mirrors CacheD's stale status.
+type cachePeriod int
+
+const (
+	periodFresh cachePeriod = iota
+	periodStale             // within stale-while-revalidate
+	periodExpired
+)
+
+// revalidationInterval is CacheD's delay between two revalidation offers.
+const revalidationInterval = time.Second
+
+var cacheClockBase = time.Now()
+
+// cacheInstant turns t into monotonic nanoseconds, where 0 means never.
+func cacheInstant(t time.Time) int64 {
+	return int64(t.Sub(cacheClockBase)) + 1
 }
 
 // CacheState represents the state flags for a cache lookup
@@ -126,7 +151,7 @@ func (r *CacheReplace) State() CacheState {
 	return CacheState{
 		Found:  true,
 		Usable: true,
-		Stale:  r.Existing.GetAge() > r.Existing.MaxAgeNs,
+		Stale:  r.Existing.periodAt(time.Now()) != periodFresh,
 	}
 }
 
@@ -240,7 +265,8 @@ func usableTransaction(key []byte, obj *CachedObject) *CacheTransaction {
 	return settledTransaction(key, &CacheEntry{Object: obj, State: CacheState{Found: true, Usable: true}}, nil)
 }
 
-// Lookup performs a non-transactional cache lookup
+// Lookup performs a non-transactional cache lookup, which only finds usable
+// objects.
 func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -250,36 +276,22 @@ func (c *Cache) Lookup(key []byte, options *CacheLookupOptions) *CacheEntry {
 		requestHeaders = options.RequestHeaders
 	}
 
+	now := time.Now()
+	obj, period := c.findVariantPeriod(key, requestHeaders, now)
+	if period == periodExpired {
+		return &CacheEntry{}
+	}
+	state, _ := obj.hit(period, now)
+	return &CacheEntry{Object: obj, State: state}
+}
+
+// findVariantPeriod treats a missing variant as expired.
+func (c *Cache) findVariantPeriod(key, requestHeaders []byte, now time.Time) (*CachedObject, cachePeriod) {
 	obj := c.findMatchingVariant(key, requestHeaders)
 	if obj == nil {
-		return &CacheEntry{
-			State: CacheState{
-				Found:              false,
-				Usable:             false,
-				Stale:              false,
-				MustInsertOrUpdate: false,
-			},
-		}
+		return nil, periodExpired
 	}
-
-	age := time.Since(obj.InsertTime).Nanoseconds()
-	if obj.InitialAgeNs > 0 {
-		age += int64(obj.InitialAgeNs)
-	}
-
-	isStale := uint64(age) > obj.MaxAgeNs
-	isUsable := !isStale || (obj.StaleWhileRevalidateNs > 0 && uint64(age) <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
-	obj.HitCount.Add(1)
-
-	return &CacheEntry{
-		Object: obj,
-		State: CacheState{
-			Found:              true,
-			Usable:             isUsable,
-			Stale:              isStale,
-			MustInsertOrUpdate: false,
-		},
-	}
+	return obj, obj.periodAt(now)
 }
 
 // TransactionLookup performs a transactional cache lookup with request collapsing support.
@@ -298,14 +310,19 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 	c.mu.Lock()
 
 	var obj *CachedObject
+	var now time.Time
+	var period cachePeriod
 	for {
-		obj = c.findMatchingVariant(key, requestHeaders)
-		usable := obj != nil && obj.usable()
+		now = time.Now()
+		obj, period = c.findVariantPeriod(key, requestHeaders, now)
+		if period != periodExpired {
+			break
+		}
 
 		var wait chan struct{}
-		if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil && !usable {
+		if pending := c.pendingReplaceFrom(keyStr, owner); pending != nil {
 			wait = pending.done
-		} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil && !usable {
+		} else if pending := c.pendingTransactionFrom(keyStr, owner); pending != nil {
 			wait = pending.done
 		} else if own := c.transactions[keyStr]; own != nil && own.owner == owner {
 			c.mu.Unlock()
@@ -320,7 +337,6 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 		c.mu.Lock()
 	}
 
-	// Create new transaction
 	tx := &CacheTransaction{
 		Key:     key,
 		Options: options,
@@ -329,40 +345,16 @@ func (c *Cache) TransactionLookup(key []byte, options *CacheLookupOptions, owner
 		done:    make(chan struct{}),
 	}
 
-	if obj == nil {
-		tx.Entry = &CacheEntry{
-			State: CacheState{
-				Found:              false,
-				Usable:             false,
-				Stale:              false,
-				MustInsertOrUpdate: true,
-			},
-		}
+	if period == periodExpired {
+		// The expired object is kept for its metadata, which revalidation needs.
+		tx.Entry = &CacheEntry{Object: obj, State: CacheState{MustInsertOrUpdate: true}}
 	} else {
-		age := time.Since(obj.InsertTime).Nanoseconds()
-		if obj.InitialAgeNs > 0 {
-			age += int64(obj.InitialAgeNs)
-		}
-
-		isStale := uint64(age) > obj.MaxAgeNs
-		isUsable := !isStale || (obj.StaleWhileRevalidateNs > 0 && uint64(age) <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
-		mustUpdate := isStale && !isUsable
-		obj.HitCount.Add(1)
-
-		tx.Entry = &CacheEntry{
-			Object: obj,
-			State: CacheState{
-				Found:              true,
-				Usable:             isUsable,
-				Stale:              isStale,
-				MustInsertOrUpdate: mustUpdate,
-			},
-		}
+		state, offered := obj.hit(period, now)
+		// Nobody revalidates while the key is busy.
+		state.MustInsertOrUpdate = offered && c.transactions[keyStr] == nil && len(c.replaces[keyStr]) == 0
+		tx.Entry = &CacheEntry{Object: obj, State: state}
 	}
-
-	// Register transaction (for request collapsing) unless another owner
-	// is already fetching and we were served a usable object meanwhile.
-	if c.transactions[keyStr] == nil {
+	if tx.Entry.State.MustInsertOrUpdate {
 		c.transactions[keyStr] = tx
 	}
 	c.mu.Unlock()
@@ -457,18 +449,27 @@ func (c *Cache) TransactionUpdate(tx *CacheTransaction, options *CacheWriteOptio
 	// Reset age
 	obj.InsertTime = time.Now()
 	obj.InitialAgeNs = 0
+	obj.softPurgedAt.Store(0)
 
 	return nil
 }
 
-// TransactionCancel cancels a cache transaction
-func (c *Cache) TransactionCancel(tx *CacheTransaction) error {
+// TransactionCancel gives up the obligation of a transaction, and reports
+// whether it had one.
+func (c *Cache) TransactionCancel(tx *CacheTransaction) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.finishTransaction(tx)
+	if tx.Entry == nil || !tx.Entry.State.MustInsertOrUpdate {
+		return false
+	}
+	tx.Entry.State.MustInsertOrUpdate = false
+	if !tx.Entry.State.Found {
+		tx.Entry.Object = nil
+	}
 
-	return nil
+	return true
 }
 
 // CompleteTransaction marks a cache transaction as complete and removes it from the
@@ -534,9 +535,8 @@ func (c *Cache) TransactionChooseStale(tx *CacheTransaction) bool {
 	age := obj.GetAge()
 	// Object must be stale (past max_age) but within the stale-if-error window
 	if age > obj.MaxAgeNs && age <= obj.MaxAgeNs+obj.StaleIfErrorNs {
-		// Resolve the transaction with the stale object
-		tx.Entry.State.MustInsertOrUpdate = false
-		tx.Entry.State.Usable = true
+		// Production reports the chosen object as found.
+		tx.Entry.State = CacheState{Found: true, Usable: true, Stale: true}
 		return true
 	}
 
@@ -704,14 +704,14 @@ func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := cacheInstant(time.Now())
 	count := 0
 	if keys, ok := c.surrogateIndex[key]; ok {
 		for _, k := range keys {
 			if variants, ok := c.objects[k]; ok {
 				for _, obj := range variants {
-					// Set to already expired
-					obj.InitialAgeNs = obj.MaxAgeNs + 1
-					obj.InsertTime = time.Now().Add(-time.Duration(obj.MaxAgeNs+1) * time.Nanosecond)
+					// CacheD keeps the earliest soft purge.
+					obj.softPurgedAt.CompareAndSwap(0, now)
 					count++
 				}
 			}
@@ -722,17 +722,67 @@ func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 
 // GetAge returns the age of a cached object in nanoseconds
 func (obj *CachedObject) GetAge() uint64 {
-	age := uint64(time.Since(obj.InsertTime).Nanoseconds())
-	if obj.InitialAgeNs > 0 {
-		age += obj.InitialAgeNs
-	}
-	return age
+	return obj.ageAt(time.Now())
 }
 
-// usable reports whether the object is fresh or within its stale-while-revalidate window.
-func (obj *CachedObject) usable() bool {
-	age := obj.GetAge()
-	return age <= obj.MaxAgeNs || (obj.StaleWhileRevalidateNs > 0 && age <= obj.MaxAgeNs+obj.StaleWhileRevalidateNs)
+func (obj *CachedObject) ageAt(now time.Time) uint64 {
+	return uint64(now.Sub(obj.InsertTime).Nanoseconds()) + obj.InitialAgeNs
+}
+
+// periodAt follows CacheD, soft purges included.
+func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
+	age := obj.ageAt(now)
+	fresh := age < obj.MaxAgeNs
+	var staleFor uint64
+	if !fresh {
+		staleFor = age - obj.MaxAgeNs
+	}
+	if purged := obj.softPurgedAt.Load(); purged != 0 {
+		if sincePurge := uint64(max(cacheInstant(now)-purged, 0)); fresh || sincePurge > staleFor {
+			staleFor = sincePurge
+		}
+		fresh = false
+	}
+	switch {
+	case fresh:
+		return periodFresh
+	case staleFor < obj.StaleWhileRevalidateNs:
+		return periodStale
+	default:
+		return periodExpired
+	}
+}
+
+// hit counts a lookup of a usable object and reports whether it gets the
+// revalidation offer, which plain lookups use up too, as in CacheD.
+func (obj *CachedObject) hit(period cachePeriod, now time.Time) (CacheState, bool) {
+	obj.HitCount.Add(1)
+	stale := period == periodStale
+	return CacheState{Found: true, Usable: true, Stale: stale}, stale && obj.offerRevalidation(now)
+}
+
+// offerRevalidation applies CacheD's revalidation throttle.
+func (obj *CachedObject) offerRevalidation(now time.Time) bool {
+	if obj.streaming() {
+		return false
+	}
+	at := cacheInstant(now)
+	for {
+		last := obj.lastRevalidation.Load()
+		if last != 0 && at-last < int64(revalidationInterval) {
+			return false
+		}
+		if obj.lastRevalidation.CompareAndSwap(last, at) {
+			return true
+		}
+	}
+}
+
+func (obj *CachedObject) streaming() bool {
+	obj.WriteCond.L.Lock()
+	defer obj.WriteCond.L.Unlock()
+
+	return !obj.WriteComplete
 }
 
 // KnownLength reports the object size once the writer announced it or finished

@@ -358,26 +358,19 @@ func (i *Instance) xqd_http_cache_transaction_record_not_cacheable(
 
 	// Mark as not cacheable by canceling the transaction
 	// In a real implementation, this would record negative caching info
-	err := i.cache.TransactionCancel(handle.Transaction)
-	if err != nil {
-		return XqdError
-	}
+	i.cache.TransactionCancel(handle.Transaction)
 
 	return XqdStatusOK
 }
 
-// xqd_http_cache_transaction_abandon abandons a cache transaction
+// xqd_http_cache_transaction_abandon gives up the obligation of a handle.
+// Like production, a handle without one is refused.
 func (i *Instance) xqd_http_cache_transaction_abandon(cache_handle int32) int32 {
 	i.abilog.Println("http_cache_transaction_abandon")
 
 	handle := i.httpCacheHandle(cache_handle)
-	if handle == nil {
+	if handle == nil || !i.cache.TransactionCancel(handle.Transaction) {
 		return XqdErrInvalidHandle
-	}
-
-	err := i.cache.TransactionCancel(handle.Transaction)
-	if err != nil {
-		return XqdError
 	}
 
 	return XqdStatusOK
@@ -391,7 +384,7 @@ func (i *Instance) xqd_http_cache_close(cache_handle int32) int32 {
 		return XqdErrInvalidHandle
 	}
 	handle := i.cacheHandles.Take(int(cache_handle))
-	_ = i.cache.TransactionCancel(handle.Transaction)
+	i.cache.TransactionCancel(handle.Transaction)
 	return XqdStatusOK
 }
 
@@ -465,13 +458,17 @@ func (i *Instance) httpCacheHandle(cache_handle int32) *CacheHandle {
 	return handle
 }
 
-// httpCacheObject returns the object an HTTP cache handle found.
-func (i *Instance) httpCacheObject(cache_handle int32) *CachedObject {
+// httpCacheObject returns the object an HTTP cache handle found, or the status
+// an accessor returns without one.
+func (i *Instance) httpCacheObject(cache_handle int32) (*CachedObject, int32) {
 	handle := i.httpCacheHandle(cache_handle)
 	if handle == nil || handle.Transaction.Entry == nil {
-		return nil
+		return nil, XqdErrInvalidHandle
 	}
-	return handle.Transaction.Entry.Object
+	if handle.Transaction.Entry.Object == nil {
+		return nil, XqdErrNone
+	}
+	return handle.Transaction.Entry.Object, XqdStatusOK
 }
 
 // cloneRequestHead copies the method, URL, headers and host of a request.
@@ -790,9 +787,9 @@ func (i *Instance) xqd_http_cache_get_length(
 ) int32 {
 	i.abilog.Println("http_cache_get_length")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	if obj.Length != nil {
@@ -810,9 +807,9 @@ func (i *Instance) xqd_http_cache_get_max_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_max_age_ns")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	i.memory.WriteUint64(duration_out, obj.MaxAgeNs)
@@ -827,9 +824,9 @@ func (i *Instance) xqd_http_cache_get_stale_while_revalidate_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_while_revalidate_ns")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	// Always return the value (even if 0) - the Rust library expects it to be present
@@ -845,9 +842,9 @@ func (i *Instance) xqd_http_cache_get_stale_if_error_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_stale_if_error_ns")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	i.memory.WriteUint64(duration_out, obj.StaleIfErrorNs)
@@ -881,9 +878,9 @@ func (i *Instance) xqd_http_cache_get_age_ns(
 ) int32 {
 	i.abilog.Println("http_cache_get_age_ns")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	age := obj.GetAge()
@@ -899,9 +896,9 @@ func (i *Instance) xqd_http_cache_get_hits(
 ) int32 {
 	i.abilog.Println("http_cache_get_hits")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	i.memory.WriteUint64(hits_out, obj.HitCount.Load())
@@ -916,9 +913,9 @@ func (i *Instance) xqd_http_cache_get_sensitive_data(
 ) int32 {
 	i.abilog.Println("http_cache_get_sensitive_data")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	sensitive := uint32(0)
@@ -940,9 +937,9 @@ func (i *Instance) xqd_http_cache_get_surrogate_keys(
 ) int32 {
 	i.abilog.Println("http_cache_get_surrogate_keys")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	// Join surrogate keys with spaces (empty list is OK - write 0 bytes)
@@ -980,9 +977,9 @@ func (i *Instance) xqd_http_cache_get_vary_rule(
 ) int32 {
 	i.abilog.Println("http_cache_get_vary_rule")
 
-	obj := i.httpCacheObject(cache_handle)
-	if obj == nil {
-		return XqdErrInvalidHandle
+	obj, status := i.httpCacheObject(cache_handle)
+	if status != XqdStatusOK {
+		return status
 	}
 
 	ruleBytes := []byte(obj.VaryRule) // Empty string is OK - write 0 bytes

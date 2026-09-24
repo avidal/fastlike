@@ -431,6 +431,11 @@ Support for named backend configurations. Complex backend configurations with ti
 
 Full HTTP caching support with request collapsing and surrogate key management - all working locally.
 
+Lookups follow the same rules as on Fastly.
+Only fresh objects and objects within their stale-while-revalidate period are found.
+Within that period, one lookup at a time is asked to revalidate the object while the others get the stale one, which lets the Rust SDK revalidate in the background.
+A soft purge makes objects stale without changing their age.
+
 ### Request Loops Prevention
 
 Fastlike adds "Fastlike" to the `cdn-loop` header to prevent infinite request loops. If a loop is detected, it returns a 508 Loop Detected error.
