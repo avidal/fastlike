@@ -256,3 +256,24 @@ func TestBodyReadInvalidCountPointerDoesNotConsumeBody(t *testing.T) {
 		t.Fatalf("body after rejected read = %q, want %q", got, "abc")
 	}
 }
+
+func TestBodyWriteCopiesGuestMemory(t *testing.T) {
+	for _, tc := range []struct {
+		end  int32
+		want string
+	}{{BodyWriteEndBack, "|ab"}, {BodyWriteEndFront, "ab|"}} {
+		i := newBodyLengthTestInstance()
+		handle, body := i.bodies.NewBuffer()
+		if _, err := body.Write([]byte("|")); err != nil {
+			t.Fatal(err)
+		}
+		addr, size := writeStr(t, i, 100, "ab")
+		if status := i.xqd_body_write(int32(handle), addr, size, tc.end, 200); status != XqdStatusOK {
+			t.Fatalf("body_write status = %d", status)
+		}
+		writeStr(t, i, 100, "XY")
+		if got, err := io.ReadAll(body); err != nil || string(got) != tc.want {
+			t.Fatalf("body = %q, %v, want %q", got, err, tc.want)
+		}
+	}
+}

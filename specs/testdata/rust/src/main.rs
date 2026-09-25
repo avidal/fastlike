@@ -123,6 +123,45 @@ fn main(mut req: Request) -> Result<Response, Error> {
 
         (&Method::GET, "/backend-timeouts") => Ok(Response::from_body(backend_timeouts()?)),
 
+        // The origin waits for what the guest logs after the hand-over.
+        // Exiting keeps #[fastly::main] from sending a second response.
+        (&Method::GET, "/pending-handoff") => {
+            use fastly::http::request::PendingResponseKind;
+            use std::io::Write;
+            let mut pending = Request::get("http://origin/handoff").with_pass(true).send_async(BACKEND)?;
+            pending.set_response_header("x-handoff", "response", PendingResponseKind::Response);
+            pending.set_response_header("x-handoff", "error", PendingResponseKind::Error);
+            pending.send_to_client()?;
+            writeln!(fastly::log::Endpoint::from_name("handoff"), "handed over").unwrap();
+            std::process::exit(0);
+        },
+
+        // The origin only answers once the client got the first chunk.
+        (&Method::GET, "/stream-handoff") => {
+            use std::io::Write;
+            let mut body = Response::from_status(StatusCode::OK).stream_to_client();
+            body.write_all(b"first,")?;
+            body.flush()?;
+            let rest = Request::get("http://origin/rest").with_pass(true).send(BACKEND)?;
+            body.append(rest.into_body());
+            body.finish()?;
+            std::process::exit(0);
+        },
+
+        (&Method::GET, "/panic-after-send") => {
+            Response::from_body("sent").send_to_client();
+            panic!("after sending the response");
+        },
+
+        (&Method::GET, "/stream-unfinished") => {
+            use std::io::Write;
+            let mut body = Response::from_status(StatusCode::OK).stream_to_client();
+            body.write_all(b"partial")?;
+            body.flush()?;
+            drop(body);
+            std::process::exit(0);
+        },
+
         _ => Ok(Response::new()
             .with_status(404)
             .with_body("The page you requested could not be found")

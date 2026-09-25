@@ -70,25 +70,35 @@ func TestReaderBodyObservesTrailersPopulatedAtEOF(t *testing.T) {
 }
 
 func TestUnannouncedResponseTrailerReachesDownstream(t *testing.T) {
-	i := newOwnershipTestInstance()
-	recorder := httptest.NewRecorder()
-	i.ds_response = recorder
-	response := &http.Response{}
-	response.Body = &lateTrailerReader{response: response}
-	bodyHandle, _ := i.bodies.NewResponseReader(response)
-	responseHandle, downstreamResponse := i.responses.New()
-	downstreamResponse.StatusCode = http.StatusOK
+	for _, mode := range sendModes {
+		t.Run(mode.name, func(t *testing.T) {
+			i := newOwnershipTestInstance()
+			recorder := httptest.NewRecorder()
+			i.ds_response = recorder
+			response := &http.Response{}
+			response.Body = &lateTrailerReader{response: response}
+			bodyHandle, _ := i.bodies.NewResponseReader(response)
+			responseHandle, downstreamResponse := i.responses.New()
+			downstreamResponse.StatusCode = http.StatusOK
 
-	if status := i.xqd_resp_send_downstream(int32(responseHandle), int32(bodyHandle), 0); status != XqdStatusOK {
-		t.Fatalf("resp_send_downstream status = %d, want %d", status, XqdStatusOK)
-	}
-	result := recorder.Result()
-	defer result.Body.Close()
-	if _, err := io.ReadAll(result.Body); err != nil {
-		t.Fatal(err)
-	}
-	if got := result.Trailer.Get("X-Late"); got != "ready" {
-		t.Fatalf("downstream trailer = %q, want %q", got, "ready")
+			if status := i.xqd_resp_send_downstream(int32(responseHandle), int32(bodyHandle), mode.stream); status != XqdStatusOK {
+				t.Fatalf("resp_send_downstream status = %d, want %d", status, XqdStatusOK)
+			}
+			if mode.stream == 1 {
+				if status := i.xqd_body_close(int32(bodyHandle)); status != XqdStatusOK {
+					t.Fatalf("body_close status = %d, want %d", status, XqdStatusOK)
+				}
+			}
+			i.finishDownstream()
+			result := recorder.Result()
+			defer result.Body.Close()
+			if _, err := io.ReadAll(result.Body); err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Trailer.Get("X-Late"); got != "ready" {
+				t.Fatalf("downstream trailer = %q, want %q", got, "ready")
+			}
+		})
 	}
 }
 
@@ -105,6 +115,9 @@ func TestAbandonDownstreamBodyDoesNotPublishTrailers(t *testing.T) {
 	}
 	if status := i.xqd_body_abandon(int32(bodyHandle)); status != XqdStatusOK {
 		t.Fatalf("body_abandon status = %d, want %d", status, XqdStatusOK)
+	}
+	if !i.finishDownstream() {
+		t.Fatal("the abandoned body was not cut short")
 	}
 	if got := recorder.Header().Get(http.TrailerPrefix + "X-Incomplete"); got != "" {
 		t.Fatalf("abandoned downstream trailer = %q, want absent", got)

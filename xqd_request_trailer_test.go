@@ -202,6 +202,7 @@ func TestResponseSendDownstreamForwardsBodyTrailers(t *testing.T) {
 				}
 			}
 
+			i.finishDownstream()
 			if got := recorder.Result().Trailer.Values("X-Downstream-Body-Trailer"); !slices.Equal(got, []string{"trailer-value"}) {
 				t.Fatalf("downstream response trailer = %q, want [trailer-value]", got)
 			}

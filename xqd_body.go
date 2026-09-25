@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sort"
 )
@@ -65,13 +66,11 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 		return XqdErrUnsupported
 	}
 
-	// Non-streaming body logic
-	// Read the data from guest memory
-	data := make([]byte, size)
-	_, err := i.memory.ReadAt(data, int64(addr))
-	if err != nil {
+	if !i.memory.validRange(int64(addr), uint64(size)) {
 		return XqdError
 	}
+	// No copy needed, since writers copy what they keep.
+	data := i.memory.Data()[addr : int64(addr)+int64(size)]
 
 	const (
 		writeEndBack  = 0 // Append to back (default)
@@ -80,19 +79,23 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 	if body_end == writeEndFront {
 		// Prepend: Create a MultiReader that reads new data first, then existing content
-		body.reader = chainReaders(bytes.NewReader(data), body.reader)
+		body.reader = chainReaders(bytes.NewReader(bytes.Clone(data)), body.reader)
 		body.growKnownLength(int64(len(data)))
 		i.deepBumpBodyWrite(int64(size))
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
 		return XqdStatusOK
 	}
 
-	// Append to back (default behavior)
-	// Copy the data into the body handle's internal buffer
-	nwritten, err := io.CopyN(body, bytes.NewReader(data), int64(size))
+	// Like production, a stream can take part of the buffer, and gives Badf
+	// once its reader is gone.
+	n, err := body.Write(data)
+	if errors.Is(err, io.ErrClosedPipe) {
+		return XqdErrInvalidHandle
+	}
 	if err != nil {
 		return XqdError
 	}
+	nwritten := int64(n)
 
 	i.deepBumpBodyWrite(nwritten)
 
@@ -193,15 +196,10 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 		}
 		return XqdStatusOK
 	}
-	if dst.isDownstreamStream {
-		defer func() { _ = src.Close() }()
-		if _, err := io.Copy(dst, src); err != nil {
-			return XqdError
-		}
-		return XqdStatusOK
-	}
 	if dst.sink != nil {
-		dst.sink.Append(src)
+		if err := dst.sink.Append(src); err != nil {
+			return XqdErrInvalidHandle
+		}
 		return XqdStatusOK
 	}
 

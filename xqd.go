@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 )
 
@@ -88,27 +87,14 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 	return XqdStatusOK
 }
 
-// writeDownstreamHeaders copies headers onto the downstream response,
-// suppressing Go's content sniffing when they carry no Content-Type: a
-// Compute service sends exactly the headers the guest set, so a response
-// without one must not grow a synthetic one.
-func (i *Instance) writeDownstreamHeaders(headers http.Header) {
-	for k, v := range headers {
-		i.ds_response.Header()[k] = v
-	}
-	if _, ok := headers["Content-Type"]; !ok {
-		i.ds_response.Header()["Content-Type"] = nil
-	}
-}
-
-// xqd_resp_send_downstream sends the response and body to the downstream client.
-// When stream is 1, sends headers immediately and streams future body writes.
-// Other values copy the body immediately.
-// Streaming redirects the body handle's writer to the response so
-// that future body_write calls stream directly to the client.
-// Respects the framing headers mode set on the response handle.
-// Returns XqdErrInvalidHandle if handles are invalid, XqdStatusOK on success.
+// xqd_resp_send_downstream returns before the body is sent, like production.
+// With stream set to 1, the guest streams the rest through the body handle.
+// A 103 goes out at once without its body, and only one final response can.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
+	if i.ds_done != nil {
+		i.abilog.Printf("resp_send_downstream: a response was already sent")
+		return XqdError
+	}
 	w := i.responses.Get(int(whandle))
 	if w == nil {
 		i.abilog.Printf("resp_send_downstream: invalid response handle %d", whandle)
@@ -126,105 +112,83 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	if b.IsStreaming() {
 		return XqdErrInvalidHandle
 	}
-	streaming := stream == 1
-	b.isDownstreamStream = streaming
-	b.downstreamTrailers = i.ds_response.Header()
 
-	// Clone headers so we don't modify the original
 	headers := w.Header.Clone()
-
-	// Apply framing mode - validate and potentially filter framing headers
 	effectiveMode := validateAndApplyFramingMode(headers, w.framingHeadersMode, func(format string, args ...interface{}) {
 		i.abilog.Printf("resp_send_downstream: "+format, args...)
 	})
-
 	i.abilog.Printf("resp_send_downstream: stream=%d framing_mode=%d effective_mode=%d", stream, w.framingHeadersMode, effectiveMode)
 
-	i.writeDownstreamHeaders(headers)
-	i.ds_response.WriteHeader(w.StatusCode)
-
-	if streaming {
-		// Like production, the client gets what the body already holds, then
-		// what the guest writes next.
-		if _, err := io.Copy(i.ds_response, b); err != nil {
-			i.abilog.Printf("resp_send_downstream: body cut short: %s", err.Error())
-		}
-		b.RedirectWriter(i.ds_response)
+	if w.StatusCode == http.StatusEarlyHints {
+		_ = i.bodies.Take(int(bhandle)).Close()
+		writeResponseHead(i.ds_response, w.StatusCode, headers)
 		return XqdStatusOK
 	}
 
-	// Non-streaming: copy body immediately and close.
-	// Production sends the body after the call returns, so a body that fails
-	// now is only cut short.
-	b = i.bodies.Take(int(bhandle))
-	defer func() { _ = b.Close() }()
-	if _, err := io.Copy(i.ds_response, b); err != nil {
-		i.abilog.Printf("resp_send_downstream: body cut short: %s", err.Error())
+	status := w.StatusCode
+	hasBody := i.downstreamHasBody(status)
+	if stream != 1 {
+		b = i.bodies.Take(int(bhandle))
+		i.sendDownstream(func(rw http.ResponseWriter) error {
+			defer func() { _ = b.Close() }()
+			return writeWholeResponse(rw, status, headers, hasBody, b, b.currentTrailers)
+		})
+		return XqdStatusOK
 	}
 
+	// What the body held goes out first.
+	sink := newDownstreamStream(&BodyHandle{reader: b.reader, closer: b.closer}, b)
+	b.becomeSink(sink)
+	i.sendDownstream(func(rw http.ResponseWriter) error {
+		return sink.send(rw, status, headers, hasBody)
+	})
 	return XqdStatusOK
 }
 
-// xqd_resp_send_downstream_pending forwards a pending request's eventual response
-// straight to the downstream client. It blocks until the pending request resolves,
-// applies the queued response-header changes, and writes the result. If the
-// request failed, it synthesizes a 502 and applies the queued error headers.
-// Returns XqdErrInvalidHandle if the pending handle is invalid, XqdStatusOK otherwise.
+// xqd_resp_send_downstream_pending returns at once, like production, and
+// traps if a final response went out already.
 func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
-	pr := i.pendingRequests.Get(int(phandle))
+	pr := i.pendingRequests.Take(int(phandle))
 	if pr == nil {
 		i.abilog.Printf("send_downstream_pending: invalid pending handle=%d", phandle)
 		return XqdErrInvalidHandle
 	}
-
+	if i.ds_done != nil {
+		if pr.cancel != nil {
+			pr.cancel()
+		}
+		panic(guestTrap("send_downstream_pending: a response was already sent"))
+	}
 	if i.trace != nil {
 		pr.observeWait(i.trace.WallStart)
 	}
-	pr = i.pendingRequests.Take(int(phandle))
-
-	i.pauseExecution()
-	resp, err := pr.Wait()
-	i.resumeExecution()
 
 	// The response body (real or synthetic) is consumed here, so claim the
 	// close so the recorder's late-completion hook skips this request.
 	pr.bodyClosed.Store(true)
 
-	if err != nil {
-		i.abilog.Printf("send_downstream_pending: request failed, synthesizing 502: %s", err.Error())
-		headers := http.Header{}
-		pr.headersErr.Apply(headers)
-		for k, v := range headers {
-			i.ds_response.Header()[k] = v
+	i.sendDownstream(func(w http.ResponseWriter) error {
+		resp, err := pr.Wait()
+		queued := &pr.headersResp
+		if err != nil {
+			i.abilog.Printf("send_downstream_pending: request failed: %s", err.Error())
+			resp = sendFailureResponse(err)
+			queued = &pr.headersErr
 		}
-		i.ds_response.WriteHeader(http.StatusBadGateway)
-		_, _ = io.WriteString(i.ds_response, fmt.Sprintf("Backend request failed: %s", err.Error()))
-		return XqdStatusOK
-	}
+		defer func() { _ = resp.Body.Close() }()
 
-	headers := resp.Header.Clone()
-	if headers == nil {
-		headers = http.Header{}
-	}
-	pr.headersResp.Apply(headers)
+		headers := resp.Header.Clone()
+		if headers == nil {
+			headers = http.Header{}
+		}
+		queued.Apply(headers)
+		effectiveMode := validateAndApplyFramingMode(headers, FramingHeadersModeAutomatic, func(format string, args ...interface{}) {
+			i.abilog.Printf("send_downstream_pending: "+format, args...)
+		})
+		i.abilog.Printf("send_downstream_pending: status=%d effective_mode=%d", resp.StatusCode, effectiveMode)
 
-	effectiveMode := validateAndApplyFramingMode(headers, FramingHeadersModeAutomatic, func(format string, args ...interface{}) {
-		i.abilog.Printf("send_downstream_pending: "+format, args...)
+		return writeWholeResponse(w, resp.StatusCode, headers, i.downstreamHasBody(resp.StatusCode), resp.Body, responseTrailers(resp))
 	})
-	i.abilog.Printf("send_downstream_pending: status=%d effective_mode=%d", resp.StatusCode, effectiveMode)
-
-	i.writeDownstreamHeaders(headers)
-	i.ds_response.WriteHeader(resp.StatusCode)
-
-	defer func() { _ = resp.Body.Close() }()
-	if _, err := io.Copy(i.ds_response, resp.Body); err != nil {
-		i.abilog.Printf("send_downstream_pending: body cut short: %s", err.Error())
-		return XqdStatusOK
-	}
-	for name, values := range responseTrailers(resp)() {
-		i.ds_response.Header()[http.TrailerPrefix+http.CanonicalHeaderKey(name)] = slices.Clone(values)
-	}
-
 	return XqdStatusOK
 }
 

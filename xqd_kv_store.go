@@ -249,7 +249,7 @@ func (i *Instance) xqd_kv_store_insert(
 
 	// Get the body handle
 	body := i.bodies.Get(int(bodyHandle))
-	if body == nil {
+	if body == nil || body.IsStreaming() {
 		return XqdErrInvalidHandle
 	}
 

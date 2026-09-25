@@ -190,28 +190,21 @@ func (f *Fastlike) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Get an instance from the pool (or create a new one if pool is empty)
 	i := f.Instantiate()
 
-	// Serve the request
+	// Deferred, since a response cut short panics.
+	defer f.release(i)
+
 	i.ServeHTTP(w, r)
+}
 
-	// Try to return the instance to the pool for reuse
-	// If the pool is full, the instance is discarded (handled by default case)
+// release returns i to the pool unless it is full.
+// The read lock keeps Reload from closing the pool meanwhile.
+func (f *Fastlike) release(i *Instance) {
 	f.mu.RLock()
-	instances := f.instances
-	f.mu.RUnlock()
-
-	// Protect against sending to a channel that might have been replaced during reload
-	func() {
-		defer func() {
-			// Recover from panic if channel was replaced during reload.
-			_ = recover()
-		}()
-		select {
-		case instances <- i:
-			// Successfully returned to pool
-		default:
-			// Pool is full, instance will be garbage collected
-		}
-	}()
+	defer f.mu.RUnlock()
+	select {
+	case f.instances <- i:
+	default:
+	}
 }
 
 // Warmup pre-creates n instances and adds them to the pool.

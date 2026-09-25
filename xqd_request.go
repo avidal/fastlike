@@ -45,6 +45,25 @@ func pendingRequestErrorDetail(err error) *SendErrorDetail {
 	}
 }
 
+// sendFailureResponse is production's answer to a pending request that failed.
+func sendFailureResponse(err error) *http.Response {
+	status := http.StatusInternalServerError
+	var sendErr *cachingSendError
+	if errors.As(err, &sendErr) {
+		switch createErrorDetailFromError(sendErr.err).Tag {
+		case SendErrorDetailDnsTimeout, SendErrorDetailConnectionTimeout, SendErrorDetailHttpResponseTimeout:
+			status = http.StatusGatewayTimeout
+		default:
+			status = http.StatusBadGateway
+		}
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": {"text/plain"}},
+		Body:       io.NopCloser(strings.NewReader(http.StatusText(status))),
+	}
+}
+
 // SendErrorDetail represents the error details structure for send_v2/send_v3
 // This matches the C struct layout expected by the guest
 type SendErrorDetail struct {
