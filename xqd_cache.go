@@ -764,11 +764,7 @@ type sinkSource struct {
 }
 
 func (src *sinkSource) close() {
-	src.closeOnce.Do(func() {
-		if closer, ok := src.reader.(io.Closer); ok {
-			_ = closer.Close()
-		}
-	})
+	src.closeOnce.Do(func() { closeReader(src.reader) })
 }
 
 // cacheFillWindow bounds how long a closed insert may keep copying, like
@@ -799,21 +795,27 @@ func (s *cacheBodySink) writeLocked(p []byte) (int, error) {
 	return s.obj.WriteBody(p)
 }
 
+// Writes to the cache never wait.
+func (s *cacheBodySink) readyChannel() <-chan struct{} {
+	return closedStreamingReadyChannel()
+}
+
 // Append queues src and closes it once it was copied or dropped.
-func (s *cacheBodySink) Append(src io.Reader) {
+func (s *cacheBodySink) Append(src io.Reader) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	queued := &sinkSource{reader: src}
 	if s.stopped {
 		queued.close()
-		return
+		return io.ErrClosedPipe
 	}
 	s.queue = append(s.queue, queued)
 	if !s.draining {
 		s.draining = true
 		go s.drain()
 	}
+	return nil
 }
 
 func (s *cacheBodySink) drain() {

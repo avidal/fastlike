@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -524,6 +526,106 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("pending-handoff", func(st *testing.T) {
+		st.Parallel()
+		// The origin waits for what the guest logs after the call.
+		handedOver := make(chan struct{})
+		var once sync.Once
+		logs := writerFunc(func(p []byte) (int, error) {
+			once.Do(func() { close(handedOver) })
+			return len(p), nil
+		})
+		origin := func(w http.ResponseWriter, _ *http.Request) {
+			select {
+			case <-handedOver:
+			case <-time.After(5 * time.Second):
+				st.Error("send_downstream_pending waited for the origin")
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte("from the origin"))
+		}
+		inst := f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, origin)), fastlike.WithLogger("handoff", logs))
+		w := serveGet(inst, "/pending-handoff", nil)
+		if w.Code != http.StatusCreated || w.Body.String() != "from the origin" || w.Header().Get("X-Handoff") != "response" {
+			st.Errorf("got %d %q with x-handoff %q, want 201 %q with x-handoff %q", w.Code, w.Body.String(), w.Header().Get("X-Handoff"), "from the origin", "response")
+		}
+	})
+
+	t.Run("pending-handoff-failure", func(st *testing.T) {
+		st.Parallel()
+		// A refused connection gets a 502 with the queued error headers.
+		closed := httptest.NewServer(http.NotFoundHandler())
+		target, _ := url.Parse(closed.URL)
+		closed.Close()
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ErrorHandler = fastlike.ProxyErrorHandler
+		inst := f.Instantiate(fastlike.WithDefaultBackend(func(string) http.Handler { return proxy }), fastlike.WithLogger("handoff", io.Discard))
+		w := serveGet(inst, "/pending-handoff", nil)
+		if w.Code != http.StatusBadGateway || w.Body.String() != "Bad Gateway" {
+			st.Errorf("got %d %q, want 502 %q", w.Code, w.Body.String(), "Bad Gateway")
+		}
+		if got := w.Header().Get("Content-Type"); got != "text/plain" {
+			st.Errorf("Content-Type = %q, want text/plain", got)
+		}
+		if got := w.Header().Get("X-Handoff"); got != "error" {
+			st.Errorf("x-handoff = %q, want error", got)
+		}
+	})
+
+	t.Run("stream-handoff", func(st *testing.T) {
+		st.Parallel()
+		// The client gets the first chunk while the guest still runs.
+		gotFirst := make(chan struct{})
+		origin := func(w http.ResponseWriter, _ *http.Request) {
+			select {
+			case <-gotFirst:
+			case <-time.After(5 * time.Second):
+				st.Error("the client never got the first chunk")
+			}
+			_, _ = w.Write([]byte("then the origin"))
+		}
+		server := httptest.NewServer(f.Instantiate(fastlike.WithDefaultBackend(testBackendHandler(st, origin))))
+		defer server.Close()
+		resp, err := server.Client().Get(server.URL + "/stream-handoff")
+		if err != nil {
+			st.Fatal(err)
+		}
+		defer resp.Body.Close()
+		first := make([]byte, len("first,"))
+		if _, err := io.ReadFull(resp.Body, first); err != nil || string(first) != "first," {
+			st.Fatalf("first chunk = %q, %v", first, err)
+		}
+		close(gotFirst)
+		if rest, err := io.ReadAll(resp.Body); err != nil || string(rest) != "then the origin" {
+			st.Errorf("rest of the body = %q, %v, want %q", rest, err, "then the origin")
+		}
+	})
+
+	t.Run("panic-after-send", func(st *testing.T) {
+		st.Parallel()
+		// A trap after the response went out leaves the response alone.
+		inst := f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st)))
+		if w := serveGet(inst, "/panic-after-send", nil); w.Code != http.StatusOK || w.Body.String() != "sent" {
+			st.Errorf("got %d %q, want 200 %q", w.Code, w.Body.String(), "sent")
+		}
+	})
+
+	t.Run("stream-unfinished", func(st *testing.T) {
+		st.Parallel()
+		// Dropping a streaming body without finish() cuts the response short,
+		// through the pool too.
+		server := httptest.NewServer(f)
+		defer server.Close()
+		resp, err := server.Client().Get(server.URL + "/stream-unfinished")
+		if err != nil {
+			st.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if body, err := io.ReadAll(resp.Body); string(body) != "partial" || !errors.Is(err, io.ErrUnexpectedEOF) {
+			st.Errorf("client read %q, %v, want %q and an unexpected EOF", body, err, "partial")
+		}
+	})
+
 	t.Run("parallel", func(st *testing.T) {
 		// Verify that concurrent requests are handled safely by running 5 parallel requests,
 		// each with a backend that sleeps for 500ms
@@ -600,6 +702,10 @@ func TestFastlike(t *testing.T) {
 		// custom error responses before calling fastlike.ServeHTTP().
 	})
 }
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 func failingBackendHandler(t *testing.T) func(string) http.Handler {
 	return func(_ string) http.Handler {

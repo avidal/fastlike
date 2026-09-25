@@ -531,6 +531,9 @@ func TestSendDownstreamCutsATruncatedBodyShort(t *testing.T) {
 	if status := i.xqd_resp_send_downstream(resp, body, 0); status != XqdStatusOK {
 		t.Fatalf("send_downstream status = %d, want %d", status, XqdStatusOK)
 	}
+	if !i.finishDownstream() {
+		t.Fatal("the truncated body was not cut short")
+	}
 	if got := downstream.Body.String(); got != "hello" {
 		t.Fatalf("downstream body = %q, want %q", got, "hello")
 	}
@@ -597,6 +600,9 @@ func TestStreamingSendDownstreamKeepsTheBodyContent(t *testing.T) {
 		t.Fatalf("body_write status = %d", status)
 	}
 	closeBody(t, i, body)
+	if i.finishDownstream() {
+		t.Fatal("the finished body was cut short")
+	}
 	if got, want := downstream.Body.String(), "from the backend, then from the guest"; got != want {
 		t.Fatalf("downstream body = %q, want %q", got, want)
 	}

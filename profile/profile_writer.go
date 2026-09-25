@@ -30,8 +30,8 @@ type ResponseObserver interface {
 // package for one file.
 //
 // The wrapper is safe for concurrent observation reads (Status,
-// BytesWritten, HeaderFlushed, Hijacked) by code outside the request
-// goroutine; the recording side runs only from the request goroutine.
+// BytesWritten, HeaderFlushed, Hijacked) by code outside the goroutine
+// that writes the response, which is not always the request goroutine.
 type TraceResponseWriter struct {
 	inner http.ResponseWriter
 

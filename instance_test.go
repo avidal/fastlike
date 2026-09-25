@@ -2,7 +2,9 @@ package fastlike
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -174,14 +176,21 @@ func TestInstanceInterruptDoesNotLeakIntoNextRequest(t *testing.T) {
 	}
 }
 
-// Cancelling one request must not interrupt another one running the same module.
-func TestInstanceInterruptOnlyReachesItsOwnRequest(t *testing.T) {
-	wasmfile := filepath.Join(t.TempDir(), "spin.wasm")
-	if err := os.WriteFile(wasmfile, wat2wasm(t, spinOnPostWat), 0o644); err != nil {
+// newWatFastlike serves wat through a pooled Fastlike.
+func newWatFastlike(t *testing.T, wat string) *Fastlike {
+	t.Helper()
+	wasmfile := filepath.Join(t.TempDir(), "guest.wasm")
+	if err := os.WriteFile(wasmfile, wat2wasm(t, wat), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f := New(wasmfile)
-	defer f.Close()
+	t.Cleanup(f.Close)
+	return f
+}
+
+// Cancelling one request must not interrupt another one running the same module.
+func TestInstanceInterruptOnlyReachesItsOwnRequest(t *testing.T) {
+	f := newWatFastlike(t, spinOnPostWat)
 
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
@@ -200,4 +209,35 @@ func TestInstanceInterruptOnlyReachesItsOwnRequest(t *testing.T) {
 	}
 	cancelSecond()
 	wantInterrupted(t, await(t, second, "the second request"))
+}
+
+// unfinishedStreamWat streams a response and exits without finishing it.
+const unfinishedStreamWat = `(module
+  (import "fastly_http_resp" "new" (func $resp_new (param i32) (result i32)))
+  (import "fastly_http_body" "new" (func $body_new (param i32) (result i32)))
+  (import "fastly_http_resp" "send_downstream" (func $send (param i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func (export "_start")
+    (drop (call $resp_new (i32.const 0)))
+    (drop (call $body_new (i32.const 4)))
+    (drop (call $send (i32.load (i32.const 0)) (i32.load (i32.const 4)) (i32.const 1)))))`
+
+func TestCutShortResponseKeepsItsInstancePooled(t *testing.T) {
+	f := newWatFastlike(t, unfinishedStreamWat)
+	server := httptest.NewServer(f)
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("client read error = %v, want an unexpected EOF", err)
+	}
+	server.Close()
+	if pooled := len(f.instances); pooled != 1 {
+		t.Fatalf("%d pooled instances, want 1", pooled)
+	}
 }

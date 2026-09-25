@@ -219,6 +219,7 @@ func TestResponseSendDownstreamConsumesHandlesByMode(t *testing.T) {
 			} else if bodyStatus != XqdErrInvalidHandle {
 				t.Fatalf("buffered body handle after send status = %d, want %d", bodyStatus, XqdErrInvalidHandle)
 			}
+			i.finishDownstream()
 		})
 	}
 }
@@ -236,6 +237,7 @@ func TestResponseSendDownstreamOnlyOneEnablesStreaming(t *testing.T) {
 	if status := i.xqd_resp_send_downstream(int32(respHandle), int32(bodyHandle), 2); status != XqdStatusOK {
 		t.Fatalf("resp_send_downstream status = %d, want %d", status, XqdStatusOK)
 	}
+	i.finishDownstream()
 	if got := recorder.Body.String(); got != "buffered" {
 		t.Fatalf("downstream body = %q, want buffered send body %q", got, "buffered")
 	}
@@ -309,6 +311,7 @@ func TestStreamingDownstreamBodyRejectsFrontWrites(t *testing.T) {
 	if status := i.xqd_body_close(int32(bodyHandle)); status != XqdStatusOK {
 		t.Fatalf("body_close status = %d, want %d", status, XqdStatusOK)
 	}
+	i.finishDownstream()
 }
 
 func TestRequestAndResponseCloseConsumeHandles(t *testing.T) {
@@ -530,6 +533,7 @@ func TestBodyAppendWritesIntoStreamingDownstreamResponse(t *testing.T) {
 	if status := i.xqd_body_close(int32(destHandle)); status != XqdStatusOK {
 		t.Fatalf("body_close status = %d, want %d", status, XqdStatusOK)
 	}
+	i.finishDownstream()
 	if got := recorder.Body.String(); got != "appended" {
 		t.Fatalf("streaming downstream body = %q, want %q", got, "appended")
 	}

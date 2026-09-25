@@ -131,7 +131,7 @@ func (i *Instance) xqd_object_store_insert(
 	}
 
 	body := i.bodies.Get(int(bodyHandle))
-	if body == nil {
+	if body == nil || body.IsStreaming() {
 		return XqdErrInvalidHandle
 	}
 
@@ -174,7 +174,7 @@ func (i *Instance) xqd_object_store_insert_async(
 	}
 
 	body := i.bodies.Get(int(bodyHandle))
-	if body == nil {
+	if body == nil || body.IsStreaming() {
 		return XqdErrInvalidHandle
 	}
 

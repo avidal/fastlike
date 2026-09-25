@@ -70,6 +70,11 @@ type Instance struct {
 	ds_response http.ResponseWriter // Where we write the final HTTP response
 	ds_context  context.Context     // Request context, used for cancellation and timeouts
 
+	// ds_done is set when the guest sends its final response, and closed once
+	// that response went out, cut short or not.
+	ds_done     chan struct{}
+	ds_cutShort bool
+
 	// backendCtx carries backend requests.
 	// Unlike ds_context, it outlives the guest, so that backend bodies can
 	// finish filling the cache, like in production.
@@ -268,20 +273,15 @@ func (i *Instance) reset() {
 	}
 
 	// Close all body handles and release buffers
+	i.abandonUnfinishedBodies()
 	for _, b := range i.bodies.handles {
 		if b == nil {
 			continue
 		}
-		if _, unfinished := b.closer.(bodyAbandoner); b.IsStreaming() || unfinished {
-			// A writer that never finished must not have its partial body
-			// published by teardown.
-			_ = b.Abandon()
-		} else if b.closer != nil {
+		if b.closer != nil {
 			_ = b.closer.Close()
 		}
-		if b.buf != nil {
-			b.buf = nil
-		}
+		b.buf = nil
 	}
 
 	// Backend requests nobody collected stop here.
@@ -353,6 +353,8 @@ func (i *Instance) reset() {
 	i.ds_response = nil
 	i.ds_request = nil
 	i.ds_context = nil
+	i.ds_done = nil
+	i.ds_cutShort = false
 	i.backendCtx = nil
 	i.ds_originalHeaders = nil
 	i.downstreamRequestHandle = 0
@@ -367,6 +369,19 @@ func (i *Instance) reset() {
 	// Reset CPU time tracking to zero
 	i.activeCpuTimeUs.Store(0)
 	i.executionStartTime = time.Time{}
+}
+
+// abandonUnfinishedBodies keeps a partial body from passing for a complete one.
+func (i *Instance) abandonUnfinishedBodies() {
+	for id, b := range i.bodies.handles {
+		if b == nil {
+			continue
+		}
+		if _, unfinished := b.closer.(bodyAbandoner); b.IsStreaming() || unfinished {
+			_ = b.Abandon()
+			i.bodies.handles[id] = nil
+		}
+	}
 }
 
 // setup instantiates the guest for a new request and returns its entry point.
@@ -493,15 +508,17 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, err = entry.Call(i.store)
 	i.stopExecution()
 
+	// Before stopping the interrupt, so that a client leaving meanwhile still
+	// cancels the backend requests the response waits for.
+	cutShort := i.finishDownstream()
+
 	// A late interrupt must not reach the next request served by this instance.
 	if !stopInterrupt() {
 		<-interrupted
 	}
 
-	// Handle wasm execution errors.
-	// A clean exit (exit code 0) is normal for WASI programs — wasmtime
-	// reports it as an error but it's not one. Only write the error
-	// response for actual failures.
+	// wasmtime reports a clean WASI exit as an error.
+	// The error page is only for failures that left no response.
 	if err != nil && !isCleanExit(err) {
 		// A trap triggered by epoch interrupt during cancellation should be
 		// classified as a cancellation, not as a guest-side trap. Genuine
@@ -511,10 +528,17 @@ func (i *Instance) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			i.markOutcome(profile.TraceOutcomeTrap)
 		}
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("Error running wasm program.\n"))
-		_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
-		_, _ = w.Write([]byte(err.Error()))
+		if i.ds_done == nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("Error running wasm program.\n"))
+			_, _ = w.Write([]byte("Below is a useless blob of wasm backtrace. There may be more in your server logs.\n"))
+			_, _ = w.Write([]byte(err.Error()))
+		}
+	}
+
+	// The way a Go handler cuts its response short.
+	if cutShort {
+		panic(http.ErrAbortHandler)
 	}
 }
 

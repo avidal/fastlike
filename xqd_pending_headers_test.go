@@ -2,11 +2,14 @@ package fastlike
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -355,6 +358,7 @@ func TestSendDownstreamPendingSuccess(t *testing.T) {
 	if st := i.xqd_resp_send_downstream_pending(int32(phid)); st != XqdStatusOK {
 		t.Fatalf("send_downstream_pending status = %d", st)
 	}
+	i.finishDownstream()
 
 	res := rec.Result()
 	if res.StatusCode != 201 {
@@ -372,41 +376,63 @@ func TestSendDownstreamPendingSuccess(t *testing.T) {
 	}
 }
 
-func TestSendDownstreamPendingFailureSynthesizes502(t *testing.T) {
-	i := newPendingTestInstance()
-	rec := httptest.NewRecorder()
-	i.ds_response = rec
+func TestSendDownstreamPendingFailureStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"connect timeout", &cachingSendError{err: fmt.Errorf("dial: %w", errConnectTimeout)}, http.StatusGatewayTimeout},
+		{"first-byte timeout", &cachingSendError{err: errFirstByteTimeout}, http.StatusGatewayTimeout},
+		{"DNS timeout", &cachingSendError{err: &net.DNSError{Err: "timeout", IsTimeout: true}}, http.StatusGatewayTimeout},
+		{"connection refused", &cachingSendError{err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}}, http.StatusBadGateway},
+		{"unclassified transport error", &cachingSendError{err: errors.New("malformed HTTP response")}, http.StatusBadGateway},
+		{"backend handler panic", errors.New("backend handler panic: boom"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newPendingTestInstance()
+			rec := httptest.NewRecorder()
+			i.ds_response = rec
+			phid, pr := i.pendingRequests.New()
 
-	phid, pr := i.pendingRequests.New()
+			// Only the header queued for errors applies to a failure.
+			na, ns := writeStr(t, i, 100, "X-Err")
+			va, vs := writeStr(t, i, 200, "synth")
+			if st := i.xqd_pending_req_header_insert(int32(phid), na, ns, va, vs, PendingResponseKindError); st != XqdStatusOK {
+				t.Fatalf("insert err: %d", st)
+			}
+			na2, ns2 := writeStr(t, i, 300, "X-Ok")
+			va2, vs2 := writeStr(t, i, 400, "nope")
+			if st := i.xqd_pending_req_header_insert(int32(phid), na2, ns2, va2, vs2, PendingResponseKindResponse); st != XqdStatusOK {
+				t.Fatalf("insert ok: %d", st)
+			}
 
-	// Queue an error-target header and a response-target header; only the
-	// error one should survive a failure.
-	na, ns := writeStr(t, i, 100, "X-Err")
-	va, vs := writeStr(t, i, 200, "synth")
-	if st := i.xqd_pending_req_header_insert(int32(phid), na, ns, va, vs, PendingResponseKindError); st != XqdStatusOK {
-		t.Fatalf("insert err: %d", st)
-	}
-	na2, ns2 := writeStr(t, i, 300, "X-Ok")
-	va2, vs2 := writeStr(t, i, 400, "nope")
-	if st := i.xqd_pending_req_header_insert(int32(phid), na2, ns2, va2, vs2, PendingResponseKindResponse); st != XqdStatusOK {
-		t.Fatalf("insert ok: %d", st)
-	}
+			pr.Complete(nil, tc.err)
+			if st := i.xqd_resp_send_downstream_pending(int32(phid)); st != XqdStatusOK {
+				t.Fatalf("send_downstream_pending status = %d", st)
+			}
+			if i.finishDownstream() {
+				t.Fatal("the error response was cut short")
+			}
 
-	pr.Complete(nil, io.ErrUnexpectedEOF)
-
-	if st := i.xqd_resp_send_downstream_pending(int32(phid)); st != XqdStatusOK {
-		t.Fatalf("send_downstream_pending status = %d", st)
-	}
-
-	res := rec.Result()
-	if res.StatusCode != http.StatusBadGateway {
-		t.Errorf("status = %d, want 502", res.StatusCode)
-	}
-	if got := res.Header.Get("X-Err"); got != "synth" {
-		t.Errorf("X-Err = %q, want synth", got)
-	}
-	if got := res.Header.Get("X-Ok"); got != "" {
-		t.Errorf("X-Ok = %q, want empty on failure", got)
+			res := rec.Result()
+			if res.StatusCode != tc.status {
+				t.Errorf("status = %d, want %d", res.StatusCode, tc.status)
+			}
+			body, _ := io.ReadAll(res.Body)
+			if want := http.StatusText(tc.status); string(body) != want {
+				t.Errorf("body = %q, want %q", body, want)
+			}
+			if got := res.Header.Get("Content-Type"); got != "text/plain" {
+				t.Errorf("Content-Type = %q, want text/plain", got)
+			}
+			if got := res.Header.Get("X-Err"); got != "synth" {
+				t.Errorf("X-Err = %q, want synth", got)
+			}
+			if got := res.Header.Get("X-Ok"); got != "" {
+				t.Errorf("X-Ok = %q, want empty on failure", got)
+			}
+		})
 	}
 }
 

@@ -180,18 +180,16 @@ type BodyHandle struct {
 	readErr error
 
 	// Streaming body support (for send_async_streaming XQD call)
-	isStreaming        bool
-	isDownstreamStream bool
-	downstreamTrailers http.Header
-	streamingChan      chan []byte   // buffered channel for backpressure control
-	streamingDone      chan struct{} // closed when streaming completes or is cancelled
-	streamingAbandon   chan struct{} // closed when the guest abandons an incomplete stream
-	streamingStopOnce  sync.Once
-	streamingReadyMu   sync.Mutex
-	streamingSpace     chan struct{} // closed when a full channel next becomes writable or stops
-	streamingWritten   int64         // total bytes written to streaming body so far
+	isStreaming       bool
+	streamingChan     chan []byte   // buffered channel for backpressure control
+	streamingDone     chan struct{} // closed when streaming completes or is cancelled
+	streamingAbandon  chan struct{} // closed when the guest abandons an incomplete stream
+	streamingStopOnce sync.Once
+	streamingReadyMu  sync.Mutex
+	streamingSpace    chan struct{} // closed when a full channel next becomes writable or stops
+	streamingWritten  int64         // total bytes written to streaming body so far
 
-	// sink is set on streaming bodies that queue what is appended to them.
+	// sink is the write end of a cache insert or a streamed response.
 	sink bodySink
 }
 
@@ -199,7 +197,9 @@ type BodyHandle struct {
 // instead of copying them right away.
 type bodySink interface {
 	io.WriteCloser
-	Append(src io.Reader)
+	Append(src io.Reader) error
+	// readyChannel is closed once a write would not wait.
+	readyChannel() <-chan struct{}
 }
 
 type joinedBodyCloser struct {
@@ -247,11 +247,6 @@ func joinBodyClosers(first, second io.Closer) io.Closer {
 // For streaming bodies, this signals the drain goroutine to finish
 // by sending a nil sentinel to the channel.
 func (b *BodyHandle) Close() error {
-	if b.downstreamTrailers != nil {
-		for name, values := range b.currentTrailers() {
-			b.downstreamTrailers[http.TrailerPrefix+http.CanonicalHeaderKey(name)] = slices.Clone(values)
-		}
-	}
 	if b.isStreaming && b.streamingChan != nil {
 		select {
 		case b.streamingChan <- nil:
@@ -302,8 +297,8 @@ func closedStreamingReadyChannel() <-chan struct{} {
 // A fresh channel is created for each full-buffer epoch, preventing a readiness
 // notification from an earlier drain from being reused after the buffer refills.
 func (b *BodyHandle) streamingReadyChannel() <-chan struct{} {
-	if b.isDownstreamStream || b.sink != nil {
-		return closedStreamingReadyChannel()
+	if b.sink != nil {
+		return b.sink.readyChannel()
 	}
 	if !b.isStreaming || b.streamingChan == nil {
 		return nil
@@ -473,7 +468,7 @@ func (b *BodyHandle) growKnownLength(n int64) {
 
 // IsStreaming returns true if this body handle is a streaming body
 func (b *BodyHandle) IsStreaming() bool {
-	return b.isStreaming || b.isDownstreamStream || b.sink != nil
+	return b.isStreaming || b.sink != nil
 }
 
 // IsStreamingReady checks if the streaming body has capacity for writes (non-blocking).
@@ -536,14 +531,6 @@ func (b *BodyHandle) Abandon() error {
 		}
 		return nil
 	}
-	if b.isDownstreamStream {
-		// Abandoning a downstream stream must not run the normal finish path,
-		// which would publish its trailers as if the body completed.
-		if b.closer != nil {
-			return abandonCloser(b.closer)
-		}
-		return nil
-	}
 	if b.closer != nil {
 		if abandoner, ok := b.closer.(bodyAbandoner); ok {
 			return abandoner.Abandon()
@@ -556,14 +543,6 @@ func (b *BodyHandle) Abandon() error {
 // incomplete body as done, such as cache writers.
 type bodyAbandoner interface {
 	Abandon() error
-}
-
-// RedirectWriter changes the body handle's writer to w. Future Write calls
-// (from body_write in the guest) go directly to w instead of the internal buffer.
-func (b *BodyHandle) RedirectWriter(w io.Writer) {
-	b.writer = w
-	b.lengthKnown = false
-	b.isDownstreamStream = true
 }
 
 // CloseStreaming closes the streaming body by sending a nil sentinel.
@@ -654,9 +633,16 @@ func (bhs *BodyHandles) NewWriter(w io.Writer) (int, *BodyHandle) {
 // NewSink creates a streaming body written through sink, such as the body of a
 // cache insert.
 func (bhs *BodyHandles) NewSink(sink bodySink) (int, *BodyHandle) {
-	bh := &BodyHandle{reader: http.NoBody, writer: sink, closer: sink, sink: sink}
+	bh := &BodyHandle{}
+	bh.becomeSink(sink)
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles), bh
+}
+
+// becomeSink keeps b's trailers, and the caller takes over what b held.
+func (b *BodyHandle) becomeSink(sink bodySink) {
+	b.reader, b.writer, b.closer, b.sink = http.NoBody, sink, sink, sink
+	b.buf, b.lengthKnown, b.readErr = nil, false, nil
 }
 
 // PendingRequest represents an asynchronous HTTP request in flight
