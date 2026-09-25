@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"sync"
 )
@@ -58,6 +59,18 @@ func (i *Instance) downstreamHasBody(status int) bool {
 		method = i.ds_request.Method
 	}
 	return responseHasBody(method, status)
+}
+
+// sendEarlyHints forwards a 103 where production's h2o would.
+// net/http keeps a 1xx's headers, so they are removed from the final response.
+func (i *Instance) sendEarlyHints(headers http.Header) {
+	if len(headers) == 0 || i.ds_request.ProtoMajor < 2 || i.ds_request.Header.Get("No-Early-Hints") == "1" {
+		return
+	}
+	final := i.ds_response.Header().Clone()
+	writeResponseHead(i.ds_response, http.StatusEarlyHints, headers)
+	clear(i.ds_response.Header())
+	maps.Copy(i.ds_response.Header(), final)
 }
 
 // writeResponseHead sends exactly the headers the guest set, without the

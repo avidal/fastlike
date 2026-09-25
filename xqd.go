@@ -89,7 +89,7 @@ func (i *Instance) xqd_req_body_downstream_get(request_handle_out int32, body_ha
 
 // xqd_resp_send_downstream returns before the body is sent, like production.
 // With stream set to 1, the guest streams the rest through the body handle.
-// A 103 goes out at once without its body, and only one final response can.
+// Only one final response can go out, after any number of 103s.
 func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream int32) int32 {
 	if i.ds_done != nil {
 		i.abilog.Printf("resp_send_downstream: a response was already sent")
@@ -120,8 +120,14 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	i.abilog.Printf("resp_send_downstream: stream=%d framing_mode=%d effective_mode=%d", stream, w.framingHeadersMode, effectiveMode)
 
 	if w.StatusCode == http.StatusEarlyHints {
-		_ = i.bodies.Take(int(bhandle)).Close()
-		writeResponseHead(i.ds_response, w.StatusCode, headers)
+		// Production drops the body, but keeps a streaming handle open.
+		_ = b.Close()
+		if stream == 1 {
+			b.becomeSink(&downstreamStream{stopped: true})
+		} else {
+			i.bodies.Take(int(bhandle))
+		}
+		i.sendEarlyHints(headers)
 		return XqdStatusOK
 	}
 

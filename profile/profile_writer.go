@@ -64,9 +64,10 @@ func NewTraceResponseWriter(w http.ResponseWriter) ResponseObserver {
 func (t *TraceResponseWriter) Header() http.Header { return t.inner.Header() }
 
 func (t *TraceResponseWriter) WriteHeader(status int) {
-	if !t.wroteHeaderCalled.Swap(true) {
+	t.markHeaderFlush()
+	informational := status >= 100 && status < 200 && status != http.StatusSwitchingProtocols
+	if !informational && !t.wroteHeaderCalled.Swap(true) {
 		t.status.Store(int32(status))
-		t.markHeaderFlush()
 	}
 	t.inner.WriteHeader(status)
 }
