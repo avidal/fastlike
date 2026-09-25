@@ -381,44 +381,112 @@ func TestOnlyOneFinalResponse(t *testing.T) {
 	i.finishDownstream()
 }
 
-func TestEarlyHintsLeaveRoomForTheFinalResponse(t *testing.T) {
-	var hints []int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		i := newPendingTestInstance()
-		i.ds_response = w
-		hintHandle, hint := i.responses.New()
-		hint.StatusCode = http.StatusEarlyHints
-		hintBody, body := i.bodies.NewBuffer()
-		_, _ = body.Write([]byte("not sent"))
-		if status := i.xqd_resp_send_downstream(int32(hintHandle), int32(hintBody), 0); status != XqdStatusOK {
-			t.Errorf("103 send_downstream status = %d", status)
-		}
-		finalHandle, _ := i.responses.New()
-		finalBody, body := i.bodies.NewBuffer()
-		_, _ = body.Write([]byte("final"))
-		if status := i.xqd_resp_send_downstream(int32(finalHandle), int32(finalBody), 0); status != XqdStatusOK {
-			t.Errorf("final send_downstream status = %d", status)
-		}
-		i.finishDownstream()
-	}))
-	defer server.Close()
+func TestEarlyHintsLikeProduction(t *testing.T) {
+	const link = "</style.css>; rel=preload; as=style"
+	for _, tc := range []struct {
+		name      string
+		http2     bool
+		noHints   bool
+		link      string
+		wantHints int
+	}{
+		{"HTTP/2", true, false, link, 1},
+		{"HTTP/1.1", false, false, link, 0},
+		{"no-early-hints", true, true, link, 0},
+		{"without headers", true, false, "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				i := newPendingTestInstance()
+				i.ds_request, i.ds_response = r, w
+				hintHandle, hint := i.responses.New()
+				hint.StatusCode = http.StatusEarlyHints
+				if tc.link != "" {
+					hint.Header = http.Header{"Link": {tc.link}}
+				}
+				hintBody, body := i.bodies.NewBuffer()
+				_, _ = body.Write([]byte("not sent"))
+				if status := i.xqd_resp_send_downstream(int32(hintHandle), int32(hintBody), 0); status != XqdStatusOK {
+					t.Errorf("103 send_downstream status = %d", status)
+				}
+				finalHandle, _ := i.responses.New()
+				finalBody, body := i.bodies.NewBuffer()
+				_, _ = body.Write([]byte("final"))
+				if status := i.xqd_resp_send_downstream(int32(finalHandle), int32(finalBody), 0); status != XqdStatusOK {
+					t.Errorf("final send_downstream status = %d", status)
+				}
+				i.finishDownstream()
+			}))
+			server.EnableHTTP2 = tc.http2
+			server.StartTLS()
+			defer server.Close()
 
-	trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, _ textproto.MIMEHeader) error {
-		hints = append(hints, code)
-		return nil
-	}}
-	req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(t.Context(), trace), "GET", server.URL, nil)
-	resp, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
+			var hints []textproto.MIMEHeader
+			trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+				if code == http.StatusEarlyHints {
+					hints = append(hints, header)
+				}
+				return nil
+			}}
+			req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(t.Context(), trace), "GET", server.URL, nil)
+			if tc.noHints {
+				req.Header.Set("No-Early-Hints", "1")
+			}
+			resp, err := server.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if tc.http2 != (resp.ProtoMajor == 2) {
+				t.Fatalf("client spoke %s", resp.Proto)
+			}
+			if len(hints) != tc.wantHints {
+				t.Fatalf("got %d early hints, want %d", len(hints), tc.wantHints)
+			}
+			if len(hints) == 1 && hints[0].Get("Link") != link {
+				t.Fatalf("early hints Link = %q, want %q", hints[0].Get("Link"), link)
+			}
+			if resp.StatusCode != http.StatusOK || string(body) != "final" {
+				t.Fatalf("final response = %d %q, want 200 %q", resp.StatusCode, body, "final")
+			}
+			if got := resp.Header.Get("Link"); got != "" {
+				t.Fatalf("final response has the early hints' Link %q", got)
+			}
+		})
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if len(hints) != 1 || hints[0] != http.StatusEarlyHints {
-		t.Fatalf("informational responses = %v, want one 103", hints)
+}
+
+// Like production, the handle stays open but takes nothing.
+func TestStreamedEarlyHintsBodyIsDropped(t *testing.T) {
+	i := newPendingTestInstance()
+	i.ds_request = httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	recorder := httptest.NewRecorder()
+	i.ds_response = recorder
+	respHandle, resp := i.responses.New()
+	resp.StatusCode = http.StatusEarlyHints
+	bodyHandle, _ := i.bodies.NewBuffer()
+	if status := i.xqd_resp_send_downstream(int32(respHandle), int32(bodyHandle), 1); status != XqdStatusOK {
+		t.Fatalf("103 send_downstream status = %d", status)
 	}
-	if resp.StatusCode != http.StatusOK || string(body) != "final" {
-		t.Fatalf("final response = %d %q, want 200 %q", resp.StatusCode, body, "final")
+	writesFailWithin(t, i, bodyHandle)
+	srcHandle, _ := i.bodies.NewBuffer()
+	if status := i.xqd_body_append(int32(bodyHandle), int32(srcHandle)); status != XqdErrInvalidHandle {
+		t.Fatalf("body_append status = %d, want %d", status, XqdErrInvalidHandle)
+	}
+	closeBody(t, i, int32(bodyHandle))
+
+	respHandle, _ = i.responses.New()
+	bodyHandle, body := i.bodies.NewBuffer()
+	_, _ = body.Write([]byte("final"))
+	if status := i.xqd_resp_send_downstream(int32(respHandle), int32(bodyHandle), 0); status != XqdStatusOK {
+		t.Fatalf("final send_downstream status = %d", status)
+	}
+	if i.finishDownstream() {
+		t.Fatal("the response was cut short")
+	}
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "final" {
+		t.Fatalf("downstream = %d %q, want 200 %q", recorder.Code, recorder.Body.String(), "final")
 	}
 }
 

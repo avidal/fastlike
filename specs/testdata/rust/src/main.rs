@@ -148,6 +148,13 @@ fn main(mut req: Request) -> Result<Response, Error> {
             std::process::exit(0);
         },
 
+        (&Method::GET, "/early-hints") => {
+            Response::from_status(StatusCode::from_u16(103)?)
+                .with_header("link", "</style.css>; rel=preload; as=style")
+                .send_to_client();
+            Ok(Response::from_body("final"))
+        },
+
         (&Method::GET, "/panic-after-send") => {
             Response::from_body("sent").send_to_client();
             panic!("after sending the response");

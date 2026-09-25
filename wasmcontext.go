@@ -689,9 +689,6 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_resp", "get_addr_dest_port", safeWrap2("get_addr_dest_port", func(i *Instance, handle int32, port_out int32) int32 {
 		return i.xqd_resp_get_addr_dest_port(handle, port_out)
 	}))
-	_ = linker.FuncWrap("fastly_http_resp", "send_informational_response", safeWrap2("send_informational_response", func(i *Instance, resp_handle int32, status int32) int32 {
-		return i.xqd_resp_send_informational_response(resp_handle, status)
-	}))
 
 	// xqd_body.go
 	_ = linker.FuncWrap("fastly_http_body", "new", safeWrap1("new", func(i *Instance, handle_out int32) int32 {

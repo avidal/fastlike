@@ -472,7 +472,6 @@ var hostcallNames = []string{
 	"http_keepalive_mode_set",
 	"get_addr_dest_ip",
 	"get_addr_dest_port",
-	"send_informational_response",
 	"write",
 	"read",
 	"append",

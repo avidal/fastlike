@@ -11,7 +11,9 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/http/httputil"
+	"net/textproto"
 	"net/url"
 	"os"
 	"strings"
@@ -598,6 +600,35 @@ func TestFastlike(t *testing.T) {
 		close(gotFirst)
 		if rest, err := io.ReadAll(resp.Body); err != nil || string(rest) != "then the origin" {
 			st.Errorf("rest of the body = %q, %v, want %q", rest, err, "then the origin")
+		}
+	})
+
+	t.Run("early-hints", func(st *testing.T) {
+		st.Parallel()
+		// Over HTTP/2, the 103's headers stay out of the final response.
+		server := httptest.NewUnstartedServer(f.Instantiate(fastlike.WithDefaultBackend(failingBackendHandler(st))))
+		server.EnableHTTP2 = true
+		server.StartTLS()
+		defer server.Close()
+		var links []string
+		trace := &httptrace.ClientTrace{Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			if code == http.StatusEarlyHints {
+				links = append(links, header.Get("Link"))
+			}
+			return nil
+		}}
+		req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), "GET", server.URL+"/early-hints", nil)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			st.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if len(links) != 1 || links[0] != "</style.css>; rel=preload; as=style" {
+			st.Errorf("early hints Link headers %q, want one", links)
+		}
+		if resp.StatusCode != http.StatusOK || string(body) != "final" || resp.Header.Get("Link") != "" {
+			st.Errorf("final response %d %q with Link %q, want 200 %q without one", resp.StatusCode, body, resp.Header.Get("Link"), "final")
 		}
 	})
 

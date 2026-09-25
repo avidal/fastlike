@@ -57,6 +57,18 @@ func TestTraceWriterHonorsFirstWriteHeaderOnly(t *testing.T) {
 	}
 }
 
+func TestTraceWriterRecordsTheFinalStatusAfterEarlyHints(t *testing.T) {
+	tw := NewTraceResponseWriter(httptest.NewRecorder())
+	tw.WriteHeader(http.StatusEarlyHints)
+	if tw.HeaderFlushed() == nil {
+		t.Error("HeaderFlushed should be set by the 103")
+	}
+	tw.WriteHeader(http.StatusNoContent)
+	if got := tw.Status(); got != http.StatusNoContent {
+		t.Errorf("status: got %d, want 204", got)
+	}
+}
+
 func TestTraceWriterFlushPreserved(t *testing.T) {
 	// httptest.ResponseRecorder satisfies http.Flusher.
 	rec := httptest.NewRecorder()
