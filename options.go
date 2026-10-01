@@ -112,8 +112,9 @@ func WithUnreliableDefaultBackend(fn func(name string) http.Handler, uptime uint
 	}
 }
 
-// WithGeo replaces the default geographic lookup function
-func WithGeo(fn func(net.IP) Geo) Option {
+// WithGeo replaces the default geographic lookup function.
+// It returns nil when no geolocation record exists for the address.
+func WithGeo(fn func(net.IP) *Geo) Option {
 	return func(i *Instance) {
 		i.geolookup = fn
 	}

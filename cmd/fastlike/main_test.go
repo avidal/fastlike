@@ -2,15 +2,36 @@ package main
 
 import (
 	"flag"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"fastlike.dev"
 )
+
+func TestLoadGeoFileReturnsNilForAnUnmappedAddress(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "geo.json")
+	if err := os.WriteFile(filename, []byte(`{"192.0.2.1":{"city":"Test City"}}`), 0o600); err != nil {
+		t.Fatalf("write geo file: %v", err)
+	}
+
+	lookup, err := loadGeoFile(filename)
+	if err != nil {
+		t.Fatalf("loadGeoFile() error = %v", err)
+	}
+	if got := lookup(net.ParseIP("192.0.2.1")); got == nil || got.City != "Test City" {
+		t.Fatalf("mapped record = %#v, want Test City", got)
+	}
+	if got := lookup(net.ParseIP("198.51.100.1")); got != nil {
+		t.Errorf("unmapped record = %#v, want nil", got)
+	}
+}
 
 func TestOverrideHostFlags(t *testing.T) {
 	flags := make(overrideHostFlags)
