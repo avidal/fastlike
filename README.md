@@ -295,7 +295,8 @@ Provide custom IP-to-location mappings:
 fastlike -wasm my-program.wasm -backend localhost:8000 -geo geo.json
 ```
 
-Geo JSON maps IP addresses or CIDRs to location data:
+Geo JSON maps IP addresses or CIDRs to location data.
+An address with no matching entry returns an empty geolocation result.
 
 ```json
 {

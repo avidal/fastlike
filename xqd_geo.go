@@ -35,6 +35,10 @@ func (i *Instance) xqd_geo_lookup(addr_octets int32, addr_len int32, buf int32, 
 
 	// Do the geolocation lookup
 	geo := i.geolookup(ip)
+	if geo == nil {
+		i.memory.PutUint32(0, int64(nwritten_out))
+		return XqdStatusOK
+	}
 
 	// Serialize to JSON
 	result, err := json.Marshal(geo)

@@ -32,8 +32,8 @@ type Geo struct {
 // defaultGeoLookup returns a stub geographic location for local development environments.
 // Returns a fixed location (Austin, TX) with AS64496 (an AS number reserved for documentation).
 // This allows testing geo-based logic without a real geolocation database.
-func defaultGeoLookup(ip net.IP) Geo {
-	return Geo{
+func defaultGeoLookup(ip net.IP) *Geo {
+	return &Geo{
 		ASName:   "fastlike",
 		ASNumber: 64496,
 
@@ -54,7 +54,7 @@ func defaultGeoLookup(ip net.IP) Geo {
 // The IP address is passed via the fastly-xqd-arg1 header (internal XQD protocol).
 // The geolocation result is returned as JSON in the response body.
 // This handler is used internally by the XQD ABI implementation.
-func geoHandler(fn func(ip net.IP) Geo) http.Handler {
+func geoHandler(fn func(ip net.IP) *Geo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr := net.ParseIP(r.Header.Get("fastly-xqd-arg1"))
 		geo := fn(addr)

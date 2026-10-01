@@ -791,7 +791,7 @@ func (f *loggerFlags) Set(v string) error {
 }
 
 // loadGeoFile loads a JSON file mapping IP addresses/CIDRs to Geo data
-func loadGeoFile(filename string) (func(ip net.IP) fastlike.Geo, error) {
+func loadGeoFile(filename string) (func(ip net.IP) *fastlike.Geo, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("error reading geo file: %s", err.Error())
@@ -829,26 +829,11 @@ func loadGeoFile(filename string) (func(ip net.IP) fastlike.Geo, error) {
 		return nil, fmt.Errorf("invalid IP or CIDR in geo file: %s", key)
 	}
 
-	// Default geo for unknown IPs
-	defaultGeo := fastlike.Geo{
-		ASName:       "fastlike",
-		ASNumber:     64496,
-		AreaCode:     512,
-		City:         "Austin",
-		CountryCode:  "US",
-		CountryCode3: "USA",
-		CountryName:  "United States of America",
-		Continent:    "NA",
-		Region:       "TX",
-		ConnSpeed:    "satellite",
-		ConnType:     "satellite",
-	}
-
-	return func(ip net.IP) fastlike.Geo {
+	return func(ip net.IP) *fastlike.Geo {
 		// Check exact IP matches first
 		for _, entry := range entries {
 			if entry.ip != nil && entry.ip.Equal(ip) {
-				return entry.geo
+				return &entry.geo
 			}
 		}
 
@@ -868,10 +853,10 @@ func loadGeoFile(filename string) (func(ip net.IP) fastlike.Geo, error) {
 		}
 
 		if bestMatch != nil {
-			return bestMatch.geo
+			return &bestMatch.geo
 		}
 
-		return defaultGeo
+		return nil
 	}, nil
 }
 

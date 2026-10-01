@@ -125,7 +125,7 @@ type Instance struct {
 	shields map[string]*Shield // Named shields for shielding module
 
 	// Request processing functions
-	geolookup        func(net.IP) Geo            // Geographic lookup from IP address
+	geolookup        func(net.IP) *Geo           // Geographic lookup from IP address
 	uaparser         UserAgentParser             // User agent parsing
 	deviceDetection  DeviceLookupFunc            // Device detection from user agent string
 	botDetection     BotDetectionFunc            // Bot detection from request
