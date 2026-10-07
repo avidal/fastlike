@@ -269,3 +269,26 @@ func TestBackendFirstByteTimeout(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadGateway)
 	}
 }
+
+func TestNamedLoggersWriteOneLinePerMessage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	flags := loggerFlags{}
+	if err := flags.Set("audit=" + path); err != nil {
+		t.Fatal(err)
+	}
+	w := flags["audit"].lineWriter()
+	for _, msg := range []string{`{"a":1}`, `{"b":2}`} {
+		if _, err := w.Write([]byte(msg)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = flags["audit"].writer.Close()
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "{\"a\":1}\n{\"b\":2}\n"; string(got) != want {
+		t.Errorf("log file = %q, want %q", got, want)
+	}
+}

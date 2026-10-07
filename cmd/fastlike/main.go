@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -144,7 +145,7 @@ func main() {
 	}
 
 	for name, logger := range loggers {
-		opts = append(opts, fastlike.WithLogger(name, logger.writer))
+		opts = append(opts, fastlike.WithLogger(name, logger.lineWriter()))
 	}
 
 	if *geoFile != "" {
@@ -752,6 +753,12 @@ type loggerEntry struct {
 	name     string
 	filename string
 	writer   *os.File
+}
+
+// lineWriter writes each log_write call as one line, the way a production
+// log endpoint receives one message per call.
+func (l loggerEntry) lineWriter() io.Writer {
+	return fastlike.LineWriter{Writer: l.writer}
 }
 
 // loggerFlags implements flag.Value for parsing -logger flags
