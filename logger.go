@@ -70,19 +70,17 @@ type LineWriter struct{ io.Writer }
 
 // Write implements io.Writer for LineWriter.
 // It strips trailing newlines, escapes internal newlines, and appends a single newline.
+// The line goes out in one Write, so concurrent requests logging to the same
+// file cannot interleave a message with another one's newline.
 func (lw LineWriter) Write(data []byte) (int, error) {
 	originalLen := len(data)
 
 	// Strip trailing newlines and escape internal newlines
-	data = bytes.TrimRight(data, "\n")
-	data = bytes.ReplaceAll(data, []byte("\n"), []byte("\\n"))
+	line := bytes.ReplaceAll(bytes.TrimRight(data, "\n"), []byte("\n"), []byte("\\n"))
+	line = append(line, '\n')
 
-	if n, err := lw.Writer.Write(data); err != nil {
-		return n, err
-	}
-
-	if n, err := lw.Writer.Write([]byte("\n")); err != nil {
-		return n, err
+	if n, err := lw.Writer.Write(line); err != nil {
+		return min(n, originalLen), err
 	}
 
 	// Return the original length to satisfy io.Writer semantics
