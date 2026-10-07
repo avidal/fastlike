@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
+	"time"
 )
 
 // sandboxID is a per-process unique identifier (32 lowercase hex digits).
@@ -171,8 +172,13 @@ func (i *Instance) xqd_compute_runtime_get_heap_mib(heap_mib_out int32) int32 {
 func (i *Instance) xqd_compute_runtime_get_vcpu_ms(vcpu_ms_out int32) int32 {
 	i.abilog.Printf("compute_runtime_get_vcpu_ms: vcpu_ms_out=%d", vcpu_ms_out)
 
-	// Load accumulated CPU time in microseconds
+	// Load accumulated CPU time in microseconds, plus the stretch the guest
+	// has been running since its last blocking call, which is not added to
+	// the total until the next pause.
 	microseconds := i.activeCpuTimeUs.Load()
+	if !i.executionStartTime.IsZero() {
+		microseconds += uint64(time.Since(i.executionStartTime).Microseconds())
+	}
 
 	// Convert to milliseconds
 	// We track internally in microseconds because Go's time precision is high,
