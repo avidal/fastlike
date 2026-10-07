@@ -9,7 +9,7 @@ HTTP listener you opt into with one flag.
 
 This document covers the operator-facing surface: which flags do what,
 how the security gates work, what deep mode does and does not capture,
-and how the native sampling integration works on Linux and macOS.
+and how the native sampling integration works on Linux.
 
 ## Quick start
 
@@ -187,9 +187,12 @@ host runtime heap.
 
 When `-profile native` or `-profile combined` is active and the host
 is Linux, fastlike configures the wasmtime engine with
-`ProfilingStrategyJitdump` and `perf record` can attribute samples
-directly to wasm functions. On macOS, route the same jitdump through
-[`samply`](https://github.com/mstange/samply).
+`ProfilingStrategyJitdump` and `perf record` (or
+[`samply`](https://github.com/mstange/samply)) can attribute samples
+directly to wasm functions. Wasmtime only writes jitdump on Linux and
+refuses it elsewhere, so on macOS the engine runs without a profiler
+and a native sampler sees the guest's compiled code as anonymous
+addresses; profile on a Linux host or VM instead.
 
 `wasmtime-go` v38 only wraps the jitdump strategy from the upstream
 wasmtime C API; perfmap and vtune are deferred until the bindings

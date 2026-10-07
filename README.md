@@ -439,7 +439,7 @@ watch -n 1 curl -s http://localhost:5000/
 
 ### Profiler and Trace Viewer
 
-Fastlike's built-in profiler records every guest request and serves traces through a read-only HTTP listener. Start it with `-profile-ui <addr>`, switch to deep mode with `-profile-mode deep` for body/cache/header/memory metrics, or enable native CPU sampling with `-profile-native`. The full reference, including security gates, deep-mode caveats, and the macOS and Linux native sampling setup, is documented in [docs/profiling.md](docs/profiling.md).
+Fastlike's built-in profiler records every guest request and serves traces through a read-only HTTP listener. Start it with `-profile-ui <addr>`, switch to deep mode with `-profile deep` for body/cache/header/memory metrics, or enable native CPU sampling on Linux with `-profile native`. The full reference, including security gates, deep-mode caveats, and the native sampling setup, is documented in [docs/profiling.md](docs/profiling.md).
 
 ### Custom Logging
 
