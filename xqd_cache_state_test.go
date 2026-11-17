@@ -30,8 +30,13 @@ func transactionLookup(t *testing.T, i *Instance, key string) int32 {
 
 func plainLookup(t *testing.T, i *Instance, key string) int32 {
 	t.Helper()
+	return lookupWithOptions(t, i, key, 0)
+}
+
+func lookupWithOptions(t *testing.T, i *Instance, key string, mask uint32) int32 {
+	t.Helper()
 	keyPtr, keyLen := writeCacheKey(i, key)
-	if status := i.xqd_cache_lookup(keyPtr, keyLen, 0, 0, replaceTestHandleOut); status != XqdStatusOK {
+	if status := i.xqd_cache_lookup(keyPtr, keyLen, mask, 0, replaceTestHandleOut); status != XqdStatusOK {
 		t.Fatalf("cache_lookup status = %d, want %d", status, XqdStatusOK)
 	}
 	return int32(i.memory.Uint32(replaceTestHandleOut))

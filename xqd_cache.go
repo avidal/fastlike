@@ -207,7 +207,7 @@ func (i *Instance) xqd_cache_transaction_insert_and_stream_back(
 		return transactionWriteStatus(err)
 	}
 	writeBodyID := i.newCacheInsertBody(entry.Object, handle.Transaction.Key)
-	readHandleID := i.cacheHandles.New(settledTransaction(handle.Transaction.Key, entry, nil))
+	readHandleID := i.cacheHandles.New(settledTransaction(handle.Transaction.Key, entry, handle.Transaction.Options))
 
 	i.memory.WriteUint32(body_handle_out, uint32(writeBodyID))
 	i.memory.WriteUint32(cache_handle_out, uint32(readHandleID))
@@ -435,54 +435,65 @@ func (i *Instance) newCacheObjectBody(found *CacheEntry, options_mask uint32, op
 	}
 
 	reader := cacheRangeReader(found.Object, found.Metadata.Length, found.Metadata.LengthKnown, r, alwaysUseRequestedRange)
-	bodyID, _ := i.bodies.NewReader(io.NopCloser(reader))
-	return bodyID, XqdStatusOK
+	return i.newCacheBody(reader), XqdStatusOK
 }
 
-// cacheRangeReader reads r of obj the way production serves it, given the length
-// known at lookup.
-func cacheRangeReader(obj *CachedObject, length uint64, lengthKnown bool, r byteRange, alwaysUseRequestedRange bool) io.Reader {
-	reader := &cacheBodyReader{cache: obj}
-	if !r.hasFirst && !r.hasLast {
-		return reader
+// newCacheBody makes a body handle for a cache reader, with its length when
+// the reader knows it.
+func (i *Instance) newCacheBody(reader io.Reader) int {
+	bodyID, body := i.bodies.NewReader(io.NopCloser(reader))
+	if r, ok := reader.(*cacheBodyReader); ok {
+		body.length = r.length()
+		body.lengthKnown = body.length >= 0
 	}
+	return bodyID
+}
 
-	size, sizeKnown := int64(length), lengthKnown
-	switch {
-	case sizeKnown && !r.hasFirst:
-		// A lone end bound asks for the last bytes, and production serves the
-		// whole object when that is none of them or more than it holds.
-		if r.last > 0 && r.last <= uint64(size) {
-			reader.offset = size - int64(r.last)
-			reader.end = size
-			reader.bounded = true
+// cacheRangeReader reads r of obj the way production serves it, given the
+// length known at lookup.
+func cacheRangeReader(obj *CachedObject, length uint64, lengthKnown bool, r byteRange, alwaysUseRequestedRange bool) io.Reader {
+	if !lengthKnown && alwaysUseRequestedRange {
+		// Production then picks the range when the body is requested.
+		length, lengthKnown = obj.finalLength()
+	}
+	reader := &cacheBodyReader{cache: obj}
+	if lengthKnown {
+		// Production never delivers more than the length it announced.
+		reader.end, reader.bounded = int64(length), true
+		if !r.hasFirst {
+			// A lone end bound asks for the last bytes, and production serves the
+			// whole object when that is none of them or more than it holds.
+			if r.hasLast && r.last > 0 && r.last <= length {
+				reader.offset = int64(length - r.last)
+			}
+			return reader
 		}
-	case sizeKnown:
 		last := r.last
 		if !r.hasLast {
-			last = uint64(size) - 1
+			last = length - 1
 		}
-		if r.first >= uint64(size) || last >= uint64(size) {
-			return reader
+		if r.first < length && last < length {
+			reader.offset, reader.end = int64(r.first), int64(last)+1
 		}
-		reader.offset = int64(r.first)
-		reader.end = int64(last) + 1
-		reader.bounded = true
-	case alwaysUseRequestedRange && !r.hasFirst:
+		return reader
+	}
+	if !alwaysUseRequestedRange || !(r.hasFirst || r.hasLast) {
+		return reader
+	}
+	if !r.hasFirst {
 		return &cacheSuffixReader{cache: obj, count: r.last}
-	case alwaysUseRequestedRange:
-		// Production commits to the range once the object reaches its start, and
-		// serves the whole object if the object ends first, which is bound to
-		// happen for a start no body can reach.
-		if r.first >= math.MaxInt64 {
-			return reader
-		}
-		reader.offset = int64(r.first)
-		reader.wholeIfShort = true
-		if r.hasLast {
-			reader.end = int64(min(r.last, math.MaxInt64-1)) + 1
-			reader.bounded = true
-		}
+	}
+	// Production commits to the range once the object reaches its start, and
+	// serves the whole object if the object ends first, which is bound to
+	// happen for a start no body can reach.
+	if r.first >= math.MaxInt64 {
+		return reader
+	}
+	reader.offset = int64(r.first)
+	reader.wholeIfShort = true
+	if r.hasLast {
+		reader.end = int64(min(r.last, math.MaxInt64-1)) + 1
+		reader.bounded = true
 	}
 	return reader
 }
@@ -826,7 +837,7 @@ func (s *cacheBodySink) drain() {
 			s.draining = false
 			s.current = nil
 			if s.finished && !s.stopped {
-				s.obj.FinishWrite()
+				s.finishLocked()
 			}
 			if s.expiry != nil {
 				s.expiry.Stop()
@@ -869,11 +880,19 @@ func (s *cacheBodySink) Close() error {
 	}
 	s.finished = true
 	if !s.draining {
-		s.obj.FinishWrite()
+		s.finishLocked()
 		return nil
 	}
 	s.expiry = time.AfterFunc(cacheFillWindow, s.expire)
 	return nil
+}
+
+// finishLocked completes the object, or discards it if that fails.
+func (s *cacheBodySink) finishLocked() {
+	if !s.obj.FinishWrite() {
+		s.stopped = true
+		s.store.Discard(s.key, s.obj)
+	}
 }
 
 func (s *cacheBodySink) expire() {
@@ -942,13 +961,20 @@ type cacheBodyReader struct {
 	wholeIfShort bool
 }
 
+// length is how many bytes the reader yields, or -1 while that is open:
+// no end is set, or the object has not reached the start of the range yet.
+func (r *cacheBodyReader) length() int64 {
+	if !r.bounded || (r.wholeIfShort && r.cache.received() <= r.offset) {
+		return -1
+	}
+	return r.end - r.offset
+}
+
 func (r *cacheBodyReader) Read(p []byte) (int, error) {
 	if r.bounded {
 		remaining := r.end - r.offset
 		if remaining <= 0 {
-			if r.cache.writeFailed() {
-				return 0, io.ErrUnexpectedEOF
-			}
+			// A read that got all its bytes is done, however the insert ends.
 			return 0, io.EOF
 		}
 		if int64(len(p)) > remaining {

@@ -79,7 +79,7 @@ func (i *Instance) xqd_body_write(handle int32, addr int32, size int32, body_end
 
 	if body_end == writeEndFront {
 		// Prepend: Create a MultiReader that reads new data first, then existing content
-		body.reader = chainReaders(bytes.NewReader(bytes.Clone(data)), body.reader)
+		body.chain(bytes.NewReader(bytes.Clone(data)), body.reader)
 		body.growKnownLength(int64(len(data)))
 		i.deepBumpBodyWrite(int64(size))
 		i.memory.PutUint32(uint32(size), int64(nwritten_out))
@@ -205,7 +205,7 @@ func (i *Instance) xqd_body_append(dst_handle int32, src_handle int32) int32 {
 
 	// Chain the readers: dst content followed by src content
 	// This is efficient as it doesn't copy data, just creates a composite reader
-	dst.reader = chainReaders(dst.reader, src)
+	dst.chain(dst.reader, src)
 	dst.closer = joinBodyClosers(dst.closer, src)
 	if srcLength := src.Size(); srcLength < 0 {
 		dst.lengthKnown = false

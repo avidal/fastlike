@@ -835,7 +835,8 @@ func TestCacheSinkExpiresStalledFills(t *testing.T) {
 		t.Error("the stalled object is still in the cache")
 	}
 	time.Sleep(2 * cacheFillWindow)
-	if entry := inst.cache.Lookup([]byte("done"), nil); entry.Object != doneObject || doneObject.writeFailed() {
+	_, failed := doneObject.waitForWriteComplete()
+	if inst.cache.Lookup([]byte("done"), nil).Object != doneObject || failed {
 		t.Error("the finished fill did not survive the window")
 	}
 }

@@ -595,9 +595,33 @@ func (bhs *BodyHandles) NewReader(rdr io.ReadCloser) (int, *BodyHandle) {
 	bh := &BodyHandle{}
 	bh.reader = rdr
 	bh.closer = rdr
-	bh.writer = io.Discard
+	bh.writer = &appendingWriter{body: bh}
 	bhs.handles = append(bhs.handles, bh)
 	return len(bhs.handles), bh
+}
+
+// chain makes the body read first and then second.
+// Later writes go after both, like in production.
+func (b *BodyHandle) chain(first, second io.Reader) {
+	b.reader = chainReaders(first, second)
+	b.writer = &appendingWriter{body: b}
+}
+
+// appendingWriter adds writes at the end of a body that is more than a plain
+// buffer.
+type appendingWriter struct {
+	body *BodyHandle
+	tail *bytes.Buffer
+}
+
+func (w *appendingWriter) Write(p []byte) (int, error) {
+	// A chain drops the parts it has read to the end, so the tail may be gone.
+	c, _ := w.body.reader.(*bodyChain)
+	if c == nil || len(c.parts) == 0 || c.parts[len(c.parts)-1] != io.Reader(w.tail) {
+		w.tail = &bytes.Buffer{}
+		w.body.reader = chainReaders(w.body.reader, w.tail)
+	}
+	return w.tail.Write(p)
 }
 
 // NewResponseReader creates a reader body for resp.

@@ -320,8 +320,7 @@ func TestCacheReplaceBodyRange(t *testing.T) {
 	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 3); got != "789" {
 		t.Fatalf("range ..3 = %q, want the last three bytes", got)
 	}
-	// Production finds a zero-length suffix invalid and serves the whole object
-	// (production's range validation).
+	// Production finds a zero-length suffix invalid and serves the whole object.
 	if got := readRange(CacheGetBodyOptionsMaskTo, 0, 0); got != "0123456789" {
 		t.Fatalf("range ..0 = %q, want the whole body", got)
 	}
@@ -1151,10 +1150,7 @@ func TestCacheReplaceBodyRangeAboveSignedLimit(t *testing.T) {
 // With a forced range on an object still streaming, production commits to the
 // range once the object reaches its start, and a short object then fails the
 // read after the bytes it has.
-// An object that finishes before the start gets the whole object instead
-// (production's range handling), and the
-// client passes it on without checking it against the request (found.rs
-// recv_body).
+// An object that finishes before the start is served whole instead.
 func TestCacheReplaceForcedRangeOfAStreamingObject(t *testing.T) {
 	forcedRead := func(t *testing.T, mask uint32, from, to uint64) (string, error) {
 		t.Helper()

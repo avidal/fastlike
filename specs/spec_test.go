@@ -528,6 +528,41 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("cache-read-content-length", func(st *testing.T) {
+		st.Parallel()
+		// Once the fill is done, the object's length is known at lookup, and
+		// production sends it as the Content-Length of the guest's response.
+		content := strings.Repeat("0123456789", 500)
+		origin := testBackendHandler(st, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, content)
+		})
+		inst := f.Instantiate(fastlike.WithDefaultBackend(origin))
+		server := httptest.NewServer(inst)
+		defer server.Close()
+
+		if w := serveGet(inst, "/cache-fill", nil); w.Code != http.StatusNoContent {
+			st.Fatalf("cache-fill: got %d %q", w.Code, w.Body.String())
+		}
+		// The fill goes on after the guest returns, and a read before it ends
+		// has no length to send.
+		for range 200 {
+			resp, err := http.Get(server.URL + "/cache-read")
+			if err != nil {
+				st.Fatal(err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil || string(body) != content {
+				st.Fatalf("cache-read: %v, body of %d bytes", err, len(body))
+			}
+			if resp.ContentLength == int64(len(content)) && resp.TransferEncoding == nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		st.Error("cache-read never sent a Content-Length")
+	})
+
 	t.Run("pending-handoff", func(st *testing.T) {
 		st.Parallel()
 		// The origin waits for what the guest logs after the call.

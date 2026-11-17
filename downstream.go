@@ -86,15 +86,31 @@ func writeResponseHead(w http.ResponseWriter, status int, headers http.Header) {
 }
 
 // writeWholeResponse sends a response whose body the guest does not stream.
+// The head is flushed first, so that net/http does not add a Content-Length
+// of its own.
 func writeWholeResponse(w http.ResponseWriter, status int, headers http.Header, hasBody bool, body io.Reader, trailers func() http.Header) error {
 	writeResponseHead(w, status, headers)
+	flushResponse(w)
 	if !hasBody {
 		return nil
 	}
-	if _, err := io.Copy(w, body); err != nil {
+	n, err := io.Copy(w, body)
+	if err != nil {
+		return err
+	}
+	if err := checkDeclaredLength(headers, n); err != nil {
 		return err
 	}
 	addTrailers(w, trailers())
+	return nil
+}
+
+// checkDeclaredLength fails a body that ended before its Content-Length,
+// since production hangs up rather than end such a response.
+func checkDeclaredLength(headers http.Header, sent int64) error {
+	if declared := declaredContentLength(headers); declared >= 0 && sent < declared {
+		return io.ErrUnexpectedEOF
+	}
 	return nil
 }
 
@@ -269,6 +285,7 @@ func (s *downstreamStream) send(w http.ResponseWriter, status int, headers http.
 		return nil
 	}
 	buf := make([]byte, 32*1024)
+	var sent int64
 	for {
 		part, err := s.next()
 		if err != nil {
@@ -277,16 +294,20 @@ func (s *downstreamStream) send(w http.ResponseWriter, status int, headers http.
 		if part == nil {
 			break
 		}
-		if err := sendStreamPart(w, part, buf); err != nil {
+		n, err := sendStreamPart(w, part, buf)
+		sent += n
+		if err != nil {
 			return err
 		}
+	}
+	if err := checkDeclaredLength(headers, sent); err != nil {
+		return err
 	}
 	addTrailers(w, s.guest.currentTrailers())
 	return nil
 }
 
-func sendStreamPart(w http.ResponseWriter, part io.Reader, buf []byte) error {
+func sendStreamPart(w http.ResponseWriter, part io.Reader, buf []byte) (int64, error) {
 	defer closeReader(part)
-	_, err := io.CopyBuffer(flushingWriter{w}, part, buf)
-	return err
+	return io.CopyBuffer(flushingWriter{w}, part, buf)
 }

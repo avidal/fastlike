@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -759,8 +758,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 
 	var bodyID int
 	if withBody {
-		reader := cacheRangeReader(entry.Object, entry.Metadata.Length, entry.Metadata.LengthKnown, bodyRange, true)
-		bodyID, _ = i.bodies.NewReader(io.NopCloser(reader))
+		bodyID = i.newCacheBody(cacheRangeReader(entry.Object, entry.Metadata.Length, entry.Metadata.LengthKnown, bodyRange, true))
 	} else {
 		bodyID, _ = i.bodies.NewBuffer()
 	}

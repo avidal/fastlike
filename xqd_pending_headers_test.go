@@ -347,11 +347,12 @@ func TestSendDownstreamPendingSuccess(t *testing.T) {
 	}
 
 	resp := &http.Response{
-		Status:     "201 Created",
-		StatusCode: 201,
-		Header:     http.Header{"Content-Type": {"text/plain"}},
-		Trailer:    http.Header{"X-Checksum": {"complete"}},
-		Body:       io.NopCloser(strings.NewReader("hello")),
+		Status:        "201 Created",
+		StatusCode:    201,
+		Header:        http.Header{"Content-Type": {"text/plain"}},
+		Trailer:       http.Header{"X-Checksum": {"complete"}},
+		Body:          io.NopCloser(strings.NewReader("hello")),
+		ContentLength: -1,
 	}
 	pr.Complete(resp, nil)
 
@@ -420,8 +421,8 @@ func TestSendDownstreamPendingFailureStatus(t *testing.T) {
 				t.Errorf("status = %d, want %d", res.StatusCode, tc.status)
 			}
 			body, _ := io.ReadAll(res.Body)
-			if want := http.StatusText(tc.status); string(body) != want {
-				t.Errorf("body = %q, want %q", body, want)
+			if want := http.StatusText(tc.status); string(body) != want || res.ContentLength != int64(len(want)) {
+				t.Errorf("body = %q with Content-Length %d, want %q", body, res.ContentLength, want)
 			}
 			if got := res.Header.Get("Content-Type"); got != "text/plain" {
 				t.Errorf("Content-Type = %q, want text/plain", got)

@@ -114,6 +114,9 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	}
 
 	headers := w.Header.Clone()
+	if headers == nil {
+		headers = http.Header{}
+	}
 	effectiveMode := validateAndApplyFramingMode(headers, w.framingHeadersMode, func(format string, args ...interface{}) {
 		i.abilog.Printf("resp_send_downstream: "+format, args...)
 	})
@@ -135,6 +138,9 @@ func (i *Instance) xqd_resp_send_downstream(whandle int32, bhandle int32, stream
 	hasBody := i.downstreamHasBody(status)
 	if stream != 1 {
 		b = i.bodies.Take(int(bhandle))
+		if effectiveMode == FramingHeadersModeAutomatic {
+			setAutomaticContentLength(headers, hasBody, b.Size())
+		}
 		i.sendDownstream(func(rw http.ResponseWriter) error {
 			defer func() { _ = b.Close() }()
 			return writeWholeResponse(rw, status, headers, hasBody, b, b.currentTrailers)
@@ -191,9 +197,11 @@ func (i *Instance) xqd_resp_send_downstream_pending(phandle int32) int32 {
 		effectiveMode := validateAndApplyFramingMode(headers, FramingHeadersModeAutomatic, func(format string, args ...interface{}) {
 			i.abilog.Printf("send_downstream_pending: "+format, args...)
 		})
+		hasBody := i.downstreamHasBody(resp.StatusCode)
+		setAutomaticContentLength(headers, hasBody, resp.ContentLength)
 		i.abilog.Printf("send_downstream_pending: status=%d effective_mode=%d", resp.StatusCode, effectiveMode)
 
-		return writeWholeResponse(w, resp.StatusCode, headers, i.downstreamHasBody(resp.StatusCode), resp.Body, responseTrailers(resp))
+		return writeWholeResponse(w, resp.StatusCode, headers, hasBody, resp.Body, responseTrailers(resp))
 	})
 	return XqdStatusOK
 }

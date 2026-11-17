@@ -33,7 +33,8 @@ func checkDuration(t *testing.T, name string, got uint64, low, high time.Duratio
 	}
 }
 
-// atCacheClock is the instant ms milliseconds after production's clock started.
+// atCacheClock is the instant ms milliseconds after the production cache's
+// clock started.
 func atCacheClock(ms float64) time.Time {
 	return cacheClockBase.Add(time.Duration(ms * float64(time.Millisecond)))
 }
@@ -56,7 +57,7 @@ func TestCacheAgeFollowsProductionClock(t *testing.T) {
 		}
 	}
 
-	if got := cachedClock(atCacheClock(-0.5)); got != -time.Millisecond {
+	if got := cacheClock(atCacheClock(-0.5)); got != -time.Millisecond {
 		t.Errorf("clock half a millisecond before its start = %v, want -1ms", got)
 	}
 	obj.InitialAgeNs = math.MaxUint64 - 1

@@ -57,10 +57,12 @@ func sendFailureResponse(err error) *http.Response {
 			status = http.StatusBadGateway
 		}
 	}
+	text := http.StatusText(status)
 	return &http.Response{
-		StatusCode: status,
-		Header:     http.Header{"Content-Type": {"text/plain"}},
-		Body:       io.NopCloser(strings.NewReader(http.StatusText(status))),
+		StatusCode:    status,
+		Header:        http.Header{"Content-Type": {"text/plain"}},
+		Body:          io.NopCloser(strings.NewReader(text)),
+		ContentLength: int64(len(text)),
 	}
 }
 

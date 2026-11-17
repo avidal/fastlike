@@ -2,6 +2,7 @@ package fastlike
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +42,15 @@ func filterFramingHeaders(headers http.Header) {
 	headers.Del("Transfer-Encoding")
 }
 
+// setAutomaticContentLength sets the Content-Length that production's
+// automatic framing sends when it knows the body's length.
+// A length of -1 means unknown, and the response is then chunked.
+func setAutomaticContentLength(headers http.Header, hasBody bool, length int64) {
+	if hasBody && length >= 0 {
+		headers.Set("Content-Length", strconv.FormatInt(length, 10))
+	}
+}
+
 // validateAndApplyFramingMode validates framing headers and determines if manual mode can be used.
 // If manual mode is requested but headers are invalid, it falls back to automatic mode.
 // Returns the effective framing mode and whether headers were filtered.
@@ -66,6 +76,15 @@ func validateAndApplyFramingMode(headers http.Header, mode FramingHeadersMode, l
 	if hasTransferEncoding && !transferEncodingIsSupported(headers) {
 		if logger != nil {
 			logger("unsupported Transfer-Encoding header, falling back to automatic framing")
+		}
+		filterFramingHeaders(headers)
+		return FramingHeadersModeAutomatic
+	}
+
+	// A client could follow either header, so production trusts neither.
+	if hasContentLength && hasTransferEncoding {
+		if logger != nil {
+			logger("conflicting Content-Length and Transfer-Encoding headers, falling back to automatic framing")
 		}
 		filterFramingHeaders(headers)
 		return FramingHeadersModeAutomatic

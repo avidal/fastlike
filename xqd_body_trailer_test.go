@@ -75,7 +75,7 @@ func TestUnannouncedResponseTrailerReachesDownstream(t *testing.T) {
 			i := newOwnershipTestInstance()
 			recorder := httptest.NewRecorder()
 			i.ds_response = recorder
-			response := &http.Response{}
+			response := &http.Response{ContentLength: -1}
 			response.Body = &lateTrailerReader{response: response}
 			bodyHandle, _ := i.bodies.NewResponseReader(response)
 			responseHandle, downstreamResponse := i.responses.New()

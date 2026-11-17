@@ -91,7 +91,7 @@ func TestSendDownstreamPendingReturnsAtOnce(t *testing.T) {
 	if status := within(t, "send_downstream_pending", func() int32 { return i.xqd_resp_send_downstream_pending(int32(phid)) }); status != XqdStatusOK {
 		t.Fatalf("send_downstream_pending status = %d", status)
 	}
-	pr.Complete(&http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader("late"))}, nil)
+	pr.Complete(&http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader("late")), ContentLength: -1}, nil)
 	if i.finishDownstream() {
 		t.Fatal("the response was cut short")
 	}
@@ -579,7 +579,7 @@ func TestPendingBodyFailureCutsTheResponseShort(t *testing.T) {
 	resp := serveDownstream(t, func(i *Instance) {
 		phid, pr := i.pendingRequests.New()
 		body := io.MultiReader(strings.NewReader("partial"), iotest.ErrReader(io.ErrUnexpectedEOF))
-		pr.Complete(&http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body)}, nil)
+		pr.Complete(&http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), ContentLength: -1}, nil)
 		if status := i.xqd_resp_send_downstream_pending(int32(phid)); status != XqdStatusOK {
 			t.Errorf("send_downstream_pending status = %d", status)
 		}

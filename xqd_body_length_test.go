@@ -277,3 +277,68 @@ func TestBodyWriteCopiesGuestMemory(t *testing.T) {
 		}
 	}
 }
+
+// Like in production, writes go after everything a body holds.
+func TestBodyWritesGoAfterEverythingItHolds(t *testing.T) {
+	tests := []struct {
+		name string
+		body func(t *testing.T, i *Instance) int
+		// drained reads the body to its end between the two writes.
+		drained bool
+		want    string
+	}{
+		{
+			name: "a backend body",
+			body: func(t *testing.T, i *Instance) int { return newTestBackendBody(i, "A", 1) },
+			want: "ACD",
+		},
+		{
+			name:    "a backend body read to the end between the writes",
+			body:    func(t *testing.T, i *Instance) int { return newTestBackendBody(i, "A", 1) },
+			drained: true,
+			want:    "D",
+		},
+		{
+			name: "a buffer with a body appended",
+			body: func(t *testing.T, i *Instance) int {
+				id := newTestBuffer(t, i, "A")
+				if status := i.xqd_body_append(int32(id), int32(newTestBackendBody(i, "B", 1))); status != XqdStatusOK {
+					t.Fatalf("body_append status = %d", status)
+				}
+				return id
+			},
+			want: "ABCD",
+		},
+		{
+			name: "a buffer written to at the front and read to the end",
+			body: func(t *testing.T, i *Instance) int {
+				id := newTestBuffer(t, i, "A")
+				writeTestBody(t, i, id, "F", BodyWriteEndFront)
+				if _, err := io.ReadAll(i.bodies.Get(id)); err != nil {
+					t.Fatal(err)
+				}
+				return id
+			},
+			want: "CD",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			i := newFramingTestInstance()
+			id := tt.body(t, i)
+			writeTestBody(t, i, id, "C", BodyWriteEndBack)
+			if tt.drained {
+				if _, err := io.ReadAll(i.bodies.Get(id)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeTestBody(t, i, id, "D", BodyWriteEndBack)
+			if got := bodyKnownLength(t, i, id); got != int64(len(tt.want)) {
+				t.Errorf("known length = %d, want %d", got, len(tt.want))
+			}
+			if got := readTestBody(t, i, id); got != tt.want {
+				t.Errorf("body = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

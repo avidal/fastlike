@@ -64,8 +64,9 @@ const revalidationInterval = time.Second
 
 var cacheClockBase = time.Now()
 
-// cachedClock is t on production's clock, which only counts whole milliseconds.
-func cachedClock(t time.Time) time.Duration {
+// cacheClock is t on the production cache's clock, which only counts whole
+// milliseconds.
+func cacheClock(t time.Time) time.Duration {
 	d := t.Sub(cacheClockBase)
 	ms := d.Truncate(time.Millisecond)
 	if ms > d {
@@ -74,9 +75,10 @@ func cachedClock(t time.Time) time.Duration {
 	return ms
 }
 
-// cacheInstant turns t into an instant of production's clock, where 0 means never.
+// cacheInstant turns t into an instant of the production cache's clock, where
+// 0 means never.
 func cacheInstant(t time.Time) int64 {
-	return int64(cachedClock(t)) + 1
+	return int64(cacheClock(t)) + 1
 }
 
 // CacheState represents the state flags for a cache lookup, as production
@@ -135,13 +137,17 @@ func (obj *CachedObject) metadataAt(start time.Time, hits uint64) ObjectMetadata
 }
 
 // knownLength is the declared length, or the final one.
-// Impossible declared lengths are ignored, since unlike production, Fastlike does
-// not reject bodies that do not match them.
+// Impossible declared lengths are ignored: no body matches them, so the insert
+// fails once it ends.
 func (obj *CachedObject) knownLength() (uint64, bool) {
 	if obj.Length != nil && *obj.Length <= math.MaxInt64 {
 		return *obj.Length, true
 	}
+	return obj.finalLength()
+}
 
+// finalLength is the size of a body whose write succeeded.
+func (obj *CachedObject) finalLength() (uint64, bool) {
 	if n := obj.completedLength.Load(); n > 0 {
 		return uint64(n - 1), true
 	}
@@ -915,14 +921,14 @@ func (c *Cache) SoftPurgeSurrogateKey(key string) int {
 	return count
 }
 
-// ageAt is obj's age at t on production's clock, never below zero.
+// ageAt is obj's age at t on the production cache's clock, never below zero.
 func (obj *CachedObject) ageAt(t time.Time) uint64 {
-	return obj.ageAtClock(cachedClock(t))
+	return obj.ageAtClock(cacheClock(t))
 }
 
-// ageAtClock is ageAt for an instant of production's clock.
+// ageAtClock is ageAt for an instant of the production cache's clock.
 func (obj *CachedObject) ageAtClock(c time.Duration) uint64 {
-	return offsetAge(obj.InitialAgeNs, c-cachedClock(obj.InsertTime))
+	return offsetAge(obj.InitialAgeNs, c-cacheClock(obj.InsertTime))
 }
 
 // periodAt follows production, soft purges included.
@@ -930,7 +936,7 @@ func (obj *CachedObject) ageAtClock(c time.Duration) uint64 {
 func (obj *CachedObject) periodAt(now time.Time) cachePeriod {
 	age := obj.ageAt(now)
 	// Before its origin, an object is fresh even with a max age of 0.
-	elapsed := cachedClock(now) - cachedClock(obj.InsertTime)
+	elapsed := cacheClock(now) - cacheClock(obj.InsertTime)
 	beforeOrigin := elapsed < 0 && uint64(-elapsed) > obj.InitialAgeNs
 	fresh := beforeOrigin || age < obj.MaxAgeNs
 	var staleFor uint64
@@ -1032,15 +1038,22 @@ func (obj *CachedObject) WriteBody(p []byte) (int, error) {
 	return n, err
 }
 
-// FinishWrite marks the write as complete and wakes all waiting readers
-func (obj *CachedObject) FinishWrite() {
+// FinishWrite ends the write and wakes the waiting readers.
+// Like in production, the write fails when the body does not have the length
+// the insert declared, and FinishWrite then returns false.
+func (obj *CachedObject) FinishWrite() bool {
 	obj.WriteCond.L.Lock()
+	defer obj.WriteCond.Broadcast()
+	defer obj.WriteCond.L.Unlock()
+
 	obj.WriteComplete = true
+	if obj.Length != nil && *obj.Length != uint64(obj.Body.Len()) {
+		obj.WriteFailed = true
+	}
 	if !obj.WriteFailed {
 		obj.completedLength.Store(int64(obj.Body.Len()) + 1)
 	}
-	obj.WriteCond.L.Unlock()
-	obj.WriteCond.Broadcast()
+	return !obj.WriteFailed
 }
 
 // AbortWrite ends an abandoned write so that waiting readers fail instead of
@@ -1066,9 +1079,10 @@ func (obj *CachedObject) waitForWriteComplete() (int64, bool) {
 	return int64(obj.Body.Len()), obj.WriteFailed
 }
 
-func (obj *CachedObject) writeFailed() bool {
+// received is how much of the body the writer has provided so far.
+func (obj *CachedObject) received() int64 {
 	obj.WriteCond.L.Lock()
 	defer obj.WriteCond.L.Unlock()
 
-	return obj.WriteFailed
+	return int64(obj.Body.Len())
 }
