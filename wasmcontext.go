@@ -5,7 +5,7 @@ import (
 
 	"fastlike.dev/profile"
 
-	"github.com/bytecodealliance/wasmtime-go/v46"
+	"github.com/bytecodealliance/wasmtime-go/v51"
 )
 
 // wasmContext holds what an Instance compiles once and reuses for every request it serves.

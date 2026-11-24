@@ -15,7 +15,7 @@ import (
 
 	"fastlike.dev/profile"
 
-	"github.com/bytecodealliance/wasmtime-go/v46"
+	"github.com/bytecodealliance/wasmtime-go/v51"
 )
 
 func isCleanExit(err error) bool {

@@ -3,7 +3,7 @@ package profile
 import (
 	"testing"
 
-	"github.com/bytecodealliance/wasmtime-go/v46"
+	"github.com/bytecodealliance/wasmtime-go/v51"
 )
 
 const wideArithmeticWat = `(module

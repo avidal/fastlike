@@ -3,7 +3,7 @@ package fastlike
 import (
 	"testing"
 
-	"github.com/bytecodealliance/wasmtime-go/v46"
+	"github.com/bytecodealliance/wasmtime-go/v51"
 )
 
 const wideArithmeticWat = `(module
@@ -102,7 +102,8 @@ func TestEngineConfigMatchesProductionFeatures(t *testing.T) {
 		{"atomic fence", `(module (func atomic.fence))`, false},
 		{"externref", `(module (func (param externref)))`, false},
 		{"exceptions", `(module (tag $e) (func (throw $e)))`, false},
-		{"function references", `(module (type $t (func)) (func (param (ref null $t))))`, false},
+		// On by default since Wasmtime 47, even without GC, and production runs 47.
+		{"function references", `(module (type $t (func)) (func (param (ref null $t))))`, true},
 		{"gc", `(module (type (struct (field i32))))`, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

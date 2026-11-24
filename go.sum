@@ -1,9 +1,9 @@
-github.com/bytecodealliance/wasmtime-go/v46 v46.0.1 h1:3jSQdjL+8V3iXYSZlhcd7iU9VAz88qcitTAen+8VzDM=
-github.com/bytecodealliance/wasmtime-go/v46 v46.0.1/go.mod h1:7iIBM15/gdBgfl36+ZzXYIY8QvrOWvHETnxa3s2l4KE=
+github.com/bytecodealliance/wasmtime-go/v51 v51.0.0 h1:Sg6AZ6Q83fq58wA/WaolAs1vfsBndkw9Eakc7UJStiM=
+github.com/bytecodealliance/wasmtime-go/v51 v51.0.0/go.mod h1:xHcdCkGW9/2b2qtBQr7CPyH7HOKvn5Sczk77snW0A80=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/google/pprof v0.0.0-20260604005048-7023385849c0 h1:h1QTMDl6q9wDvDCJVpKQSjgleGFYnd2fOxmg2K+6BGE=
-github.com/google/pprof v0.0.0-20260604005048-7023385849c0/go.mod h1:MxpfABSjhmINe3F1It9d+8exIHFvUqtLIRCdOGNXqiI=
+github.com/google/pprof v0.0.0-20261118010117-084b33a85f63 h1:dTH7+vX2yD0Xq3wXeU6R1s5uUuJC8o9sDW8g2k4bAg4=
+github.com/google/pprof v0.0.0-20261118010117-084b33a85f63/go.mod h1:yUo1AMMpsPIDFGuwDK8nLcf8+vvAd5l2O6JDZ6hpwrM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
