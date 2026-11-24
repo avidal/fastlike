@@ -62,6 +62,23 @@ fn main(mut req: Request) -> Result<Response, Error> {
             Ok(req.send(BACKEND)?)
         },
 
+        // Reports the backend's reason phrase, and the phrase of a new response before and after a status change.
+        (&Method::GET, "/reason-phrase") => {
+            let backend = req.with_pass(true).send(BACKEND)?;
+            let phrase = backend.get_reason_phrase(64)?;
+            let needed = backend.get_reason_phrase(0).err().map(|e| e.needed_buf_size);
+            let mut synthetic = Response::new();
+            let fresh = synthetic.get_reason_phrase_lossy(64)?;
+            synthetic.set_status(StatusCode::PAYLOAD_TOO_LARGE);
+            let after_status = synthetic.get_reason_phrase_lossy(64)?;
+            Ok(Response::from_body(serde_json::json!({
+                "backend": phrase,
+                "needed": needed,
+                "fresh": fresh,
+                "after_status": after_status,
+            }).to_string()))
+        },
+
         (&Method::GET, "/panic!") => {
             panic!("you told me to");
         },

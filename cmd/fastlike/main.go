@@ -479,6 +479,7 @@ func (f *backendFlags) Set(v string) error {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(dest)
+	proxy.ModifyResponse = fastlike.ProxyReasonPhrase
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		log.Printf("http: proxy error: %v", err)
 		fastlike.ProxyErrorHandler(w, r, err)

@@ -274,7 +274,7 @@ func (i *Instance) httpCacheWrite(cache_handle, resp_handle int32, options_mask 
 		return nil, nil, XqdErrInvalidHandle
 	}
 
-	writeOpts.Response = newStoredResponse(resp.Response, handle.lookup.time)
+	writeOpts.Response = newStoredResponse(resp, handle.lookup.time)
 	writeOpts.RequestHeaders = handle.lookup.requestHeaders
 	// Production adds this key back when the guest replaced the suggested
 	// ones, so that purging a URL still works.
@@ -680,22 +680,26 @@ func (i *Instance) xqd_http_cache_prepare_response_for_storage(
 	response.Trailer = resp.Trailer.Clone()
 
 	var storageAction uint32
+	var reasonPhrase string
 	if stored := handle.storedResponse(); stored != nil && resp.StatusCode == http.StatusNotModified {
 		storageAction = HttpStorageActionUpdate
 		response.StatusCode = stored.status
-		response.Status = http.StatusText(stored.status)
+		reasonPhrase = stored.reasonPhrase
 		response.Header = freshenStoredHeader(stored.header, resp.Header)
 	} else {
 		storageAction = storageActionFor(handle.lookup.request.Method, resp.Response)
 		response.Header = resp.Header.Clone()
+		// Production drops the phrase of a response it won't store.
 		if storageAction == HttpStorageActionInsert {
 			stripHeadersForStorage(response.Header, response.Header)
+			reasonPhrase = resp.reasonPhrase
 		}
 	}
 
 	preparedID, prepared := i.responses.New()
 	*prepared = *resp
 	prepared.Response = &response
+	prepared.reasonPhrase = reasonPhrase
 	i.memory.WriteUint32(storage_action_out, storageAction)
 	i.memory.WriteUint32(resp_handle_out, uint32(preparedID))
 
@@ -724,7 +728,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 		return XqdErrNone
 	}
 
-	status, withBody := stored.status, true
+	status, reasonPhrase, withBody := stored.status, stored.reasonPhrase, true
 	var header http.Header
 	var bodyRange byteRange
 	switch {
@@ -732,6 +736,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 		header = stored.header.Clone()
 	case stored.validatorsMatch(handle.lookup.request):
 		status, withBody = http.StatusNotModified, false
+		reasonPhrase = canonicalReason(status)
 		header = notModifiedHeader(stored.header)
 		header.Set("Accept-Ranges", "bytes")
 	default:
@@ -753,7 +758,7 @@ func (i *Instance) xqd_http_cache_get_found_response(
 
 	respID, respHandle := i.responses.New()
 	respHandle.StatusCode = status
-	respHandle.Status = http.StatusText(status)
+	respHandle.reasonPhrase = reasonPhrase
 	respHandle.Header = header
 
 	var bodyID int

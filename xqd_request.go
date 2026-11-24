@@ -895,8 +895,8 @@ func (i *Instance) awaitBackendHeaders(label string, exchange *backendResponseWr
 
 func (i *Instance) newBackendResponseHandles(resp *http.Response) (int, *ResponseHandle, int) {
 	whid, wh := i.responses.New()
-	wh.Status = resp.Status
 	wh.StatusCode = resp.StatusCode
+	wh.reasonPhrase = backendReasonPhrase(resp)
 	wh.Header = resp.Header.Clone()
 	bhid, _ := i.bodies.NewResponseReader(resp)
 	return whid, wh, bhid

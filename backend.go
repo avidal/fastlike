@@ -701,6 +701,7 @@ func (b *Backend) newTransportHandler() http.Handler {
 		for k, v := range resp.Header {
 			w.Header()[k] = v
 		}
+		setBackendReasonPhrase(r.Context(), resp)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := io.Copy(w, resp.Body); err != nil {
 			captureBackendError(r.Context(), err)

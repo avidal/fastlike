@@ -33,8 +33,67 @@ func (i *Instance) xqd_resp_status_set(handle int32, status int32) int32 {
 
 	i.abilog.Printf("resp_status_set: handle=%d status=%d", handle, status)
 
+	// A new status gets its own standard phrase, so we never end up with something like "500 OK".
 	w.StatusCode = int(status)
-	w.Status = http.StatusText(w.StatusCode)
+	w.reasonPhrase = canonicalReason(w.StatusCode)
+	return XqdStatusOK
+}
+
+// xqd_resp_reason_phrase_get copies the response's reason phrase to the guest.
+// If the buffer is too small, it reports the size it needs.
+func (i *Instance) xqd_resp_reason_phrase_get(handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		return XqdErrInvalidHandle
+	}
+
+	phrase := w.reasonPhrase
+	i.abilog.Printf("resp_reason_phrase_get: handle=%d phrase=%q", handle, phrase)
+
+	fits := uint32(maxlen) >= uint32(len(phrase))
+	// Production copies the phrase before it checks nwritten_out.
+	if fits {
+		if _, err := i.memory.WriteAt([]byte(phrase), int64(uint32(addr))); err != nil {
+			return XqdErrInvalidArgument
+		}
+	}
+	nwrittenAddr, status := i.memory.wiggleField(nwritten_out, 0, 4)
+	if status != XqdStatusOK {
+		return status
+	}
+	i.memory.PutUint32(uint32(len(phrase)), nwrittenAddr)
+	if !fits {
+		return XqdErrBufferLength
+	}
+	return XqdStatusOK
+}
+
+// xqd_resp_set_status_and_reason_phrase sets the status code along with a custom reason phrase.
+// An empty phrase means the response has none.
+func (i *Instance) xqd_resp_set_status_and_reason_phrase(handle int32, status int32, addr int32, size int32) int32 {
+	if status < 100 || status > 999 {
+		i.abilog.Printf("resp_set_status_and_reason_phrase: invalid status code %d (must be 100-999)", status)
+		return XqdErrInvalidArgument
+	}
+	if !i.memory.validRange(int64(uint32(addr)), uint64(uint32(size))) {
+		return XqdErrInvalidArgument
+	}
+	w := i.responses.Get(int(handle))
+	if w == nil {
+		return XqdErrInvalidHandle
+	}
+
+	start := uint32(addr)
+	phrase := i.memory.Data()[start : start+min(uint32(size), maxReasonPhraseLen)]
+	// Same allowed bytes as a header value, so no CR or LF can sneak into the status line.
+	if !validHTTPHeaderValue(phrase) {
+		i.abilog.Printf("resp_set_status_and_reason_phrase: invalid reason phrase %q", phrase)
+		return XqdErrInvalidArgument
+	}
+
+	i.abilog.Printf("resp_set_status_and_reason_phrase: handle=%d status=%d phrase=%q", handle, status, phrase)
+	w.StatusCode = int(status)
+	w.reasonPhrase = string(phrase)
 	return XqdStatusOK
 }
 

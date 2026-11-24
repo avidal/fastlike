@@ -111,6 +111,8 @@ type ResponseHandle struct {
 	version int32
 	// framingHeadersMode controls how Content-Length and Transfer-Encoding headers are handled
 	framingHeadersMode FramingHeadersMode
+	// reasonPhrase is used instead of Response.Status, and may not be valid UTF-8.
+	reasonPhrase string
 }
 
 // ResponseHandles is a slice of ResponseHandle with functions to get and create
@@ -142,8 +144,9 @@ func (rhs *ResponseHandles) Take(id int) *ResponseHandle {
 // Note: Returns 1-based IDs (0 is reserved as invalid handle)
 func (rhs *ResponseHandles) New() (int, *ResponseHandle) {
 	rh := &ResponseHandle{
-		Response: &http.Response{StatusCode: 200},
-		version:  2, // Http11 = 2
+		Response:     &http.Response{StatusCode: 200},
+		version:      2, // Http11 = 2
+		reasonPhrase: canonicalReason(200),
 	}
 	rhs.handles = append(rhs.handles, rh)
 	return len(rhs.handles), rh

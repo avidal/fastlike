@@ -156,8 +156,8 @@ func (i *Instance) xqd_image_optimizer_transform_request(
 
 	// Create a response handle
 	respHandle, resp := i.responses.New()
-	resp.Status = response.Status
 	resp.StatusCode = response.StatusCode
+	resp.reasonPhrase = backendReasonPhrase(response)
 	resp.Header = response.Header.Clone()
 	resp.Body = response.Body
 	i.abilog.Printf("xqd_image_optimizer_transform_request: created response handle %d", respHandle)

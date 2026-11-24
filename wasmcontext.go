@@ -653,6 +653,12 @@ func link(linker *wasmtime.Linker) {
 	_ = linker.FuncWrap("fastly_http_resp", "version_get", safeWrap2("version_get", func(i *Instance, handle int32, version_out int32) int32 {
 		return i.xqd_resp_version_get(handle, version_out)
 	}))
+	_ = linker.FuncWrap("fastly_http_resp", "reason_phrase_get", safeWrap4("reason_phrase_get", func(i *Instance, handle int32, addr int32, maxlen int32, nwritten_out int32) int32 {
+		return i.xqd_resp_reason_phrase_get(handle, addr, maxlen, nwritten_out)
+	}))
+	_ = linker.FuncWrap("fastly_http_resp", "set_status_and_reason_phrase", safeWrap4("set_status_and_reason_phrase", func(i *Instance, handle int32, status int32, addr int32, size int32) int32 {
+		return i.xqd_resp_set_status_and_reason_phrase(handle, status, addr, size)
+	}))
 	_ = linker.FuncWrap("fastly_http_resp", "version_set", safeWrap2("version_set", func(i *Instance, handle int32, version int32) int32 {
 		return i.xqd_resp_version_set(handle, version)
 	}))

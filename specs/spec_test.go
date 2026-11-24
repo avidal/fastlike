@@ -136,6 +136,41 @@ func TestFastlike(t *testing.T) {
 		}
 	})
 
+	t.Run("reason-phrase", func(st *testing.T) {
+		st.Parallel()
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				st.Error(err)
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			_, _ = io.WriteString(conn, "HTTP/1.1 599 Custom status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		}))
+		defer origin.Close()
+		target, _ := url.Parse(origin.URL)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ModifyResponse = fastlike.ProxyReasonPhrase
+		inst := f.Instantiate(fastlike.WithBackend("backend", proxy))
+
+		w := serveGet(inst, "/reason-phrase", nil)
+		var got struct {
+			Backend     []byte `json:"backend"`
+			Needed      *int   `json:"needed"`
+			Fresh       string `json:"fresh"`
+			AfterStatus string `json:"after_status"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			st.Fatalf("decoding %q: %v", w.Body.String(), err)
+		}
+		if string(got.Backend) != "Custom status" || got.Needed == nil || *got.Needed != len("Custom status") {
+			st.Errorf("backend phrase = %q, needed %v", got.Backend, got.Needed)
+		}
+		if got.Fresh != "OK" || got.AfterStatus != "Payload Too Large" {
+			st.Errorf("synthetic phrases = %q then %q, want \"OK\" then \"Payload Too Large\"", got.Fresh, got.AfterStatus)
+		}
+	})
+
 	t.Run("append-header", func(st *testing.T) {
 		st.Parallel()
 		// Verify that headers are correctly passed through subrequests

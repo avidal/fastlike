@@ -17,19 +17,21 @@ import (
 // times its age is computed from.
 type storedResponse struct {
 	status       int
+	reasonPhrase string
 	header       http.Header
 	requestTime  time.Time
 	responseTime time.Time
 }
 
 // newStoredResponse keeps the header of resp, which the caller must own.
-func newStoredResponse(resp *http.Response, requestTime time.Time) *storedResponse {
+func newStoredResponse(resp *ResponseHandle, requestTime time.Time) *storedResponse {
 	header := resp.Header
 	if header == nil {
 		header = http.Header{}
 	}
 	return &storedResponse{
 		status:       resp.StatusCode,
+		reasonPhrase: resp.reasonPhrase,
 		header:       header,
 		requestTime:  requestTime,
 		responseTime: time.Now(),

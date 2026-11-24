@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -247,6 +248,8 @@ type backendResponseWriter struct {
 	// transportErr is set by Fastlike's transport handler through the
 	// request context.
 	transportErr error
+	// reasonPhrase is the origin's phrase, when the handler passed it along.
+	reasonPhrase atomic.Pointer[originReasonPhrase]
 
 	bodyAllowed       bool
 	declared          int64
@@ -325,8 +328,12 @@ func (w *backendResponseWriter) WriteHeader(code int) {
 		w.declared = declaredContentLength(header)
 		length = w.declared
 	}
+	phrase := canonicalReason(code)
+	if origin := w.reasonPhrase.Load(); origin != nil && origin.status == code {
+		phrase = origin.phrase
+	}
 	w.resp = &http.Response{
-		Status:        fmt.Sprintf("%03d %s", code, http.StatusText(code)),
+		Status:        fmt.Sprintf("%03d %s", code, phrase),
 		StatusCode:    code,
 		Proto:         "HTTP/1.1",
 		ProtoMajor:    1,
